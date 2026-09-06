@@ -23,14 +23,19 @@ internal sealed class PostgresMigrationRunner
         try
         {
             await migrationLedger.EnsureTableAsync(connection, cancellationToken);
+            var checksumPolicies = await CreateChecksumPoliciesAsync(cancellationToken);
+            await migrationLedger.ValidateCatalogAsync(
+                connection,
+                checksumPolicies,
+                cancellationToken);
 
             foreach (var migration in PostgresMigrationCatalog.All)
             {
-                var checksum = await migration.ComputeChecksumAsync(cancellationToken);
+                var checksumPolicy = checksumPolicies[migration.Version];
                 if (await migrationLedger.IsAppliedAsync(
                         connection,
                         migration,
-                        checksum,
+                        checksumPolicy,
                         cancellationToken))
                 {
                     continue;
@@ -38,7 +43,11 @@ internal sealed class PostgresMigrationRunner
 
                 try
                 {
-                    await ApplyMigrationAsync(connection, migration, checksum, cancellationToken);
+                    await ApplyMigrationAsync(
+                        connection,
+                        migration,
+                        checksumPolicy.CanonicalChecksum,
+                        cancellationToken);
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {
@@ -48,7 +57,7 @@ internal sealed class PostgresMigrationRunner
                 {
                     await migrationLedger.RecordFailureAsync(
                         migration,
-                        checksum,
+                        checksumPolicy.CanonicalChecksum,
                         exception,
                         cancellationToken);
                     throw new InvalidOperationException(
@@ -64,10 +73,24 @@ internal sealed class PostgresMigrationRunner
         }
     }
 
+    private static async Task<IReadOnlyDictionary<int, PostgresMigrationChecksumPolicy>>
+        CreateChecksumPoliciesAsync(CancellationToken cancellationToken)
+    {
+        var policies = new Dictionary<int, PostgresMigrationChecksumPolicy>();
+        foreach (var migration in PostgresMigrationCatalog.All)
+        {
+            policies.Add(
+                migration.Version,
+                await PostgresMigrationChecksumPolicy.CreateAsync(migration, cancellationToken));
+        }
+
+        return policies;
+    }
+
     private async Task ApplyMigrationAsync(
         NpgsqlConnection connection,
         PostgresSchemaMigration migration,
-        string checksum,
+        PostgresMigrationChecksum checksum,
         CancellationToken cancellationToken)
     {
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);

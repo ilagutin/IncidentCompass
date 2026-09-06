@@ -32,7 +32,7 @@ internal sealed class PostgresMigrationLedger(PostgresDataSourceProvider dataSou
     public async Task<bool> IsAppliedAsync(
         NpgsqlConnection connection,
         PostgresSchemaMigration migration,
-        string expectedChecksum,
+        PostgresMigrationChecksumPolicy checksumPolicy,
         CancellationToken cancellationToken)
     {
         const string sql = """
@@ -51,21 +51,72 @@ internal sealed class PostgresMigrationLedger(PostgresDataSourceProvider dataSou
         var name = reader.GetString(0);
         var actualChecksum = reader.GetString(1);
         var status = reader.GetString(2);
-        if (!string.Equals(name, migration.Name, StringComparison.Ordinal) ||
-            !string.Equals(actualChecksum, expectedChecksum, StringComparison.Ordinal))
-        {
-            throw new InvalidOperationException(
-                $"PostgreSQL migration {migration.Version} does not match its durable migration record.");
-        }
+        ValidateIdentity(checksumPolicy, migration.Version, name, actualChecksum);
 
         return string.Equals(status, "Applied", StringComparison.Ordinal);
+    }
+
+    public async Task ValidateCatalogAsync(
+        NpgsqlConnection connection,
+        IReadOnlyDictionary<int, PostgresMigrationChecksumPolicy> checksumPolicies,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT version, name, checksum
+            FROM incidentcompass.schema_migrations
+            ORDER BY version;
+            """;
+        await using var command = new NpgsqlCommand(sql, connection);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var version = reader.GetInt32(0);
+            if (!checksumPolicies.TryGetValue(version, out var checksumPolicy))
+            {
+                throw new InvalidOperationException(
+                    $"PostgreSQL migration ledger contains unexpected durable version {version}, " +
+                    "which is not present in this released catalog. Restore the matching application " +
+                    "version or migration ledger from a trusted backup; do not renumber durable rows.");
+            }
+
+            ValidateIdentity(
+                checksumPolicy,
+                version,
+                reader.GetString(1),
+                reader.GetString(2));
+        }
+    }
+
+    private static void ValidateIdentity(
+        PostgresMigrationChecksumPolicy checksumPolicy,
+        int version,
+        string name,
+        string actualChecksum)
+    {
+        if (!string.Equals(name, checksumPolicy.Name, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"PostgreSQL migration {version} has durable name '{name}', but " +
+                $"the released catalog expects '{checksumPolicy.Name}'. Restore the migration ledger " +
+                "from a trusted backup; do not edit released SQL or migration records.");
+        }
+
+        if (!checksumPolicy.Accepts(version, name, actualChecksum))
+        {
+            throw new InvalidOperationException(
+                $"PostgreSQL migration {version} ({checksumPolicy.Name}) has durable checksum " +
+                $"'{actualChecksum}', which is neither canonical nor an allowed released LF/CRLF " +
+                $"legacy checksum. Expected canonical checksum " +
+                $"'{checksumPolicy.CanonicalChecksum.Value}'. Restore the released migration files " +
+                "or migration ledger from a trusted backup; do not edit either in place.");
+        }
     }
 
     public Task MarkAppliedAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,
         PostgresSchemaMigration migration,
-        string checksum,
+        PostgresMigrationChecksum checksum,
         CancellationToken cancellationToken)
     {
         const string sql = """
@@ -87,12 +138,12 @@ internal sealed class PostgresMigrationLedger(PostgresDataSourceProvider dataSou
             cancellationToken,
             migration.Version,
             migration.Name,
-            checksum);
+            checksum.Value);
     }
 
     public async Task RecordFailureAsync(
         PostgresSchemaMigration migration,
-        string checksum,
+        PostgresMigrationChecksum checksum,
         Exception exception,
         CancellationToken cancellationToken)
     {
@@ -112,7 +163,7 @@ internal sealed class PostgresMigrationLedger(PostgresDataSourceProvider dataSou
         await using var command = new NpgsqlCommand(sql, connection);
         command.Parameters.AddWithValue(migration.Version);
         command.Parameters.AddWithValue(migration.Name);
-        command.Parameters.AddWithValue(checksum);
+        command.Parameters.AddWithValue(checksum.Value);
         command.Parameters.AddWithValue(DescribeFailure(exception));
         await command.ExecuteNonQueryAsync(cancellationToken);
     }

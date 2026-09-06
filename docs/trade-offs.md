@@ -125,6 +125,18 @@ The MediatR decision remains separate. This project still uses its internal disp
 
 Identifiers like `TenantId`, `UserId`, `CorrelationId` are passed as `string` and `Guid` throughout the codebase rather than as strongly-typed value objects (e.g. `readonly record struct TenantId`). Value objects offer compile-time safety against argument-mix-ups and centralized validation, but introduce friction with `System.Text.Json`, `Npgsql` parameter binding, and `IOptions<T>` binding at this project's current scope. The current implementation accepts the small risk of string mix-ups in exchange for transport simplicity. A future scope that grows multi-context handler signatures (tenant + user + correlation + ...) may revisit this.
 
+## Canonical Migration Checksums vs Ledger Rewriting
+
+Migration checksums normalize a decoded leading BOM and CRLF or bare CR line endings before hashing,
+so a fresh database gets the same durable identity from Windows and Linux builds. Meaningful text,
+script names and script ordering remain significant. The migrator accepts only the deterministic LF
+and CRLF legacy hashes attached to the exact released version and migration name.
+
+This leaves historical applied rows untouched and avoids rerunning schema changes merely to adopt a
+new checksum representation. The cost is a small closed compatibility policy in the migration catalog.
+Unknown hashes and identity changes still stop startup, and operators must restore trusted released
+files or ledger state rather than editing a migration or broadening the accepted set.
+
 ## Local Tenant Partition And API-Key Mapping
 
 The auth-disabled local path keeps one server-configured incident-data tenant through

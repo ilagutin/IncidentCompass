@@ -101,6 +101,18 @@ and warns in the job summary, it just costs that one approval click per pull req
 - Keep schema changes in source control.
 - Live ledger/report/memory/action-approval tables and dormant pricing state use explicit raw SQL/init scripts and small Npgsql adapters while the persistence surface is still stabilizing.
 - Released migrations are append-only. `006-tool-audit.sql` remains byte-identical and creates an unused legacy table even though the retired standalone application stack no longer has an adapter.
+- New applied and failed migration records use one platform-independent SHA-256 checksum. The input is
+  each script name plus its decoded SQL encoded as UTF-8 after removing one leading decoded BOM and
+  normalizing CRLF or bare CR line endings to LF. Script names, ordering and every other SQL character
+  remain checksum-significant.
+- During a v0.3 database upgrade, the migrator also recognizes the exact historical LF and CRLF
+  checksums for the matching released catalog version and name. An applied legacy row is accepted as-is:
+  it is not rewritten and its migration is not rerun. This compatibility is a closed list for released
+  migrations, not permission to accept arbitrary alternate hashes.
+- Before an upgrade, back up the database and keep the released migration files unchanged. A checksum,
+  name or version mismatch outside the closed compatibility set stops startup with a diagnostic. Restore
+  the released files or migration ledger from a trusted backup instead of editing SQL or durable rows in
+  place.
 - `023-action-approvals-outbox.sql` is catalog migration version 14. Approval contract version 1 is
   stored per action and hashes the complete immutable review tuple with domain separation and
   length-prefixed fields. A future tuple change requires a new contract version and an additive

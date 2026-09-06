@@ -1,3 +1,4 @@
+using IncidentCompass.Infrastructure.Postgres;
 using static IncidentCompass.IntegrationTests.PostgresMigrationDurableDataAssertions;
 using static IncidentCompass.IntegrationTests.PostgresMigrationTestSupport;
 
@@ -78,6 +79,66 @@ public sealed class PostgresMigrationTests(PostgresRepositoryFixture fixture)
         Assert.All(secondRun, record => Assert.Equal("Applied", record.Status));
     }
 
+    [DockerAvailableFact]
+    public async Task FreshInstallStoresCanonicalChecksumsForTheReleasedCatalog()
+    {
+        await using var database = await MigrationDatabase.CreateAsync(fixture);
+
+        await RunMigrationsAsync(database.ConnectionString);
+
+        var records = await ReadMigrationRecordsAsync(database.ConnectionString);
+        foreach (var migration in PostgresMigrationCatalog.All)
+        {
+            var policy = await PostgresMigrationChecksumPolicy.CreateAsync(
+                migration,
+                TestContext.Current.CancellationToken);
+            var record = Assert.Single(records, candidate => candidate.Version == migration.Version);
+            Assert.Equal(policy.CanonicalChecksum.Value, record.Checksum);
+        }
+    }
+
+    [DockerAvailableFact]
+    public async Task ReleasedCrlfAndMixedPlatformLedgersRestartWithoutRewritingRows()
+    {
+        await using var database = await MigrationDatabase.CreateAsync(fixture);
+        await RunMigrationsAsync(database.ConnectionString);
+
+        foreach (var migration in PostgresMigrationCatalog.All)
+        {
+            var policy = await PostgresMigrationChecksumPolicy.CreateAsync(
+                migration,
+                TestContext.Current.CancellationToken);
+            await SetMigrationChecksumAsync(
+                database.ConnectionString,
+                migration.Version,
+                AssertLegacyCrlfChecksum(policy).Value);
+        }
+
+        var legacyBeforeRestart = await ReadMigrationRecordsAsync(database.ConnectionString);
+        await RunMigrationsAsync(database.ConnectionString);
+        Assert.Equal(
+            legacyBeforeRestart,
+            await ReadMigrationRecordsAsync(database.ConnectionString));
+
+        foreach (var migration in PostgresMigrationCatalog.All.Where(
+                     migration => migration.Version % 2 == 0))
+        {
+            var policy = await PostgresMigrationChecksumPolicy.CreateAsync(
+                migration,
+                TestContext.Current.CancellationToken);
+            await SetMigrationChecksumAsync(
+                database.ConnectionString,
+                migration.Version,
+                policy.CanonicalChecksum.Value);
+        }
+
+        var mixedBeforeRestart = await ReadMigrationRecordsAsync(database.ConnectionString);
+        await RunMigrationsAsync(database.ConnectionString);
+        Assert.Equal(
+            mixedBeforeRestart,
+            await ReadMigrationRecordsAsync(database.ConnectionString));
+    }
+
     [Fact]
     public async Task FrozenPricingAndLedgerMigrationsMatchRecordedHashes()
     {
@@ -89,4 +150,10 @@ public sealed class PostgresMigrationTests(PostgresRepositoryFixture fixture)
             await Sha256WithCrlfNormalizedToLfAsync("008-triage-ledger.sql"));
     }
 
+    private static PostgresMigrationChecksum AssertLegacyCrlfChecksum(
+        PostgresMigrationChecksumPolicy policy)
+    {
+        Assert.True(policy.ReleasedLegacyCrlfChecksum.HasValue);
+        return policy.ReleasedLegacyCrlfChecksum.Value;
+    }
 }
