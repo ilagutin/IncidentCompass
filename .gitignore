@@ -5,6 +5,7 @@
 
 # dotenv files
 .env
+.env.production
 
 # Local tool workspace artifacts
 .codex/tmp/

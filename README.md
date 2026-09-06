@@ -48,6 +48,10 @@ URLs for the fault ledger and triage report. Use `scripts/demo.ps1 -Mock` only w
 fully deterministic mock path. See [Quickstart](docs/quickstart.md) and [Local demo walkthrough](docs/local-demo.md)
 for provider settings, port overrides and manual steps.
 
+The additive production path is intentionally separate from that demo. See the
+[single-host production runbook](docs/single-host-production.md) for loopback-only Compose startup,
+preflight, bounded PostgreSQL backup and fresh-volume recovery on one trusted machine.
+
 Compose host-port overrides do not change the fixed internal API, PostgreSQL or OTLP addresses.
 The mock overlay replaces only model and embedding providers. GitHub and Telegram adapters retain
 fixed production authorities and are tested with in-process recording handlers, not Compose endpoint
@@ -250,6 +254,7 @@ digests through protected host configuration and apply the usual transport and d
 - [Cost tracking](docs/cost-tracking.md)
 - [Code organization](docs/code-organization.md)
 - [Versioning and release flow](docs/versioning.md)
+- [Single-host production runbook](docs/single-host-production.md)
 - [Release candidate notes for v0.3.0](docs/release-notes-v0.3.0.md)
 - [Published v0.2.0 notes](docs/release-notes-v0.2.0.md)
 - [Published v0.1.1 notes](docs/release-notes-v0.1.1.md)
