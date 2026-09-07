@@ -145,7 +145,14 @@ internal sealed partial class MemorySeedHostedService(
             throw new InvalidOperationException("memory_search must declare an EmbeddingRouteId before memory seeding can run.");
         }
 
-        return configuration.Routes[tool.EmbeddingRouteId];
+        if (!configuration.Routes.TryGetValue(tool.EmbeddingRouteId, out var route))
+        {
+            throw new InvalidOperationException(
+                "Memory seed embedding route '" + tool.EmbeddingRouteId +
+                "' is not configured; fix Tools.memory_search.EmbeddingRouteId.");
+        }
+
+        return route;
     }
 
     private async Task<MemorySeedEntry> PrepareSeedAsync(

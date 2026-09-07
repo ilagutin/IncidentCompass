@@ -3,6 +3,7 @@ using System.Text.Json;
 using IncidentCompass.Application.Core.Embeddings;
 using IncidentCompass.Application.Governance.Tools;
 using IncidentCompass.Application.Intake.Configuration;
+using IncidentCompass.Application.Investigation.Jobs;
 using IncidentCompass.Application.Memory;
 using IncidentCompass.Domain.Incidents;
 
@@ -104,6 +105,31 @@ public sealed class MemorySearchRerankerTests
         Assert.Equal(1, repository.SearchCount);
         Assert.Equal(20, repository.LastRequest!.CandidateCount);
         Assert.Equal(5, result.Artifacts!.Count);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_MissingEmbeddingRouteFailsClosedBeforeEmbeddingOrMemorySearch()
+    {
+        var embedding = new CountingEmbeddingClient();
+        var repository = new CountingMemoryRepository([]);
+        var tool = new MemorySearchTool(embedding, repository, TimeProvider.System);
+        var configuration = Configuration() with
+        {
+            Routes = new Dictionary<string, TriageRouteSettings>(StringComparer.Ordinal)
+        };
+        var validation = tool.Validate(JsonSerializer.SerializeToElement(new { query = "checkout timeout" }));
+
+        var exception = await Assert.ThrowsAsync<TriageGovernanceDeniedException>(
+            () => tool.ExecuteAsync(
+                Context(configuration),
+                validation.SanitizedArguments,
+                TestContext.Current.CancellationToken));
+
+        Assert.Equal(TriageGovernanceDeniedException.MemorySearchRouteMissingCode, exception.ErrorCode);
+        Assert.Contains("memory-embed", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("Tools.memory_search.EmbeddingRouteId", exception.Message, StringComparison.Ordinal);
+        Assert.Equal(0, embedding.CallCount);
+        Assert.Equal(0, repository.SearchCount);
     }
 
     [Fact]

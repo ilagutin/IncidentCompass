@@ -27,5 +27,11 @@ internal sealed class TriageGovernanceDeniedException(string errorCode, string m
     /// </summary>
     public const string WorkerRouteMissingCode = "triage_governance_worker_route_missing";
 
+    /// <summary>
+    /// The immediate <c>memory_search</c> tool names an embedding route that is absent from the
+    /// rehydrated configuration. The attempt must stop before embedding or memory retrieval begins.
+    /// </summary>
+    public const string MemorySearchRouteMissingCode = "triage_governance_memory_search_route_missing";
+
     public string ErrorCode { get; } = errorCode;
 }

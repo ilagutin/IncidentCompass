@@ -6,6 +6,7 @@ using IncidentCompass.Application.Core.Serialization;
 using IncidentCompass.Application.Core.Text;
 using IncidentCompass.Application.Governance.Tools;
 using IncidentCompass.Application.Governance.Validation;
+using IncidentCompass.Application.Investigation.Jobs;
 using IncidentCompass.Domain.Governance;
 using IncidentCompass.Domain.Incidents;
 
@@ -70,7 +71,14 @@ internal sealed class MemorySearchTool(IEmbeddingClient embeddingClient, IMemory
         var toolSettings = context.Configuration.Tools[context.ToolName];
         var routeId = toolSettings.EmbeddingRouteId ??
             throw new InvalidOperationException("memory_search is missing EmbeddingRouteId.");
-        var route = context.Configuration.Routes[routeId];
+        if (!context.Configuration.Routes.TryGetValue(routeId, out var route))
+        {
+            throw new TriageGovernanceDeniedException(
+                TriageGovernanceDeniedException.MemorySearchRouteMissingCode,
+                "memory_search embedding route '" + routeId +
+                "' is not configured; fix Tools.memory_search.EmbeddingRouteId.");
+        }
+
         var embedding = await embeddingClient.CreateEmbeddingAsync(
             new EmbeddingRequest(query, route.Model, context.Job.Id.ToString()),
             cancellationToken);
