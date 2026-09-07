@@ -15,7 +15,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
+  build-and-test:
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -51,3 +51,36 @@ jobs:
         env:
           INCIDENTCOMPASS_REQUIRE_DOCKER_TESTS: "true"
         run: dotnet test --solution IncidentCompass.slnx --configuration Release --no-build
+
+  container-images:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Build demo container images
+        run: docker compose --profile demo build api worker tester
+
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    needs:
+      - build-and-test
+      - container-images
+    if: ${{ always() }}
+
+    steps:
+      - name: Enforce required CI gates
+        env:
+          BUILD_AND_TEST_RESULT: ${{ needs.build-and-test.result }}
+          CONTAINER_IMAGES_RESULT: ${{ needs.container-images.result }}
+        run: |
+          echo "build-and-test: ${BUILD_AND_TEST_RESULT}"
+          echo "container-images: ${CONTAINER_IMAGES_RESULT}"
+
+          if [ "${BUILD_AND_TEST_RESULT}" != "success" ] || [ "${CONTAINER_IMAGES_RESULT}" != "success" ]; then
+            echo "One or more required CI gates did not succeed."
+            exit 1
+          fi
