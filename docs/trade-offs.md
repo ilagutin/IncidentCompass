@@ -12,16 +12,16 @@ These runs were opt-in, non-gated local measurements against an OpenAI-compatibl
 measure whether the governed loop reaches its terminal step, not answer quality. The deterministic
 release gate remains the mock-backed demo plus the automated tests.
 
-| Stage | Model | Scenario | Reach rate |
+| Configuration | Model | Scenario | Reach rate |
 |---|---|---|---|
-| Phase 2 | qwen2.5-14b-instruct | publish_report | 0/3 |
-| Phase 2 | qwen/qwen3.6-27b | publish_report | 0/1 |
-| Phase 3 | qwen2.5-14b-instruct | publish_report | 3/3 |
-| Phase 3 | qwen/qwen3.6-27b | publish_report | 1/1 |
-| Phase 4 | qwen2.5-14b-instruct | delegate to memory to memory_search to publish_report | 5/5 |
-| Phase 5 | qwen2.5-14b-instruct | the Phase 4 trajectory plus grounded evidence | 3/5 |
+| Before bounded reprompts | qwen2.5-14b-instruct | publish_report | 0/3 |
+| Before bounded reprompts | qwen/qwen3.6-27b | publish_report | 0/1 |
+| Bounded reprompts | qwen2.5-14b-instruct | publish_report | 3/3 |
+| Bounded reprompts | qwen/qwen3.6-27b | publish_report | 1/1 |
+| Memory tools | qwen2.5-14b-instruct | delegate to memory to memory_search to publish_report | 5/5 |
+| Memory tools and grounding | qwen2.5-14b-instruct | delegate to memory to memory_search to grounded publish_report | 3/5 |
 
-The Phase 3 `3/3` result was measured with `Orchestrator.Budget.MaxReprompts: 2`; the Phase 2
+The bounded-reprompt `3/3` result was measured with `Orchestrator.Budget.MaxReprompts: 2`; the earlier
 baseline predates bounded reprompts.
 
 ## Test Fault Seams Live In Production Code
@@ -46,16 +46,14 @@ it is. The migration seam fails for a different reason: one `MigrateAsync` call 
 migration, so a decorator can only fail the whole run, never version 15 of a catalog while leaving
 1 through 14 applied and 15 recorded as `Failed`.
 
-So all five stayed. The split the plan anticipated - commit-time seams kept, whole-operation seams
-removed - turned out not to exist, because no seam here is a whole-operation seam. The cost is real:
+None of these seams wraps a whole operation. Their cost is explicit:
 these are testability hooks in production code, they add a constructor parameter to eleven
 PostgreSQL adapters, and a reader who does not know why they exist could mistake them for dead code.
 The mitigations are that the types are `internal` and invisible outside the assembly, the folder
 name says what they are, each interface carries an XML comment naming the fault it simulates and
 stating that production always gets the no-op, and the DI registrations are grouped into named
 `AddInvestigationTestFaultSeams` / `AddPersistenceTestFaultSeams` methods instead of being scattered
-among real services. Weakening a partial-failure test to remove a seam would have been the worse
-trade.
+among real services. The seams preserve the transaction-level partial-failure checks.
 
 ## Full Prompt Logging vs Privacy
 
@@ -147,7 +145,7 @@ authority. This is a narrow reference boundary, not a claim of production multi-
 
 ## Sequential Ledger-Backed Governance
 
-Phase 3 evaluates `rate_cap`, `precondition` and budget state by reading the append-only ledger. This is simple and inspectable for the MVP because worker delegation is sequential. It is not a parallel-safe counter mechanism; future parallel fan-out would need serialized policy evaluation or atomic counters to avoid two workers passing a cap at the same time.
+Tool policy evaluates `rate_cap`, `precondition` and budget state by reading the append-only ledger. This is simple and inspectable for the MVP because worker delegation is sequential. It is not a parallel-safe counter mechanism; future parallel fan-out would need serialized policy evaluation or atomic counters to avoid two workers passing a cap at the same time.
 
 ## Token Budget Overshoot
 
@@ -180,7 +178,7 @@ current matches therefore add an explicit review limitation rather than being si
 model.
 ## Memory Embedding Model Changes Require Re-Embedding
 
-Phase 4 memory retrieval filters by tenant, embedding provider, embedding model and embedding dimensions. This avoids mixing incompatible corpora, but it also means changing the embedding provider or model makes existing memory chunks silently unretrievable until they are re-embedded. Changing the configured embedding provider or model should be paired with a full memory re-seed or migration.
+Memory retrieval filters by tenant, embedding provider, embedding model and embedding dimensions. This avoids mixing incompatible corpora, but it also means changing the embedding provider or model makes existing memory chunks silently unretrievable until they are re-embedded. Changing the configured embedding provider or model should be paired with a full memory re-seed or migration.
 
 ## Bounded Memory Reranking Instead of Database Full-Text Search
 
@@ -215,7 +213,7 @@ Recurrence escalation is deterministic database state, but the prior report copi
 Provider-outage backpressure is deliberately held in each Worker process. It prevents a local outage from rapidly consuming retries and clears after a successful model call, but multiple Worker hosts do not share breaker state. A future distributed deployment needs coordinated provider health if a global circuit is required; the current release remains a local/reference deployment and does not claim that property.
 ## Grounded Evidence vs Correct Conclusions
 
-Phase 5 report grounding proves that each persisted evidence row came from a citable artifact visible to the job and that any stored quote was an exact substring of the redacted artifact payload. It does not prove the model's classification is correct. This is an intentional MVP boundary: durable evidence makes review possible, while evaluation of reasoning quality remains outside the backend transaction.
+Report grounding proves that each persisted evidence row came from a citable artifact visible to the job and that any stored quote was an exact substring of the redacted artifact payload. It does not prove the model's classification is correct. This is an intentional MVP boundary: durable evidence makes review possible, while evaluation of reasoning quality remains outside the backend transaction.
 ## Renewable Worker Leases Require Cooperative Calls
 
 The Worker renews an owned lease at roughly one third of its duration while processing an investigation.

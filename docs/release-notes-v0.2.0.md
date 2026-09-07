@@ -30,7 +30,7 @@ authentication.
 - Database migrations support both fresh v0.2.0 databases and populated v0.1.1 upgrades.
 - The API remains under `/api/v1`; report list responses add only the documented v0.2.0 surface.
 - Demo headers and the local incident tenant are not a security boundary. API-key authentication and
-  server-side tenant mapping remain later IC-BL-024 scope.
+  server-side tenant mapping remain outside this release.
 - Full prompt/body logging remains disabled. Runtime telemetry is a source only; this release does
   not configure an OTLP runtime exporter or a metrics endpoint.
 - This is not a production incident platform. It does not provide enterprise auth, distributed

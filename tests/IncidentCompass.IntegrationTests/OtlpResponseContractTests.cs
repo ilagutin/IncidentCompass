@@ -7,7 +7,7 @@ using OpenTelemetry.Proto.Collector.Trace.V1;
 namespace IncidentCompass.IntegrationTests;
 
 /// <summary>
-/// IC-BL-079: the OTLP endpoints return an RPC response body, not a file download. These tests pin
+/// the OTLP endpoints return an RPC response body, not a file download. These tests pin
 /// the wire contract an OTLP exporter sees - 200 with an <c>application/x-protobuf</c> body that
 /// parses as the matching export response, and no file-download or range headers. The exports are
 /// empty so the assertion is about the response contract alone and no signal is ingested.

@@ -11,8 +11,7 @@
          singleton pump collaborators (see Setup.cs); PostReportActionEvaluationLeaseRenewer's
          sibling EvaluateAsync method does use instance state (the injected logger), so the type
          is not purely static, and keeping both lease-renewal methods on the same instantiable
-         shape keeps the pair symmetric rather than special-casing one of them. Backlog item
-         IC-BL-079 revisits the lease-renewer signatures. -->
+         shape keeps the pair symmetric. -->
     <NoWarn>$(NoWarn);CA1822</NoWarn>
   </PropertyGroup>
 

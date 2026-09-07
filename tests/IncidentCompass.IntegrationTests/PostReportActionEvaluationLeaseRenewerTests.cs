@@ -5,7 +5,7 @@ using Microsoft.Extensions.Logging;
 namespace IncidentCompass.IntegrationTests;
 
 /// <summary>
-/// IC-BL-079: the renewal loop only returns when the fenced lease is gone, so
+/// the renewal loop only returns when the fenced lease is gone, so
 /// <see cref="PostReportActionEvaluationLeaseRenewer.EvaluateAsync"/> must abandon the evaluation
 /// without a result, cancel the in-flight workflow and make the loss audit-visible. This pins that
 /// behaviour after the renewer stopped returning a value that could only ever be one thing.

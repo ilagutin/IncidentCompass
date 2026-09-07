@@ -5,7 +5,7 @@ using Npgsql;
 namespace IncidentCompass.IntegrationTests;
 
 /// <summary>
-/// IC-BL-079: the report-list reader resolves its columns by name and guards exactly the columns
+/// the report-list reader resolves its columns by name and guards exactly the columns
 /// the schema declares nullable. A report whose optional columns are all NULL and that has no
 /// successor exercises every guard at once, so a reordered SELECT list or a missing guard fails
 /// here instead of silently shifting mapped fields.

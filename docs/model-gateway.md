@@ -48,7 +48,7 @@ Application use cases call `IEmbeddingClient` through the Application layer. The
 - Model name is configurable.
 - Timeout is configurable.
 - Retry policy is supported or explicitly planned.
-- Token usage is captured when returned by the provider. Phase 3 budget accounting uses provider usage when present and a compact backend estimate otherwise, recording the source in the ledger.
+- Token usage is captured when returned by the provider. Budget accounting uses provider usage when present and a compact backend estimate otherwise, recording the source in the ledger.
 - Provider errors are normalized into application-level error types. Model-provider outages are retried as an explicit `provider_unavailable` delayed job state. After the configured consecutive-failure threshold, each Worker process pauses new claims for `IncidentCompass:ProviderResilience:BackpressureSeconds`; a successful model call clears that local pause. This is in-process backpressure, not cross-host coordination, and fallback routes remain later scope.
 - Request/response objects carry correlation IDs.
 - OpenAI-compatible chat completions include one `Idempotency-Key` header per
