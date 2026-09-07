@@ -16,6 +16,9 @@
     <None Include="..\..\samples\incidents\tester-ticket-action-injection.json"
           Link="Samples\Incidents\tester-ticket-action-injection.json"
           CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\evaluations\triage\corpus-v1.json"
+          Link="Evaluations\Triage\corpus-v1.json"
+          CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

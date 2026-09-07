@@ -1,0 +1,41 @@
+services:
+  postgres:
+    ports: !reset []
+
+  api:
+    ports: !reset []
+    environment:
+      IncidentCompass__ConfigSource__Path: /app/config/incidentcompass.evaluation.config.json
+      IncidentCompass__ModelGateway__OpenAiCompatible__TimeoutSeconds: ${INCIDENTCOMPASS_EVALUATION_PROVIDER_TIMEOUT_SECONDS:-120}
+      IncidentCompass__Embeddings__OpenAiCompatible__TimeoutSeconds: ${INCIDENTCOMPASS_EVALUATION_PROVIDER_TIMEOUT_SECONDS:-120}
+    volumes:
+      - ./evaluations/triage/incidentcompass.config.json:/app/config/incidentcompass.evaluation.config.json:ro
+
+  worker:
+    environment:
+      IncidentCompass__ConfigSource__Path: /app/config/incidentcompass.evaluation.config.json
+      IncidentCompass__ModelGateway__OpenAiCompatible__TimeoutSeconds: ${INCIDENTCOMPASS_EVALUATION_PROVIDER_TIMEOUT_SECONDS:-120}
+      IncidentCompass__Embeddings__OpenAiCompatible__TimeoutSeconds: ${INCIDENTCOMPASS_EVALUATION_PROVIDER_TIMEOUT_SECONDS:-120}
+      IncidentCompass__Telegram__Enabled: "false"
+      IncidentCompass__Telegram__BotToken: ""
+      IncidentCompass__Tickets__GitHub__Token: ""
+    volumes:
+      - ./evaluations/triage/incidentcompass.config.json:/app/config/incidentcompass.evaluation.config.json:ro
+
+  tester:
+    environment:
+      INCIDENTCOMPASS_TESTER_EVALUATION_CORPUS: /app/evaluations/triage/corpus-v1.json
+      INCIDENTCOMPASS_TESTER_EVALUATION_CONFIG: /app/config/incidentcompass.evaluation.config.json
+      INCIDENTCOMPASS_TESTER_EVALUATION_OUTPUT: ${INCIDENTCOMPASS_TESTER_EVALUATION_OUTPUT:-/artifacts/triage-evaluation-result-v2.json}
+      INCIDENTCOMPASS_TESTER_EVALUATION_RUNS: ${INCIDENTCOMPASS_TESTER_EVALUATION_RUNS:-3}
+      INCIDENTCOMPASS_TESTER_EVALUATION_REVISION: ${INCIDENTCOMPASS_TESTER_EVALUATION_REVISION:-unknown}
+      INCIDENTCOMPASS_TESTER_EVALUATION_CONTENT_IDENTITY: ${INCIDENTCOMPASS_TESTER_EVALUATION_CONTENT_IDENTITY:-unknown}
+      INCIDENTCOMPASS_TESTER_EVALUATION_CONTENT_DIRTY: ${INCIDENTCOMPASS_TESTER_EVALUATION_CONTENT_DIRTY:-true}
+      INCIDENTCOMPASS_LLM_BASE_URL: ${INCIDENTCOMPASS_LLM_BASE_URL:-http://host.docker.internal:1234}
+      INCIDENTCOMPASS_LLM_MODEL: ${INCIDENTCOMPASS_LLM_MODEL:-local-model}
+      INCIDENTCOMPASS_EMBEDDINGS_MODEL: ${INCIDENTCOMPASS_EMBEDDINGS_MODEL:-local-embedding-model}
+      INCIDENTCOMPASS_TESTER_EVALUATION_EMPTY_ACTION_GRANTS: "true"
+      INCIDENTCOMPASS_TESTER_EVALUATION_EXTERNAL_ACTION_CREDENTIALS: "false"
+    volumes:
+      - ${INCIDENTCOMPASS_EVALUATION_ARTIFACTS_DIRECTORY:-./artifacts/evaluation}:/artifacts
+      - ./evaluations/triage/incidentcompass.config.json:/app/config/incidentcompass.evaluation.config.json:ro

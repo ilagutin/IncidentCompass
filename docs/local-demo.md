@@ -153,13 +153,106 @@ The Tester first exports a real error span through the OpenTelemetry SDK to the 
 The output table includes FaultId, ReportId, is_mass_issue, Classification, a host-reachable ledger
 URL, a host-reachable report URL and the explicit bounded action-gate result. With real providers, exact classifications can vary by model;
 the backend checks are about durable grounding, policy and readback, not pretending model reasoning is
-deterministic.
+deterministic. Exact classifications produced by `-Mock` are properties of the demo script contract,
+not measurements of model quality.
 
 Useful read endpoints after a run are:
 
 - GET http://localhost:<IC_API_PORT>/api/v1/faults/{id}
 - GET http://localhost:<IC_API_PORT>/api/v1/faults/{id}/ledger
 - GET http://localhost:<IC_API_PORT>/api/v1/triage-reports/{id}
+
+## Opt-In Model Evaluation
+
+The versioned evaluation contract in `evaluations/triage/corpus-v1.json` freezes exactly five cases:
+known, unknown, insufficient, stale and adversarial. Each case fixes its input and its pre-authored
+diagnosis, evidence, justified-refusal and tolerance criteria before any provider output is observed.
+Version 1 also fixes three attempts per case.
+
+Run the evaluator against a host-side OpenAI-compatible chat and embedding provider with:
+
+~~~powershell
+pwsh -NoProfile -File scripts/real-local-llm-smoke.ps1 `
+  -BaseUrl http://host.docker.internal:1234 `
+  -Model local-model `
+  -EmbeddingBaseUrl http://host.docker.internal:1234 `
+  -EmbeddingModel local-embedding-model
+~~~
+
+Despite its historical filename, this script runs the Tester container in its distinct
+`--evaluation` mode. It does not launch a test runner. The script uses a unique Compose project,
+starts an isolated PostgreSQL/API/Worker stack with empty backend action grants and no GitHub or
+Telegram credentials, and does not publish evaluation-only API or PostgreSQL host ports. It runs all
+15 independently fingerprinted attempts, retains the structured result under the ignored
+`artifacts/evaluation/` directory, and stops only that isolated stack while removing its volumes. A
+cleanup failure makes the script fail and is reported alongside any earlier run failure. Use
+`-ResultPath` with either an absolute path or a path relative to the repository to select another
+private artifact location. Provider keys are process environment values passed to the containers
+and are not written into the result.
+
+This evaluator script requires PowerShell 7 or later and must be launched with `pwsh`. Windows
+PowerShell 5.1 is rejected before artifact directories, Compose projects or containers are created.
+`TimeoutSeconds` is the per-attempt deadline and covers intake, terminal polling and transient HTTP
+retries. A failed attempt receives a separate five-second bounded recovery readback, is checkpointed,
+and does not prevent the remaining attempts from running. Ctrl+C and container termination request a
+final bounded checkpoint before the evaluator exits with cancellation status.
+
+The result contract contains:
+
+- result `schemaVersion` 2, `corpusVersion`, the evaluated Git HEAD revision, a dirty flag, a Git tree or
+  dirty-content hash, and a typed snapshot of every configured route: route id, kind, provider id,
+  expanded model, temperature, output-token limit and context-window limit. The snapshot also stores
+  the configured orchestrator worker, token, wall-clock and reprompt budgets. Endpoint and API
+  key values are deliberately excluded.
+- Every requested attempt, including failures, with fault/job/config identifiers when intake reached
+  them, bounded failure detail, terminal completion, observed report fields and the four pre-authored
+  criterion results. Terminal state, report publication, model calls and action events are attributed
+  only to the exact job id returned by that attempt's intake and its observed current attempt; a newer
+  re-triage job on the same fault cannot satisfy the attempt.
+- A bounded, sanitized report snapshot containing the report id, status, summary, recommended action,
+  classification, documentation fit, config hash, limitations and up to 20 evidence identifiers plus safe metadata.
+  Evidence quotes and artifact payloads are excluded. Snapshot text removes control characters,
+  redacts credential-shaped values and has fixed per-field limits, so the diagnosis heuristic remains
+  auditable after the isolated database is removed without retaining prompts or provider bodies.
+  Summary is limited to 2,000 characters, recommended action to 1,000, metadata fields to 256, and
+  limitations to 20 entries of 500 characters. The snapshot records omitted limitation and evidence
+  counts. Diagnosis and evidence criteria evaluate only these retained sanitized fields and the first
+  20 retained evidence entries. A term or required evidence kind outside those bounds cannot raise a
+  score that would be impossible to reproduce from the retained result.
+- Backend action-safety authority facts separately from observed action lifecycle events. The result
+  records whether ledger observation was available and retains every observed event occurrence. The
+  safety criterion fails closed when observation is unavailable. When it is available, passing
+  requires empty action grants, absent external-action credentials and no observed `ActionProposed`,
+  `ApprovalDecision`, `ActionDispatchStarted` or `ActionCompleted` events.
+- End-to-end latency separately from individual and summed model-call latency.
+- Individual `ModelCall` provider/model/route metadata and token usage, aggregate input/output/total
+  tokens, and `usageSource`. `BudgetEvent` token deltas are excluded so tokens are not counted twice.
+  Usage missing for a failed call is `unavailable`, never zero.
+- Per-case raw pass counts and overall raw small-sample ranges using only minimum, median and maximum.
+  There is no p95. Failed attempts remain in every requested-attempt denominator.
+
+The evaluator checkpoints after every attempt by writing a temporary file in the artifact directory
+and atomically moving it over the prior result. A terminated write therefore does not replace the
+last valid checkpoint with a partial JSON document.
+
+API, Worker and Tester mount the same evaluation configuration file read-only. Tester expands its
+environment placeholders with the same names, fallback behavior and values used by the product hosts,
+then parses the route and budget snapshot once before the first attempt. This avoids a second numeric
+configuration baseline in the evaluator.
+
+This evaluator records measurements; the repository does not claim a model-quality result without a
+retained run artifact. Three attempts per case are too small for broad statistical conclusions.
+Diagnosis term checks are authored acceptance heuristics, not proof that a diagnosis is true.
+Grounding proves provenance rather than semantic correctness, and the adversarial case is one fixed
+prompt rather than evidence of universal prompt-injection resistance. The
+`InsufficientEvidence -> Unknown` check is a backend report invariant, not a model-quality score.
+
+The separate cloud-free integration gate uses scripted model and embedding clients over actual
+intake, Worker processing, PostgreSQL persistence, report publication, grounding and governance. Its
+exact assertions cover model-independent terminal/schema/current-attempt evidence, no-context,
+stale-document and policy-denial behavior. Scripted classifications in that gate are control flow,
+not a model-quality label. Retrieval assertions reuse the existing memory benchmark corpus, observed
+query result contract and metric evaluator rather than defining a second retrieval baseline.
 
 ## What The Demo Proves
 
