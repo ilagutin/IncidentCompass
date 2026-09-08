@@ -125,7 +125,13 @@ public static class Setup
         // AddHttpClient registers the typed client itself; the mock has no HTTP dependency and is
         // registered directly. Both stay concrete-type registrations so the selector below can pick
         // one without a second factory.
-        services.AddHttpClient<OpenAiCompatibleModelClient>();
+        services
+            .AddHttpClient<OpenAiCompatibleModelClient>(client =>
+                client.Timeout = Timeout.InfiniteTimeSpan)
+            .ConfigurePrimaryHttpMessageHandler(static () => new SocketsHttpHandler
+            {
+                AllowAutoRedirect = false
+            });
         services.TryAddScoped<MockAiModelClient>();
 
         return services.AddProviderSelectedClient<
@@ -135,7 +141,8 @@ public static class Setup
     }
     private static IServiceCollection AddEmbeddingAdapters(this IServiceCollection services)
     {
-        services.AddHttpClient<OpenAiCompatibleEmbeddingClient>();
+        services.AddHttpClient<OpenAiCompatibleEmbeddingClient>(client =>
+            client.Timeout = Timeout.InfiniteTimeSpan);
         services.TryAddScoped<MockEmbeddingClient>();
 
         return services.AddProviderSelectedClient<

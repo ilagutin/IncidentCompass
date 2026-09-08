@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.Text.Json;
+using IncidentCompass.Application.Core.Errors;
 using IncidentCompass.Application.Core.ModelClients;
+using IncidentCompass.Application.Core.ModelGateway;
 using IncidentCompass.Application.Core.Observability;
 using IncidentCompass.Application.Core.Resilience;
 using IncidentCompass.Application.Governance.Ledger;
@@ -235,6 +237,160 @@ public sealed class InvestigationModelCallerTests
             request.Rationale!.Contains("context_window_exceeded", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public async Task CompleteAsync_FailedProviderCallReturnsAccountingWithoutAppendingIt()
+    {
+        var writer = new RecordingLedgerWriter();
+        var caller = CreateCaller(
+            new FailingModelClient(new AiModelException(
+                "test-provider",
+                "Upstream response body must not be persisted.",
+                failureKind: ProviderFailureKind.OutputLimitReached,
+                usage: new AiModelUsage(1200, 2396, 3596),
+                returnedModel: "returned-model")),
+            writer,
+            TimeProvider.System);
+        var context = CreateContext(TimeProvider.System.GetUtcNow(), maxWallClockSeconds: 60);
+
+        var failure = await Assert.ThrowsAsync<InvestigationModelCallFailureException>(() => caller.CompleteAsync(
+            context,
+            context.Configuration.Routes[context.RouteId],
+            [new AiChatMessage(AiMessageRole.User, "Investigate.")],
+            tools: null,
+            CancellationToken.None));
+
+        Assert.IsType<AiModelException>(failure.InnerException);
+        Assert.Equal(3596, failure.Accounting.ChargeTokens);
+        Assert.Equal("failed", failure.Accounting.Metadata.Outcome);
+        Assert.Equal("provider_output_limit_reached", failure.Accounting.Metadata.ErrorCode);
+        Assert.Equal("returned-model", failure.Accounting.Metadata.Model);
+        Assert.Equal(0, failure.Accounting.Metadata.ProposedToolCallCount);
+        Assert.Empty(writer.Requests);
+    }
+
+    [Theory]
+    [InlineData(0, "provider", 0)]
+    [InlineData(null, "unknown", null)]
+    public async Task CompleteAsync_FailedUsagePreservesZeroAndDoesNotFabricateUnknownCharge(
+        int? totalTokens,
+        string expectedUsageSource,
+        int? expectedCharge)
+    {
+        var usage = totalTokens is null ? null : new AiModelUsage(0, 0, totalTokens);
+        var writer = new RecordingLedgerWriter();
+        var caller = CreateCaller(
+            new FailingModelClient(new AiModelException(
+                "test-provider",
+                "Failed.",
+                failureKind: ProviderFailureKind.InvalidResponse,
+                usage: usage)),
+            writer,
+            TimeProvider.System);
+        var context = CreateContext(TimeProvider.System.GetUtcNow(), maxWallClockSeconds: 60);
+
+        var failure = await Assert.ThrowsAsync<InvestigationModelCallFailureException>(() => caller.CompleteAsync(
+            context,
+            context.Configuration.Routes[context.RouteId],
+            [new AiChatMessage(AiMessageRole.User, "Investigate.")],
+            tools: null,
+            CancellationToken.None));
+
+        Assert.Equal(expectedUsageSource, failure.Accounting.Metadata.UsageSource);
+        Assert.Equal(totalTokens, failure.Accounting.Metadata.TotalTokens);
+        Assert.Equal(expectedCharge, failure.Accounting.ChargeTokens);
+        Assert.Empty(writer.Requests);
+    }
+
+    [Fact]
+    public async Task CompleteAsync_SuccessUsesRequiredAtomicLedgerBatch()
+    {
+        var writer = new RecordingLedgerWriter();
+        var caller = CreateCaller(new StaticModelClient(new AiModelUsage(1, 2, 3)), writer, TimeProvider.System);
+        var context = CreateContext(TimeProvider.System.GetUtcNow(), maxWallClockSeconds: 60);
+
+        await caller.CompleteAsync(
+            context,
+            context.Configuration.Routes[context.RouteId],
+            [new AiChatMessage(AiMessageRole.User, "Investigate.")],
+            tools: null,
+            CancellationToken.None);
+
+        Assert.Equal(1, writer.BatchCallCount);
+        Assert.Collection(
+            writer.Requests,
+            request => Assert.Equal(TriageLedgerEventType.ModelCall, request.EventType),
+            request => Assert.Equal(TriageLedgerEventType.BudgetEvent, request.EventType));
+        Assert.Equal(writer.Requests[0].PayloadRef, writer.Requests[1].PayloadRef);
+    }
+
+    [Fact]
+    public async Task CompleteAsync_LedgerPersistenceFailureCarriesSuccessfulCallAccounting()
+    {
+        var persistenceFailure = new InvalidOperationException("Injected ledger persistence failure.");
+        var writer = new RecordingLedgerWriter { BatchException = persistenceFailure };
+        var model = new StaticModelClient(new AiModelUsage(1, 2, 3));
+        var caller = CreateCaller(model, writer, TimeProvider.System);
+        var context = CreateContext(TimeProvider.System.GetUtcNow(), maxWallClockSeconds: 60);
+
+        var thrown = await Assert.ThrowsAsync<InvestigationModelCallFailureException>(() => caller.CompleteAsync(
+            context,
+            context.Configuration.Routes[context.RouteId],
+            [new AiChatMessage(AiMessageRole.User, "Investigate.")],
+            tools: null,
+            CancellationToken.None));
+
+        Assert.Same(persistenceFailure, thrown.InnerException);
+        Assert.Equal("success", thrown.Accounting.Metadata.Outcome);
+        Assert.Null(thrown.Accounting.Metadata.ErrorCode);
+        Assert.Equal(3, thrown.Accounting.Metadata.TotalTokens);
+        Assert.Equal(3, thrown.Accounting.ChargeTokens);
+        Assert.Equal(thrown.Accounting.Metadata.CallId, thrown.Accounting.CallId);
+        Assert.Equal($"model-call:{thrown.Accounting.CallId:N}", thrown.Accounting.PayloadRef);
+        Assert.Equal(1, model.CallCount);
+        Assert.Empty(writer.Requests);
+    }
+
+    [Fact]
+    public async Task AppendModelCallAccountingAsync_CanceledPersistenceTokenPropagatesCancellation()
+    {
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        var writer = new RecordingLedgerWriter
+        {
+            BatchException = new OperationCanceledException(cancellation.Token)
+        };
+        var callId = Guid.NewGuid();
+        var accounting = new InvestigationModelCallAccounting(
+            callId,
+            "orchestrator",
+            new ModelCallLedgerMetadata(
+                "orchestrator",
+                "report-chat",
+                "test-model",
+                "test-provider",
+                "provider",
+                1,
+                2,
+                3,
+                4,
+                0,
+                callId,
+                "success",
+                ErrorCode: null),
+            ChargeTokens: 3);
+        var appender = new TriageLedgerAppender(writer);
+
+        var thrown = await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            appender.AppendModelCallAccountingAsync(
+                CreateJob(TimeProvider.System.GetUtcNow()),
+                accounting,
+                cancellation.Token));
+
+        Assert.IsNotType<InvestigationModelCallFailureException>(thrown);
+        Assert.Equal(cancellation.Token, thrown.CancellationToken);
+        Assert.Empty(writer.Requests);
+    }
+
     private static InvestigationModelCaller CreateCaller(
         IAiModelClient modelClient,
         RecordingLedgerWriter writer,
@@ -337,6 +493,12 @@ public sealed class InvestigationModelCallerTests
         }
     }
 
+    private sealed class FailingModelClient(Exception exception) : IAiModelClient
+    {
+        public Task<AiModelResponse> CompleteAsync(AiModelRequest request, CancellationToken cancellationToken) =>
+            Task.FromException<AiModelResponse>(exception);
+    }
+
     private sealed class StaticLedgerReader(int spentTokens = 0) : ITriageLedgerReader
     {
         public Task<TriageBudgetLedgerUsage> ReadBudgetUsageAsync(TriageJob job, CancellationToken cancellationToken) =>
@@ -365,6 +527,10 @@ public sealed class InvestigationModelCallerTests
 
         public List<TriageLedgerAppendRequest> Requests { get; } = [];
 
+        public int BatchCallCount { get; private set; }
+
+        public Exception? BatchException { get; init; }
+
         public Task<TriageLedgerEntry> AppendAsync(TriageLedgerAppendRequest request, CancellationToken cancellationToken)
         {
             Requests.Add(request);
@@ -386,6 +552,25 @@ public sealed class InvestigationModelCallerTests
                 request.TokensDelta,
                 request.WorkersDelta);
             return Task.FromResult(entry);
+        }
+
+        public async Task<IReadOnlyList<TriageLedgerEntry>> AppendBatchAsync(
+            IReadOnlyList<TriageLedgerAppendRequest> requests,
+            CancellationToken cancellationToken)
+        {
+            BatchCallCount++;
+            if (BatchException is not null)
+            {
+                throw BatchException;
+            }
+
+            var entries = new List<TriageLedgerEntry>(requests.Count);
+            foreach (var request in requests)
+            {
+                entries.Add(await AppendAsync(request, cancellationToken));
+            }
+
+            return entries;
         }
     }
 

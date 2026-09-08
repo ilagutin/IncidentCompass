@@ -11,8 +11,9 @@ public sealed class EmbeddingClientException : ProviderException
         string? errorCode = null,
         HttpStatusCode? statusCode = null,
         string? providerErrorCode = null,
-        Exception? innerException = null)
-        : base(provider, message, errorCode, statusCode, providerErrorCode, innerException)
+        Exception? innerException = null,
+        ProviderFailureKind failureKind = ProviderFailureKind.Unknown)
+        : base(provider, message, errorCode, statusCode, providerErrorCode, innerException, failureKind)
     {
     }
 }

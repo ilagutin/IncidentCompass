@@ -330,6 +330,19 @@ public sealed class WorkerFailClosedPropagationTests
                 request.PayloadRef, request.ConfigHash, DateTimeOffset.UtcNow, request.ToolStatus,
                 request.TokensDelta, request.WorkersDelta));
         }
+
+        public async Task<IReadOnlyList<TriageLedgerEntry>> AppendBatchAsync(
+            IReadOnlyList<TriageLedgerAppendRequest> requests,
+            CancellationToken cancellationToken)
+        {
+            var entries = new List<TriageLedgerEntry>(requests.Count);
+            foreach (var request in requests)
+            {
+                entries.Add(await AppendAsync(request, cancellationToken));
+            }
+
+            return entries;
+        }
     }
 
     private sealed class ConstantTimeProvider(DateTimeOffset now) : TimeProvider

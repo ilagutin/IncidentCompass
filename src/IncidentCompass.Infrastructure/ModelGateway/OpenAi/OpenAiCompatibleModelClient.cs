@@ -1,4 +1,5 @@
 using System.Text.Json;
+using IncidentCompass.Application.Core.Errors;
 using IncidentCompass.Application.Core.ModelClients;
 using IncidentCompass.Application.Core.ModelGateway;
 using IncidentCompass.Infrastructure.Configuration;
@@ -44,7 +45,8 @@ internal sealed class OpenAiCompatibleModelClient(
 
                 if (!httpResponse.IsSuccessStatusCode)
                 {
-                    if (retryPolicy.ShouldRetry(httpResponse.StatusCode) && attempt < maxRetryAttempts)
+                    if (OpenAiCompatibleFailureClassifier.IsRetryableGenerationStatus(httpResponse.StatusCode) &&
+                        attempt < maxRetryAttempts)
                     {
                         await DelayBeforeRetryAsync(
                             clientOptions,
@@ -61,29 +63,28 @@ internal sealed class OpenAiCompatibleModelClient(
 
                 return OpenAiModelResponseMapper.Map(responseContent, request);
             }
-            catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested &&
-                                                attempt < maxRetryAttempts)
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
-                await DelayBeforeRetryAsync(
-                    clientOptions,
-                    response: null,
-                    attempt,
-                    cancellationToken);
+                throw;
             }
-            catch (TaskCanceledException exception) when (!cancellationToken.IsCancellationRequested)
+            catch (OperationCanceledException exception)
             {
                 throw OpenAiModelErrorMapper.Timeout(exception);
             }
-            catch (HttpRequestException) when (attempt < maxRetryAttempts)
-            {
-                await DelayBeforeRetryAsync(
-                    clientOptions,
-                    response: null,
-                    attempt,
-                    cancellationToken);
-            }
             catch (HttpRequestException exception)
             {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (OpenAiCompatibleFailureClassifier.IsSafePreDispatchFailure(exception) &&
+                    attempt < maxRetryAttempts)
+                {
+                    await DelayBeforeRetryAsync(
+                        clientOptions,
+                        response: null,
+                        attempt,
+                        cancellationToken);
+                    continue;
+                }
+
                 throw OpenAiModelErrorMapper.Transport(exception);
             }
             catch (JsonException exception)
@@ -101,6 +102,7 @@ internal sealed class OpenAiCompatibleModelClient(
     {
         return retryPolicy.DelayBeforeRetryAsync(
             clientOptions.RetryBaseDelayMilliseconds,
+            clientOptions.MaxRetryDelaySeconds,
             response,
             attempt,
             cancellationToken);
@@ -114,7 +116,8 @@ internal sealed class OpenAiCompatibleModelClient(
                 OpenAiModelProvider.Name,
                 "OpenAI-compatible model provider configuration is invalid.",
                 errorCode: "configuration_error",
-                innerException: exception));
+                innerException: exception,
+                failureKind: ProviderFailureKind.RejectedRequest));
     }
 
     private static Uri GetEndpointUri(OpenAiCompatibleModelClientOptions clientOptions)
@@ -126,7 +129,8 @@ internal sealed class OpenAiCompatibleModelClient(
             () => new AiModelException(
                 OpenAiModelProvider.Name,
                 "OpenAI-compatible model provider configuration is invalid.",
-                errorCode: "configuration_error"));
+                errorCode: "configuration_error",
+                failureKind: ProviderFailureKind.RejectedRequest));
     }
 
     private static string CreateIdempotencyKey()

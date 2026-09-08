@@ -1,5 +1,7 @@
 using System.Net;
 using System.Text.Json;
+using IncidentCompass.Application.Core.Errors;
+using IncidentCompass.Application.Core.ModelClients;
 using IncidentCompass.Application.Core.ModelGateway;
 using IncidentCompass.Infrastructure.OpenAiCompatible;
 
@@ -14,20 +16,21 @@ internal static class OpenAiModelErrorMapper
         var providerError = OpenAiCompatibleErrorMapper.TryReadError(responseContent);
         return new AiModelException(
             OpenAiModelProvider.Name,
-            providerError?.Error?.Message
-                ?? $"Model provider returned HTTP {(int)statusCode}.",
-            OpenAiCompatibleErrorMapper.NormalizeProviderErrorCode(statusCode),
+            $"Model provider returned HTTP {(int)statusCode}.",
+            OpenAiCompatibleErrorMapper.NormalizeModelErrorCode(statusCode),
             statusCode,
-            providerError?.Error?.Code);
+            providerError?.Error?.Code,
+            failureKind: OpenAiCompatibleFailureClassifier.Classify(statusCode));
     }
 
-    public static AiModelException Timeout(TaskCanceledException exception)
+    public static AiModelException Timeout(OperationCanceledException exception)
     {
         return new AiModelException(
             OpenAiModelProvider.Name,
             "Model provider request timed out.",
-            errorCode: "timeout",
-            innerException: exception);
+            errorCode: "provider_generation_timeout",
+            innerException: exception,
+            failureKind: ProviderFailureKind.GenerationTimeout);
     }
 
     public static AiModelException Transport(HttpRequestException exception)
@@ -35,9 +38,12 @@ internal static class OpenAiModelErrorMapper
         return new AiModelException(
             OpenAiModelProvider.Name,
             "Model provider request failed before a valid response was received.",
-            errorCode: "transport_error",
+            errorCode: OpenAiCompatibleFailureClassifier.IsSafePreDispatchFailure(exception)
+                ? "provider_unavailable"
+                : "provider_dispatch_outcome_unknown",
             statusCode: exception.StatusCode,
-            innerException: exception);
+            innerException: exception,
+            failureKind: OpenAiCompatibleFailureClassifier.Classify(exception));
     }
 
     public static AiModelException InvalidJson(JsonException exception)
@@ -46,14 +52,48 @@ internal static class OpenAiModelErrorMapper
             OpenAiModelProvider.Name,
             "Model provider returned an invalid JSON response.",
             errorCode: "invalid_json",
-            innerException: exception);
+            innerException: exception,
+            failureKind: ProviderFailureKind.InvalidResponse);
     }
 
-    public static AiModelException EmptyResponse()
+    public static AiModelException EmptyResponse(
+        AiModelUsage? usage,
+        string? returnedModel)
     {
         return new AiModelException(
             OpenAiModelProvider.Name,
             "Model provider returned no chat completion content.",
-            errorCode: "empty_response");
+            errorCode: "empty_response",
+            failureKind: ProviderFailureKind.InvalidResponse,
+            usage: usage,
+            returnedModel: returnedModel);
+    }
+
+    public static AiModelException OutputLimitReached(
+        AiModelUsage? usage,
+        string? returnedModel)
+    {
+        return new AiModelException(
+            OpenAiModelProvider.Name,
+            "Model provider reached its output limit before returning usable content.",
+            errorCode: "provider_output_limit_reached",
+            failureKind: ProviderFailureKind.OutputLimitReached,
+            usage: usage,
+            returnedModel: returnedModel);
+    }
+
+    public static AiModelException InvalidToolCall(
+        AiModelUsage? usage,
+        string? returnedModel,
+        JsonException? innerException = null)
+    {
+        return new AiModelException(
+            OpenAiModelProvider.Name,
+            "Model provider returned a malformed tool call.",
+            errorCode: "invalid_response",
+            innerException: innerException,
+            failureKind: ProviderFailureKind.InvalidResponse,
+            usage: usage,
+            returnedModel: returnedModel);
     }
 }

@@ -14,60 +14,96 @@ internal static class OpenAiModelResponseMapper
         var completion = JsonSerializer.Deserialize<OpenAiChatCompletionResponse>(
             responseContent,
             OpenAiCompatibleJson.Options);
+        var returnedModel = string.IsNullOrWhiteSpace(completion?.Model) ? null : completion.Model;
+        var usage = completion?.Usage is null
+            ? null
+            : new AiModelUsage(
+                completion.Usage.PromptTokens,
+                completion.Usage.CompletionTokens,
+                completion.Usage.TotalTokens);
         var choices = completion?.Choices;
-        var message = choices is { Count: > 0 } && choices[0] is { } choice ? choice.Message : null;
+        var choice = choices is { Count: > 0 } ? choices[0] : null;
+        var message = choice?.Message;
         var content = message?.Content;
-        var proposedToolCalls = message?.ToolCalls?
-            .Select(ToAiToolCall)
-            .Where(static toolCall => toolCall is not null)
-            .Select(static toolCall => toolCall!)
-            .ToArray() ?? [];
+        var proposedToolCalls = MapToolCalls(message?.ToolCalls, usage, returnedModel);
 
         if (string.IsNullOrWhiteSpace(content) && proposedToolCalls.Length == 0)
         {
-            throw OpenAiModelErrorMapper.EmptyResponse();
+            if (string.Equals(choice?.FinishReason, "length", StringComparison.OrdinalIgnoreCase))
+            {
+                throw OpenAiModelErrorMapper.OutputLimitReached(usage, returnedModel);
+            }
+
+            throw OpenAiModelErrorMapper.EmptyResponse(usage, returnedModel);
         }
 
         return new AiModelResponse(
             Content: content ?? string.Empty,
-            Model: completion?.Model ?? request.Model,
+            Model: returnedModel ?? request.Model,
             Provider: OpenAiModelProvider.Name,
-            Usage: completion?.Usage is null
-                ? null
-                : new AiModelUsage(
-                    completion.Usage.PromptTokens,
-                    completion.Usage.CompletionTokens,
-                    completion.Usage.TotalTokens),
+            Usage: usage,
             CorrelationId: request.CorrelationId,
             ProposedToolCalls: proposedToolCalls);
     }
 
-    private static AiToolCall? ToAiToolCall(OpenAiToolCall toolCall)
+    private static AiToolCall[] MapToolCalls(
+        IReadOnlyList<OpenAiToolCall>? toolCalls,
+        AiModelUsage? usage,
+        string? returnedModel)
     {
-        if (toolCall.Function is null ||
+        if (toolCalls is null || toolCalls.Count == 0)
+        {
+            return [];
+        }
+
+        var mappedToolCalls = new AiToolCall[toolCalls.Count];
+        for (var index = 0; index < toolCalls.Count; index++)
+        {
+            mappedToolCalls[index] = ToAiToolCall(toolCalls[index], usage, returnedModel);
+        }
+
+        return mappedToolCalls;
+    }
+
+    private static AiToolCall ToAiToolCall(
+        OpenAiToolCall? toolCall,
+        AiModelUsage? usage,
+        string? returnedModel)
+    {
+        if (toolCall is null ||
+            string.IsNullOrWhiteSpace(toolCall.Id) ||
+            !string.Equals(toolCall.Type, "function", StringComparison.Ordinal) ||
+            toolCall.Function is null ||
             string.IsNullOrWhiteSpace(toolCall.Function.Name))
         {
-            return null;
+            throw OpenAiModelErrorMapper.InvalidToolCall(usage, returnedModel);
         }
 
         return new AiToolCall(
-            string.IsNullOrWhiteSpace(toolCall.Id) ? Guid.NewGuid().ToString("n") : toolCall.Id,
+            toolCall.Id,
             toolCall.Function.Name,
             "v1",
-            ReadArguments(toolCall.Function.Arguments));
+            ReadArguments(toolCall.Function.Arguments, usage, returnedModel));
     }
 
-    private static JsonElement ReadArguments(string? argumentsJson)
+    private static JsonElement ReadArguments(
+        string? argumentsJson,
+        AiModelUsage? usage,
+        string? returnedModel)
     {
         try
         {
-            using var argumentsDocument = JsonDocument.Parse(
-                string.IsNullOrWhiteSpace(argumentsJson) ? "{}" : argumentsJson);
+            using var argumentsDocument = JsonDocument.Parse(argumentsJson ?? string.Empty);
+            if (argumentsDocument.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                throw OpenAiModelErrorMapper.InvalidToolCall(usage, returnedModel);
+            }
+
             return argumentsDocument.RootElement.Clone();
         }
-        catch (JsonException)
+        catch (JsonException exception)
         {
-            return JsonSerializer.SerializeToElement(argumentsJson);
+            throw OpenAiModelErrorMapper.InvalidToolCall(usage, returnedModel, exception);
         }
     }
 }

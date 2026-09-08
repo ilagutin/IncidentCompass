@@ -1,4 +1,3 @@
-using System.Text.Json;
 using IncidentCompass.Application.Governance.Ledger;
 using IncidentCompass.Domain.Incidents;
 using IncidentCompass.Domain.Incidents.Statuses;
@@ -100,25 +99,25 @@ internal sealed class TriageLedgerAppender(ITriageLedgerWriter ledgerWriter)
             cancellationToken);
     }
 
-    public Task AppendModelCallAsync(
+    public async Task AppendModelCallAccountingAsync(
         TriageJob job,
-        string? role,
-        ModelCallLedgerMetadata metadata,
+        InvestigationModelCallAccounting accounting,
         CancellationToken cancellationToken)
     {
-        return AppendCoreAsync(
-            job,
-            TriageLedgerEventType.ModelCall,
-            role,
-            toolName: null,
-            JsonSerializer.Serialize(metadata),
-            decision: null,
-            decisionReason: null,
-            payloadRef: null,
-            toolStatus: null,
-            tokensDelta: null,
-            workersDelta: null,
-            cancellationToken);
+        try
+        {
+            await ledgerWriter.AppendBatchAsync(
+                accounting.CreateLedgerRequests(job),
+                cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            throw new InvestigationModelCallFailureException(accounting, exception);
+        }
     }
 
     private async Task AppendCoreAsync(

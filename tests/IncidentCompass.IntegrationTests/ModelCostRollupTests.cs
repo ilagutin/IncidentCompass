@@ -30,6 +30,7 @@ public sealed class ModelCostRollupTests(PostgresRepositoryFixture postgres)
 
         await InsertCallAsync(database.ConnectionString, tenantA, WindowStart, Usage("alpha", "Model-A", 100_000, 200_000, 300_000));
         await InsertCallAsync(database.ConnectionString, tenantA, DateTimeOffset.Parse("2026-08-01T00:59:59Z", CultureInfo.InvariantCulture), Usage("alpha", "Model-A", 10, 20, 30));
+        await InsertCallAsync(database.ConnectionString, tenantA, DateTimeOffset.Parse("2026-08-01T00:30:00Z", CultureInfo.InvariantCulture), FailedUsage("alpha", "Model-A", 100, 200, 300));
         await InsertCallAsync(database.ConnectionString, tenantA, DateTimeOffset.Parse("2026-08-01T01:00:00Z", CultureInfo.InvariantCulture), Usage("alpha", "Model-A", 1_000_000, 1_000_000, 2_000_000));
         await InsertCallAsync(database.ConnectionString, tenantA, DateTimeOffset.Parse("2026-08-01T01:05:00Z", CultureInfo.InvariantCulture), Usage("beta", "Model-B", 1_000_000, 0, 1_000_000));
         await InsertCallAsync(database.ConnectionString, tenantA, DateTimeOffset.Parse("2026-08-01T01:10:00Z", CultureInfo.InvariantCulture), Usage("missing", "Model-C", 7, 8, 15));
@@ -66,9 +67,48 @@ public sealed class ModelCostRollupTests(PostgresRepositoryFixture postgres)
 
         Assert.Collection(
             hours,
-            hour => AssertHour(hour, "2026-08-01T00:00:00Z", 2, 100_010, 200_020, 300_030, 2, 0, ("USD", 0.650065m)),
+            hour => AssertHour(hour, "2026-08-01T00:00:00Z", 3, 100_110, 200_220, 300_330, 3, 0, ("USD", 0.650715m)),
             hour => AssertHour(hour, "2026-08-01T01:00:00Z", 7, 2_000_061, 1_000_066, 3_000_127, 3, 4, ("EUR", 4m), ("USD", 5m)),
             hour => AssertHour(hour, "2026-08-01T02:00:00Z", 6, 0, 0, 0, 0, 6));
+    }
+
+    [DockerAvailableFact]
+    public async Task FailedCallWithUnknownUsageCountsAsUnpricedWithoutTokensOrSpend()
+    {
+        var now = DateTimeOffset.Parse("2026-08-03T14:20:00Z", CultureInfo.InvariantCulture);
+        await using var database = await ActionApprovalDatabase.CreateAsync(postgres);
+        var seeded = await SeedJobAsync(database.ConnectionString, "tenant-a", now);
+        await InsertPriceAsync(
+            database.ConnectionString,
+            "failed-provider",
+            "failed-model",
+            "USD",
+            1m,
+            1m,
+            now.AddHours(-1),
+            now.AddHours(1));
+        await InsertCallAsync(
+            database.ConnectionString,
+            seeded,
+            now,
+            FailedUnknownUsage());
+        using var services = CreateServices(database.ConnectionString);
+
+        var hours = await services.GetRequiredService<IModelCostRollupRepository>().ReadAsync(
+            "tenant-a",
+            now.AddMinutes(-1),
+            now.AddMinutes(1),
+            TestContext.Current.CancellationToken);
+
+        AssertHour(
+            Assert.Single(hours),
+            "2026-08-03T14:00:00Z",
+            calls: 1,
+            input: 0,
+            output: 0,
+            total: 0,
+            priced: 0,
+            unpriced: 1);
     }
 
     [DockerAvailableFact]
@@ -231,6 +271,42 @@ public sealed class ModelCostRollupTests(PostgresRepositoryFixture postgres)
             inputTokens = input,
             outputTokens = output,
             totalTokens = total
+        });
+
+    private static string FailedUsage(string provider, string model, int input, int output, int total) =>
+        JsonSerializer.Serialize(new
+        {
+            kind = "worker",
+            routeId = "analysis-chat",
+            provider,
+            model,
+            usageSource = "provider",
+            inputTokens = input,
+            outputTokens = output,
+            totalTokens = total,
+            durationMs = 100,
+            proposedToolCallCount = 0,
+            callId = Guid.NewGuid(),
+            outcome = "failed",
+            errorCode = "provider_generation_timeout"
+        });
+
+    private static string FailedUnknownUsage() =>
+        JsonSerializer.Serialize(new
+        {
+            kind = "worker",
+            routeId = "analysis-chat",
+            model = "failed-model",
+            provider = "failed-provider",
+            usageSource = "unknown",
+            inputTokens = (int?)null,
+            outputTokens = (int?)null,
+            totalTokens = (int?)null,
+            durationMs = 125,
+            proposedToolCallCount = 0,
+            callId = Guid.Parse("11111111-2222-3333-4444-555555555555"),
+            outcome = "failed",
+            errorCode = "provider_generation_timeout"
         });
 
     private static void AssertHour(

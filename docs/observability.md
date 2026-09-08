@@ -156,12 +156,19 @@ The live model telemetry mechanism is the append-only triage ledger. Each invest
 - route ID;
 - provider;
 - model;
-- token usage;
-- usage source (`provider` or `estimate`);
+- nullable input, output and total token counts;
+- usage source (`provider`, `estimate` or `unknown`);
 - duration in milliseconds;
-- proposed tool-call count.
+- proposed tool-call count;
+- stable call ID;
+- outcome (`success` or `failed`);
+- nullable safe error code.
 
-That payload is the named `ModelCallLedgerMetadata` record. Its JSON property names, casing and order are pinned by attribute because existing ledger rows and the cost-rollup reader parse them; the type exists so the persisted shape has a name and a compile-time contract, not to change it.
+That payload is the named `ModelCallLedgerMetadata` record. Its JSON property names, casing and order
+are pinned by attribute because ledger rows and the cost-rollup reader share this persisted contract.
+The call ID, outcome and nullable error code extend the earlier success-only shape, while the existing
+field names remain stable. Unknown usage is represented by nullable token fields rather than a
+fabricated estimate.
 
 The ledger does not store rendered prompts, full provider responses, document text, provider credentials, API keys or embedding vectors. Token budget accounting is recorded separately as first-class `BudgetEvent` rows with `tokens_delta` and `workers_delta` columns.
 
@@ -182,11 +189,16 @@ values and overlapping or tied prices increment the call and unpriced counts but
 or spend value. A real configured zero price remains a priced call; missing or ambiguous pricing never
 becomes false zero spend.
 
+Every durable `ModelCall` row increments `callCount`, including unsuccessful calls. An unsuccessful
+call with unknown usage has null token fields, increments `unpricedCallCount`, and contributes no
+input, output or total tokens and no spend. This preserves visibility that a call occurred without
+inventing usage or cost.
+
 The pricing table is effective-dated operator-maintained database configuration. This release adds no
 price-management API, configuration reload, currency conversion, threshold, alert job or notification.
 The rollup response and dispatch logs do not return ModelCall provider, model, route ID, prompt,
-response, credential, endpoint or embedding data. Existing ModelCall and BudgetEvent writes and the
-fault-ledger response are unchanged.
+response, credential, endpoint or embedding data. ModelCall and BudgetEvent metadata and the
+fault-ledger response remain bounded and contain no prompt or response bodies.
 
 Post-report approval state uses the exact `ActionProposed`, `ApprovalDecision`,
 `ActionDispatchStarted` and `ActionCompleted` ledger events. These rows carry bounded summaries,

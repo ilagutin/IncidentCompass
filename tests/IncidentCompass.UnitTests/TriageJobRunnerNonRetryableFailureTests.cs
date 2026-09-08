@@ -1,3 +1,4 @@
+using IncidentCompass.Application.Core.Errors;
 using IncidentCompass.Application.Core.ModelGateway;
 using IncidentCompass.Application.Core.Resilience;
 using IncidentCompass.Application.Intake.Configuration;
@@ -152,11 +153,14 @@ public sealed class TriageJobRunnerNonRetryableFailureTests
             new FixedTimeProvider(now));
         var runner = CreateRunner(
             recorder,
-            new ThrowingProcessor(new AiModelException("test-provider", "Service unavailable.")),
+            new ThrowingProcessor(new AiModelException(
+                "test-provider",
+                "Service unavailable.",
+                failureKind: ProviderFailureKind.Unavailable)),
             tracker,
             new FixedTimeProvider(now));
 
-        await ProcessAsync(runner, attempt: 3, maxAttempts: 1);
+        await ProcessAsync(runner, attempt: 1, maxAttempts: 1);
 
         var failure = Assert.Single(recorder.Failures);
         Assert.Equal(TriageJobStatus.RetryPending, failure.Status);
@@ -167,7 +171,7 @@ public sealed class TriageJobRunnerNonRetryableFailureTests
     }
 
     [Fact]
-    public async Task ProcessClaimedAsync_ProviderOutageWrappingExhaustionStillWins()
+    public async Task ProcessClaimedAsync_NonRetryableFailureInsideProviderWrapperTakesPrecedence()
     {
         var now = DateTimeOffset.UtcNow;
         var recorder = new RecordingRuntimeRepository();
@@ -178,15 +182,19 @@ public sealed class TriageJobRunnerNonRetryableFailureTests
             recorder,
             new ThrowingProcessor(new InvalidOperationException(
                 "Outage surfaced alongside exhaustion.",
-                new AiModelException("test-provider", "Service unavailable.", innerException: exhaustion))),
+                new AiModelException(
+                    "test-provider",
+                    "Nonsensical provider wrapper.",
+                    innerException: exhaustion,
+                    failureKind: ProviderFailureKind.Unavailable))),
             timeProvider: new FixedTimeProvider(now));
 
         await ProcessAsync(runner, attempt: 1, maxAttempts: 5);
 
         var failure = Assert.Single(recorder.Failures);
-        Assert.Equal(TriageJobStatus.RetryPending, failure.Status);
-        Assert.Equal("provider_unavailable", failure.ErrorCode);
-        Assert.Equal(TriageJobRetryBudgetDisposition.DoNotConsumeAttempt, failure.RetryBudgetDisposition);
+        Assert.Equal(TriageJobStatus.DeadLettered, failure.Status);
+        Assert.Equal(TriageBudgetExhaustedException.MaxTokensReachedCode, failure.ErrorCode);
+        Assert.Equal(TriageJobRetryBudgetDisposition.ConsumeAttempt, failure.RetryBudgetDisposition);
     }
 
     [Fact]

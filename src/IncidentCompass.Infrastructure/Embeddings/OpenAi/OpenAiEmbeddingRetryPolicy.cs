@@ -10,7 +10,7 @@ internal sealed class OpenAiEmbeddingRetryPolicy
 
     public bool ShouldRetry(HttpStatusCode statusCode)
     {
-        return retryPolicy.ShouldRetry(statusCode);
+        return retryPolicy.ShouldRetryEmbedding(statusCode);
     }
 
     public Task DelayBeforeRetryAsync(

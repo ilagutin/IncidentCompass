@@ -186,6 +186,58 @@ public sealed class PostgresTriageLedgerWriterTests(PostgresRepositoryFixture po
     }
 
     [DockerAvailableFact]
+    public async Task AppendBatchAsync_RollsBackModelCallWhenChargeInsertFails()
+    {
+        using var scope = await CreateScopeAsync();
+        var seed = await SeedJobAsync(scope.ConnectionString, "ledger-batch-rollback");
+        var writer = scope.Services.GetRequiredService<ITriageLedgerWriter>();
+        var payloadRef = "model-call:" + Guid.NewGuid().ToString("N");
+        var suffix = Guid.NewGuid().ToString("N");
+        var functionName = "fail_batch_budget_" + suffix;
+        var triggerName = "fail_batch_budget_" + suffix;
+        await ExecuteAsync(scope.ConnectionString, $"""
+            CREATE FUNCTION incidentcompass.{functionName}() RETURNS trigger LANGUAGE plpgsql AS $$
+            BEGIN
+                IF NEW.payload_ref = '{payloadRef}' AND NEW.event_type = 'BudgetEvent' THEN
+                    RAISE EXCEPTION 'injected batch failure';
+                END IF;
+                RETURN NEW;
+            END;
+            $$;
+            CREATE TRIGGER {triggerName}
+            BEFORE INSERT ON incidentcompass.triage_ledger
+            FOR EACH ROW EXECUTE FUNCTION incidentcompass.{functionName}();
+            """);
+        try
+        {
+            await Assert.ThrowsAnyAsync<Exception>(() => writer.AppendBatchAsync(
+            [
+                new TriageLedgerAppendRequest(
+                    seed.FaultId, seed.JobId, 1, TriageLedgerEventType.ModelCall,
+                    "analysis", null, "{}", null, null, payloadRef, seed.ConfigHash),
+                new TriageLedgerAppendRequest(
+                    seed.FaultId, seed.JobId, 1, TriageLedgerEventType.BudgetEvent,
+                    null, null, "model_call_charged", null, null, payloadRef, seed.ConfigHash,
+                    TokensDelta: 7)
+            ],
+                TestContext.Current.CancellationToken));
+        }
+        finally
+        {
+            await ExecuteAsync(scope.ConnectionString, $"""
+                DROP TRIGGER {triggerName} ON incidentcompass.triage_ledger;
+                DROP FUNCTION incidentcompass.{functionName}();
+                """);
+        }
+
+        Assert.Equal(0, await ScalarAsync<long>(
+            scope.ConnectionString,
+            "SELECT count(*) FROM incidentcompass.triage_ledger WHERE job_id = @job_id AND payload_ref = @payload_ref;",
+            ("job_id", seed.JobId),
+            ("payload_ref", payloadRef)));
+    }
+
+    [DockerAvailableFact]
     public async Task AppendAsync_CommitsOutsideAmbientIntakeTransaction()
     {
         using var scope = await CreateScopeAsync();

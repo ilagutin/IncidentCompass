@@ -207,6 +207,11 @@ public sealed class ActionToolRuleEngineTests
         public Task<TriageLedgerEntry> AppendAsync(
             TriageLedgerAppendRequest request, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
+
+        public Task<IReadOnlyList<TriageLedgerEntry>> AppendBatchAsync(
+            IReadOnlyList<TriageLedgerAppendRequest> requests,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
     }
 
     private sealed class ToolResultCommitter : ITriageToolResultCommitter

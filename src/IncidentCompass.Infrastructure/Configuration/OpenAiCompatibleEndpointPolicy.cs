@@ -17,7 +17,7 @@ internal static class OpenAiCompatibleEndpointPolicy
                    endpointPath,
                    allowInsecureHttpForLoopback,
                    out _) &&
-               timeoutSeconds is > 0 and <= 300 &&
+               timeoutSeconds is > 0 and <= 3600 &&
                maxRetryAttempts is >= 0 and <= 10 &&
                retryBaseDelayMilliseconds is > 0 and <= 60_000;
     }

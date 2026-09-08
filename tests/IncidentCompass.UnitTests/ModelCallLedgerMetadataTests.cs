@@ -19,7 +19,10 @@ public sealed class ModelCallLedgerMetadataTests
         OutputTokens: 64,
         TotalTokens: 192,
         DurationMs: 1234,
-        ProposedToolCallCount: 1);
+        ProposedToolCallCount: 1,
+        CallId: Guid.Parse("11111111-1111-1111-1111-111111111111"),
+        Outcome: "success",
+        ErrorCode: null);
 
     [Fact]
     public void Serialize_MatchesTheAnonymousPayloadShapeThatWroteExistingLedgerRows()
@@ -36,7 +39,10 @@ public sealed class ModelCallLedgerMetadataTests
             outputTokens = Metadata.OutputTokens,
             totalTokens = Metadata.TotalTokens,
             durationMs = Metadata.DurationMs,
-            proposedToolCallCount = Metadata.ProposedToolCallCount
+            proposedToolCallCount = Metadata.ProposedToolCallCount,
+            callId = Metadata.CallId,
+            outcome = Metadata.Outcome,
+            errorCode = Metadata.ErrorCode
         };
 
         Assert.Equal(JsonSerializer.Serialize(legacy), JsonSerializer.Serialize(Metadata));
@@ -46,7 +52,7 @@ public sealed class ModelCallLedgerMetadataTests
     public void Serialize_PinsTheExactPersistedJson()
     {
         const string expected = """
-            {"kind":"orchestrator","routeId":"report-chat","model":"local-model","provider":"local-oai","usageSource":"provider","inputTokens":128,"outputTokens":64,"totalTokens":192,"durationMs":1234,"proposedToolCallCount":1}
+            {"kind":"orchestrator","routeId":"report-chat","model":"local-model","provider":"local-oai","usageSource":"provider","inputTokens":128,"outputTokens":64,"totalTokens":192,"durationMs":1234,"proposedToolCallCount":1,"callId":"11111111-1111-1111-1111-111111111111","outcome":"success","errorCode":null}
             """;
 
         Assert.Equal(expected, JsonSerializer.Serialize(Metadata));

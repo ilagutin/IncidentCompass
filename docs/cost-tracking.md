@@ -7,7 +7,7 @@ Model-backed features are cost-sensitive. The live system records token usage in
 - input tokens;
 - output tokens;
 - total tokens;
-- usage source (`provider` or `estimate`);
+- usage source (`provider`, `estimate` or `unknown`);
 - provider;
 - model;
 - route ID;
@@ -31,6 +31,11 @@ value. Matching is case-sensitive and requires exactly one interval at the call 
 does not write estimated cost to a separate request-log table and does not expose a usage dashboard.
 The mock models retain zero-cost USD pricing records so deterministic local calls are explicitly
 priced rather than confused with missing pricing.
+
+`callCount` counts every durable `ModelCall` row, whether the call succeeded or failed. When an
+unsuccessful call has unknown usage, its input, output and total token fields are null. That row still
+increments `callCount` and `unpricedCallCount`, but it contributes no tokens and no spend. The rollup
+does not turn missing usage into a zero-token priced call or fabricate an estimate.
 
 ## Pricing Table
 

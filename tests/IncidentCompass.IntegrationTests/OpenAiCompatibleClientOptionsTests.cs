@@ -4,6 +4,43 @@ namespace IncidentCompass.IntegrationTests;
 
 public sealed class OpenAiCompatibleClientOptionsTests
 {
+    [Fact]
+    public void ModelClientOptions_DefaultsRetryDelayCeilingToFiveSeconds()
+    {
+        var options = new OpenAiCompatibleModelClientOptions();
+
+        Assert.Equal(5, options.MaxRetryDelaySeconds);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    [InlineData(3601)]
+    public void ModelClientOptions_RejectsInvalidRetryDelayCeiling(int maxRetryDelaySeconds)
+    {
+        var options = new OpenAiCompatibleModelClientOptions
+        {
+            ApiKey = "test-api-key",
+            MaxRetryDelaySeconds = maxRetryDelaySeconds
+        };
+
+        Assert.False(options.IsValid());
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(3600)]
+    public void ModelClientOptions_AcceptsValidRetryDelayCeiling(int maxRetryDelaySeconds)
+    {
+        var options = new OpenAiCompatibleModelClientOptions
+        {
+            ApiKey = "test-api-key",
+            MaxRetryDelaySeconds = maxRetryDelaySeconds
+        };
+
+        Assert.True(options.IsValid());
+    }
+
     [Theory]
     [InlineData("/v1/chat/completions", "https://api.openai.com/v1/chat/completions")]
     [InlineData("v1/chat/completions", "https://api.openai.com/v1/chat/completions")]

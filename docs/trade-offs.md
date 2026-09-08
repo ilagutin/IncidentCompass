@@ -151,6 +151,50 @@ Tool policy evaluates `rate_cap`, `precondition` and budget state by reading the
 
 `MaxTokens` means the backend will not start a new model call once the current-attempt budget is already reached. A single in-flight call can still overshoot the limit because final usage is known only after the provider responds. The overshoot is recorded as a `BudgetEvent` instead of hidden.
 
+## Provider Retries Prefer Bounded Uncertainty
+
+The OpenAI-compatible generation client retries only HTTP 429/503 responses and failures known to
+precede dispatch: name resolution, secure-connection establishment, proxy-tunnel establishment, or
+a connection error whose socket cause is connection refused, timed out, host unreachable, network
+unreachable, host not found or address not available. It honors a positive `Retry-After` delta or
+future date, capped by the configurable `MaxRetryDelaySeconds`, and otherwise uses capped
+exponential delay. It does not retry 501/505, a generation timeout, reset, response-ended failure,
+generic connection error or other server errors. Redirects are disabled.
+
+Embedding creation keeps its broader legacy retry set because that operation is treated as
+idempotent: HTTP 408, 429 and all 5xx responses, including 501/505, plus configured timeouts and
+transport failures are retried up to its own limit. Once that budget is exhausted, 429 and retryable
+5xx responses other than 501/505 and the positively safe pre-dispatch failures above are
+`Unavailable`; 408 and a configured timeout are `GenerationTimeout`; 501/505 and configuration
+errors are `RejectedRequest`; other exhausted transport failures are `TransportFailure` with
+`transport_error`; and invalid JSON or an empty vector is `InvalidResponse`. Caller cancellation
+remains distinct. `TransportFailure` consumes the ordinary finite job attempt budget, becoming
+`RetryPending` while attempts remain and `DeadLettered` at `MaxAttempts`; it never enters outage
+backpressure merely because it is a provider exception.
+
+This is deliberately conservative. A transient HTTP 500 may now dead-letter as
+`provider_dispatch_outcome_unknown` even when a later attempt would succeed, because the backend
+cannot prove that the provider did not accept and begin the first generation. A timeout consumes the
+finite job attempt budget, and output-limit exhaustion, rejected requests and ambiguous interruption
+dead-letter immediately. Only a failure classified as `Unavailable` enters the delayed
+no-attempt-cost path and process-local backpressure. The policy avoids unbounded replay of work that
+may already have been dispatched, but it is not a distributed provider-health mechanism and does not
+add fallback routing.
+
+Failed generations can return billable usage. When they do, failure accounting writes a failed
+`ModelCall` and its `BudgetEvent` charge in the same transaction as the fenced job/fault disposition.
+The shared call id in `payload_ref` deduplicates a replay of failure persistence under the job lock.
+An explicit provider total of zero is preserved as a zero charge; absent usage remains unknown and
+is not estimated. If ownership is stale, accounting stays visible while the fenced job and fault
+mutations do not apply.
+
+That boundary favors audit honesty over a guessed cost: unknown failed usage can leave the ledger and
+cost rollup below the provider's eventual invoice. Success accounting still estimates missing or
+incomplete usage. When both ledger rows exist, model-call accounting is atomic as a pair, but it is
+not an exactly-once distributed billing system beyond the database lock and call-id deduplication
+boundary. Streaming idle detection, progress recovery, fallback routes and revised route, timeout,
+wall-clock and output-token defaults remain separate design work.
+
 ## Budget And Governance Exhaustion Dead-Letters Instead Of Retrying
 
 Reaching a bounded-run limit is treated as a permanent outcome for the job, not a transient fault. When an attempt hits the token budget, the wall-clock budget, the route context window, the per-attempt worker budget (`MaxWorkers`) or a bounded turn limit (the configured orchestrator `MaxTurns` plus its reprompt allowance, or the worker turn allowance), when backend governance denies a worker tool call, or when the rehydrated configuration names an orchestrator route it does not contain, the job is dead-lettered immediately with its own `last_error_code` and no next attempt time. It does not spend the remaining `MaxAttempts`.

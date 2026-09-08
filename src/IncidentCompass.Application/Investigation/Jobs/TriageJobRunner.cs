@@ -1,3 +1,4 @@
+using IncidentCompass.Application.Core.Errors;
 using IncidentCompass.Application.Core.Observability;
 using IncidentCompass.Application.Core.Resilience;
 using IncidentCompass.Application.Core.Text;
@@ -43,6 +44,25 @@ internal sealed partial class TriageJobRunner(
     {
         var configurationLoaded = false;
         using var attemptTelemetry = telemetry?.StartJobAttempt();
+        var maxAttempts = Math.Max(1, settings.MaxAttempts);
+        if (job.Attempt > maxAttempts)
+        {
+            telemetry?.RecordJobAttempt(RuntimeTelemetryOutcome.Failed);
+            var exhaustedFailure = new TriageJobAttemptFailure(
+                TriageJobStatus.DeadLettered,
+                "triage_job_attempt_limit_exhausted",
+                "triage_job_attempt_limit_exhausted: attempt guard.",
+                NextAttemptAtUtc: null);
+            LogAttemptFailed(
+                logger,
+                job.Id,
+                job.Attempt,
+                exhaustedFailure.ErrorCode,
+                "AttemptLimitGuard");
+            LogAttemptDisposition(job, exhaustedFailure);
+            await RecordAttemptFailureAsync(job, workerId, exhaustedFailure);
+            return;
+        }
 
         try
         {
@@ -58,7 +78,11 @@ internal sealed partial class TriageJobRunner(
         }
         catch (Exception exception)
         {
-            var providerOutage = ProviderOutageExceptionClassifier.IsProviderOutage(exception);
+            var nonRetryableErrorCode = TriageNonRetryableFailureClassifier.TryGetErrorCode(exception);
+            var providerFailureKind = nonRetryableErrorCode is null
+                ? ProviderOutageExceptionClassifier.FindFailureKind(exception)
+                : null;
+            var providerOutage = providerFailureKind == ProviderFailureKind.Unavailable;
             if (providerOutage)
             {
                 telemetry?.RecordJobAttempt(RuntimeTelemetryOutcome.ProviderUnavailable);
@@ -70,27 +94,41 @@ internal sealed partial class TriageJobRunner(
                 telemetry?.RecordJobAttempt(RuntimeTelemetryOutcome.Failed);
             }
 
-            var failure = CreateFailure(job, settings, exception, configurationLoaded, providerOutage);
+            var failure = CreateFailure(
+                job,
+                settings,
+                exception,
+                configurationLoaded,
+                nonRetryableErrorCode,
+                providerFailureKind);
 
             // The original failure is logged before any durable write is attempted, so a secondary
             // persistence fault can never erase the trace of what actually failed.
             LogAttemptFailed(logger, job.Id, job.Attempt, failure.ErrorCode, exception.GetType().Name);
             LogAttemptDisposition(job, failure);
 
-            try
-            {
-                await runtimeRepository.RecordAttemptFailureAsync(
-                    job,
-                    workerId,
-                    failure,
-                    CancellationToken.None);
-            }
-            catch (Exception persistenceException)
-            {
-                LogAttemptFailurePersistenceFailed(
-                    logger, job.Id, job.Attempt, persistenceException.GetType().Name);
-                throw;
-            }
+            await RecordAttemptFailureAsync(job, workerId, failure);
+        }
+    }
+
+    private async Task RecordAttemptFailureAsync(
+        TriageJob job,
+        string workerId,
+        TriageJobAttemptFailure failure)
+    {
+        try
+        {
+            await runtimeRepository.RecordAttemptFailureAsync(
+                job,
+                workerId,
+                failure,
+                CancellationToken.None);
+        }
+        catch (Exception persistenceException)
+        {
+            LogAttemptFailurePersistenceFailed(
+                logger, job.Id, job.Attempt, persistenceException.GetType().Name);
+            throw;
         }
     }
 
@@ -116,46 +154,92 @@ internal sealed partial class TriageJobRunner(
         TriageJobProcessingSettings settings,
         Exception exception,
         bool configurationLoaded,
-        bool providerOutage)
+        string? nonRetryableErrorCode,
+        ProviderFailureKind? providerFailureKind)
     {
-        if (providerOutage)
+        var accounting = FindModelCallAccounting(exception);
+        if (nonRetryableErrorCode is not null)
+        {
+            return new TriageJobAttemptFailure(
+                TriageJobStatus.DeadLettered,
+                nonRetryableErrorCode,
+                NormalizeMessage(nonRetryableErrorCode, exception),
+                NextAttemptAtUtc: null,
+                ModelCallAccounting: accounting);
+        }
+
+        if (providerFailureKind == ProviderFailureKind.Unavailable)
         {
             return new TriageJobAttemptFailure(
                 TriageJobStatus.RetryPending,
                 "provider_unavailable",
                 "Triage delayed: provider unavailable.",
                 timeProvider.GetUtcNow().Add(providerOutageTracker?.RetryDelay ?? settings.RetryDelay),
-                TriageJobRetryBudgetDisposition.DoNotConsumeAttempt);
+                TriageJobRetryBudgetDisposition.DoNotConsumeAttempt,
+                accounting);
         }
-        // Budget exhaustion and governance denial are permanent for this job: the same configuration
-        // snapshot would deny or exhaust the replay in exactly the same way. Retrying only burns the
-        // attempt limit and more provider tokens, so the attempt is dead-lettered immediately under
-        // its own error code. Configuration load failures keep their existing retryable classification.
-        if (configurationLoaded && TriageNonRetryableFailureClassifier.TryGetErrorCode(exception) is { } nonRetryableErrorCode)
+
+        if (providerFailureKind is ProviderFailureKind.RejectedRequest or
+            ProviderFailureKind.OutputLimitReached or
+            ProviderFailureKind.AmbiguousInterruption)
         {
+            var immediateFailureCode = GetProviderErrorCode(providerFailureKind.Value, exception);
             return new TriageJobAttemptFailure(
                 TriageJobStatus.DeadLettered,
-                nonRetryableErrorCode,
-                NormalizeMessage(nonRetryableErrorCode, exception),
-                NextAttemptAtUtc: null);
+                immediateFailureCode,
+                NormalizeMessage(immediateFailureCode, exception),
+                NextAttemptAtUtc: null,
+                ModelCallAccounting: accounting);
         }
 
         var maxAttempts = Math.Max(1, settings.MaxAttempts);
-        var errorCode = configurationLoaded ? "triage_job_attempt_failed" : "config_snapshot_unavailable";
+        var errorCode = providerFailureKind is { } failureKind
+            ? GetProviderErrorCode(failureKind, exception)
+            : configurationLoaded
+                ? "triage_job_attempt_failed"
+                : "config_snapshot_unavailable";
         if (job.Attempt >= maxAttempts)
         {
             return new TriageJobAttemptFailure(
                 TriageJobStatus.DeadLettered,
                 errorCode,
                 NormalizeMessage(errorCode, exception),
-                NextAttemptAtUtc: null);
+                NextAttemptAtUtc: null,
+                ModelCallAccounting: accounting);
         }
 
         return new TriageJobAttemptFailure(
             TriageJobStatus.RetryPending,
             errorCode,
             NormalizeMessage(errorCode, exception),
-            timeProvider.GetUtcNow().Add(settings.RetryDelay));
+            timeProvider.GetUtcNow().Add(settings.RetryDelay),
+            ModelCallAccounting: accounting);
+    }
+
+    private static string GetProviderErrorCode(ProviderFailureKind failureKind, Exception exception) =>
+        failureKind switch
+        {
+            ProviderFailureKind.Unavailable => "provider_unavailable",
+            ProviderFailureKind.RejectedRequest => "provider_request_rejected",
+            ProviderFailureKind.GenerationTimeout => "provider_generation_timeout",
+            ProviderFailureKind.OutputLimitReached => "provider_output_limit_reached",
+            ProviderFailureKind.AmbiguousInterruption => "provider_dispatch_outcome_unknown",
+            ProviderFailureKind.InvalidResponse =>
+                ProviderOutageExceptionClassifier.FindSafeErrorCode(exception) ?? "provider_invalid_response",
+            _ => ProviderOutageExceptionClassifier.FindSafeErrorCode(exception) ?? "provider_failure"
+        };
+
+    private static InvestigationModelCallAccounting? FindModelCallAccounting(Exception exception)
+    {
+        for (Exception? current = exception; current is not null; current = current.InnerException)
+        {
+            if (current is InvestigationModelCallFailureException modelCallFailure)
+            {
+                return modelCallFailure.Accounting;
+            }
+        }
+
+        return null;
     }
 
     // The stored message is a bounded, self-explanatory classification, not the raw exception
