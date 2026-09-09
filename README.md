@@ -22,10 +22,49 @@ See the [release notes](docs/release-notes-v0.3.0.md) for changes and verificati
    target and freezes the payload; GitHub writes require operator approval.
 5. Inspect the report, policy decisions, model usage and action outcomes through the API and durable ledger.
 
-![IncidentCompass deterministic demo report](docs/images/incidentcompass-demo-report.png)
+```mermaid
+flowchart TD
+  A["Signal: OTLP export, user report or tester"] --> B["Redact secrets, pseudonymize user ids"]
+  B --> C["Fingerprint: strong needs a real service name and errorType"]
+  C --> D{"Fault grouping"}
+  D -->|"attach or suppress"| E["Existing fault, no new job"]
+  D -->|"new fault"| F["Pending triage job pinned to a config hash"]
+  F --> G["Worker claims the job and rehydrates that exact config"]
+  G --> H["Orchestrator turn: delegate or publish_report"]
+  H -->|"delegate role and task"| I["Scoped worker role, only its granted tools"]
+  I -->|"proposes a tool call"| K{"ToolRuleEngine decides"}
+  K -->|"denied"| X["Attempt fails closed, no report published"]
+  K -->|"allowed"| M["Backend executes the tool and stores artifacts"]
+  M --> I
+  I -->|"validated output stored as an artifact"| H
+  H -->|"publish_report"| N{"Evidence resolves against this attempt's artifacts?"}
+  N -->|"no"| R["Bounded reprompt"]
+  R -->|"corrected"| H
+  R -->|"allowance spent"| X
+  N -->|"yes"| O["Report, evidence and job/fault state commit in one transaction"]
+  H -.-> L[("Triage ledger: ModelCall, PolicyDecision, BudgetEvent")]
+  K -.-> L
+```
 
-This example is from the deterministic **0.1.1** demo: a `KnownIncident` report with one cited runbook
-and 22 ledger events. It illustrates report review, not current-version model accuracy.
+## Deterministic demo run
+
+`scripts/demo.ps1 -Mock` drives five scenarios end to end. This is the deterministic mock provider,
+not a real model, so the classifications below show the governed path running, not model quality.
+
+~~~text
+Scenario | FaultId | ReportId | is_mass_issue | Classification | LedgerUrl | ReportUrl | Check
+--- | --- | --- | --- | --- | --- | --- | ---
+1 known-timeout-runbook | db50a885-0e75-4726-9825-6c82085a37bf | 8e34e889-39e2-4f7b-8e6a-d838febf75db | false | KnownIncident | http://localhost:5198/api/v1/faults/db50a885-0e75-4726-9825-6c82085a37bf/ledger | http://localhost:5198/api/v1/triage-reports/8e34e889-39e2-4f7b-8e6a-d838febf75db | ok
+2 unknown-null-reference | 9a56b670-bfc8-4e64-98dc-debf8fb8ea55 | a483f009-adc0-4f03-a7f6-9cd204e04b18 | false | Unknown | http://localhost:5198/api/v1/faults/9a56b670-bfc8-4e64-98dc-debf8fb8ea55/ledger | http://localhost:5198/api/v1/triage-reports/a483f009-adc0-4f03-a7f6-9cd204e04b18 | ok
+3 provider-unavailable-flood | 144467dd-ba0f-4627-ac4d-fc033ea0a55c | 542e060d-e45e-4072-b2d2-fef1b3fd5096 | true | SimpleKnownError | http://localhost:5198/api/v1/faults/144467dd-ba0f-4627-ac4d-fc033ea0a55c/ledger | http://localhost:5198/api/v1/triage-reports/542e060d-e45e-4072-b2d2-fef1b3fd5096 | ok
+4 validation-noise | 7c95878e-c56f-41db-808a-5430a15d54af | c4ab8ec5-628f-42ed-bdf4-6944b295cd2b | false | Noise | http://localhost:5198/api/v1/faults/7c95878e-c56f-41db-808a-5430a15d54af/ledger | http://localhost:5198/api/v1/triage-reports/c4ab8ec5-628f-42ed-bdf4-6944b295cd2b | ok
+5 injection-disabled-action-gate | 4f705140-7ff5-4d7f-ad08-e8bc90e931b2 | e57a7035-579d-4f75-8684-d6eed5e20889 | false | SimpleKnownError | http://localhost:5198/api/v1/faults/4f705140-7ff5-4d7f-ad08-e8bc90e931b2/ledger | http://localhost:5198/api/v1/triage-reports/e57a7035-579d-4f75-8684-d6eed5e20889 | no action lifecycle events observed across 4 bounded ledger reads
+~~~
+
+All five scenarios passed. Scenario 5 prints a detail string instead of `ok` because it aims a
+prompt-injection attempt at a disabled action gate, and that detail is the assertion:
+[`DemoActionGateResult`](src/IncidentCompass.Tester/DemoActionGateResult.cs) passes only when no
+action lifecycle event was recorded at all.
 
 ## Try the local flow
 
