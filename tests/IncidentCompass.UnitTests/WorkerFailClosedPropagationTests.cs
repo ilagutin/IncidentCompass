@@ -83,33 +83,92 @@ public sealed class WorkerFailClosedPropagationTests
     }
 
     [Fact]
-    public async Task RunAsync_SchemaInvalidOutputIsStillRepromptedThenWrappedAsARetryableFailure()
+    public async Task RunAsync_SchemaInvalidOutputExhaustionUsesSpecificNonRetryableFailure()
     {
         // The repromptable case the catch filter exists for must keep working: the worker gets exactly
-        // MaxReprompts corrections, then the failure is wrapped as an ordinary retryable attempt fault
-        // that carries no budget or governance error code.
+        // MaxReprompts corrections, then the bounded failure leaves under its durable error code.
         var model = new ScriptedModelClient(_ => ContentResponse("""{"keyFacts":"not an array"}"""));
         var harness = CreateHarness(model, maxReprompts: 2);
 
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+        var exception = await Assert.ThrowsAsync<WorkerOutputInvalidException>(
             () => harness.RunWorkerAsync());
 
-        Assert.Contains("remained invalid after bounded reprompts", exception.Message, StringComparison.Ordinal);
         Assert.Equal(3, model.CallCount);
-        Assert.Null(TriageNonRetryableFailureClassifier.TryGetErrorCode(exception));
+        Assert.Equal(
+            WorkerOutputInvalidException.ErrorCode,
+            TriageNonRetryableFailureClassifier.TryGetErrorCode(exception));
     }
 
     [Fact]
     public async Task RunAsync_UnparsableOutputIsRepromptedAndRecovers()
     {
+        const string modelOutput = "MODEL_RESPONSE_MUST_NOT_ESCAPE {";
         var model = new ScriptedModelClient(
-            call => call == 0 ? ContentResponse("not json at all") : ContentResponse(ValidOutput));
+            call => call == 0 ? ContentResponse(modelOutput) : ContentResponse(ValidOutput));
         var harness = CreateHarness(model);
 
         var output = await harness.RunWorkerAsync();
 
         Assert.Equal(ValidOutput, output);
         Assert.Equal(2, model.CallCount);
+        var log = harness.Logger.Single(3402);
+        Assert.Contains("not valid JSON", log.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(modelOutput, log.Message, StringComparison.Ordinal);
+        var reprompt = Assert.Single(
+            harness.LedgerWriter.Requests,
+            request => request.Rationale is { } rationale &&
+                rationale.StartsWith(WorkerRoleRunner.RepromptRationalePrefix, StringComparison.Ordinal));
+        Assert.Contains("not valid JSON", reprompt.Rationale, StringComparison.Ordinal);
+        Assert.DoesNotContain(modelOutput, reprompt.Rationale, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RunAsync_InvalidOutputRepromptIsLoggedLedgeredAndReceivesCompleteCorrection()
+    {
+        const string privatePropertyName = "MODEL_CONTROLLED_PROPERTY_MUST_NOT_ESCAPE";
+        var invalidOutput = "{\"keyFacts\":false,\"" + privatePropertyName + "\":\"private value\"}";
+        var model = new ScriptedModelClient(
+            call => call == 0 ? ContentResponse(invalidOutput) : ContentResponse(ValidOutput));
+        var harness = CreateHarness(model);
+
+        var output = await harness.RunWorkerAsync();
+
+        Assert.Equal(ValidOutput, output);
+        var log = harness.Logger.Single(3402);
+        Assert.Equal(Microsoft.Extensions.Logging.LogLevel.Warning, log.Level);
+        Assert.Contains("analysis", log.Message, StringComparison.Ordinal);
+        Assert.Contains("1/1", log.Message, StringComparison.Ordinal);
+        Assert.Contains("output.keyFacts", log.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(privatePropertyName, log.Message, StringComparison.Ordinal);
+
+        var reprompt = Assert.Single(
+            harness.LedgerWriter.Requests,
+            request => request.EventType == TriageLedgerEventType.BudgetEvent &&
+                request.Rationale is { } rationale &&
+                rationale.StartsWith(WorkerRoleRunner.RepromptRationalePrefix, StringComparison.Ordinal));
+        Assert.Equal("analysis", reprompt.Role);
+        Assert.Null(reprompt.TokensDelta);
+        Assert.Null(reprompt.WorkersDelta);
+        Assert.True(reprompt.Rationale!.Length <= TriageLedgerAppender.MaxRepromptRationaleLength);
+        Assert.Contains("output.keyFacts", reprompt.Rationale, StringComparison.Ordinal);
+        Assert.DoesNotContain(privatePropertyName, reprompt.Rationale, StringComparison.Ordinal);
+
+        var correction = model.Requests[1].Messages[^1].Content;
+        Assert.Contains("output.keyFacts", correction, StringComparison.Ordinal);
+        Assert.Contains("unsupported properties at output", correction, StringComparison.Ordinal);
+        Assert.Contains(OutputSchema, correction, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RunAsync_FencedValidOutputReturnsBareNormalizedJson()
+    {
+        var model = new ScriptedModelClient(_ => ContentResponse("```json\n" + ValidOutput + "\n```"));
+        var harness = CreateHarness(model);
+
+        var output = await harness.RunWorkerAsync();
+
+        Assert.Equal(ValidOutput, output);
+        Assert.Empty(harness.Logger.Entries);
     }
 
     [Fact]
@@ -144,6 +203,7 @@ public sealed class WorkerFailClosedPropagationTests
         var ledgerWriter = new RecordingLedgerWriter();
         var ledgerReader = new StaticLedgerReader(spentTokens, workerCalls);
         var appender = new TriageLedgerAppender(ledgerWriter);
+        var logger = new RecordingLogger<WorkerRoleRunner>();
         var timeProvider = new ConstantTimeProvider(DateTimeOffset.UtcNow);
         var runner = new WorkerRoleRunner(
             new InvestigationModelCaller(model, ledgerReader, appender, timeProvider),
@@ -151,14 +211,16 @@ public sealed class WorkerFailClosedPropagationTests
                 [new ProbeTool()],
                 new ToolRuleEngine(ledgerReader),
                 appender,
-                new NoOpToolResultCommitter()));
+                new NoOpToolResultCommitter()),
+            appender,
+            logger);
         var delegateExecutor = new AnalysisDelegateExecutor(
             new NoOpArtifactRepository(),
             appender,
             ledgerReader,
             runner,
             timeProvider);
-        return new WorkerHarness(configuration, runner, delegateExecutor, ledgerWriter);
+        return new WorkerHarness(configuration, runner, delegateExecutor, ledgerWriter, logger);
     }
 
     private static TriageConfiguration CreateConfiguration(int maxWorkers, int maxReprompts) =>
@@ -223,9 +285,12 @@ public sealed class WorkerFailClosedPropagationTests
         TriageConfiguration configuration,
         WorkerRoleRunner runner,
         AnalysisDelegateExecutor delegateExecutor,
-        RecordingLedgerWriter ledgerWriter)
+        RecordingLedgerWriter ledgerWriter,
+        RecordingLogger<WorkerRoleRunner> logger)
     {
         public RecordingLedgerWriter LedgerWriter { get; } = ledgerWriter;
+
+        public RecordingLogger<WorkerRoleRunner> Logger { get; } = logger;
 
         public Task<string> RunWorkerAsync()
         {
@@ -259,8 +324,11 @@ public sealed class WorkerFailClosedPropagationTests
     {
         public int CallCount { get; private set; }
 
+        public List<AiModelRequest> Requests { get; } = [];
+
         public Task<AiModelResponse> CompleteAsync(AiModelRequest request, CancellationToken cancellationToken)
         {
+            Requests.Add(request);
             var response = script(CallCount);
             CallCount++;
             return Task.FromResult(response);

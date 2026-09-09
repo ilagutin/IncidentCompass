@@ -80,7 +80,8 @@ An id is stable once published. A retired event keeps its id reserved rather tha
 | 3302 | Information | Worker tool call was not executed because it requires approval. |
 | 3303 | Debug | Worker tool call executed successfully. |
 | 3304 | Warning | Worker tool call ended in a non-success status with a bounded error code. |
-| 3401 | Information | Orchestrator was reprompted, with its bounded reprompt reason and the reprompt budget. |
+| 3401 | Information | Orchestrator was reprompted, with its specific closed reason, bounded reprompt counter and durable `BudgetEvent` ledger record. |
+| 3402 | Warning | Worker role output was reprompted, with job, attempt, role, a safe validator diagnostic list, bounded reprompt counter and durable `BudgetEvent` ledger record. |
 | 3501 | Debug | Immediate tool policy allowed a worker tool. |
 | 3502 | Warning | Immediate tool policy denied a worker tool. |
 | 3503 | Information | Immediate tool policy requires approval for a worker tool. |
@@ -99,7 +100,8 @@ An id is stable once published. A retired event keeps its id reserved rather tha
 
 ### Level policy
 
-A denial, a dead-letter, a lost lease and an exhausted budget are at least `Warning`, because an
+A denial, a dead-letter, a lost lease, an exhausted budget and invalid worker output that needs
+correction are at least `Warning`, because an
 operator has to see them. A routine allow, a successful tool call and a token charge are `Debug`,
 so an ordinary investigation does not fill the log with policy noise. Outcomes an operator wants in
 a normal production log without enabling debug output - a completed model call with its token and
@@ -113,10 +115,16 @@ Log events carry bounded, non-sensitive facts only: job, fault and correlation i
 names, tool names, decision outcomes, reason tokens, token counts, durations, attempt numbers,
 bounded error codes and exception type names. They never carry message content, rendered prompts or
 responses, artifact payloads, tool arguments or results, memory document text, embedding vectors,
-credentials or raw provider error strings. Provider and validator exception messages are therefore
-reduced to their type name or to a closed classification token before they reach a log; the durable
-job row uses the same reduction (see "Triage job failure classification" below), not the exception's
-own text.
+credentials or raw provider error strings.
+
+The worker-output reprompt event is a narrow exception to the general absence of validation detail:
+it carries at most 20 validator diagnostics. Each uses fixed validator wording and an
+application-selected path into the configured output schema. An unexpected, model-controlled property
+is represented by its count without its name. This is not a claim that arbitrary output property names
+are safe. The event and its ledger record never carry model output, unknown property names,
+`JsonException` text or path, the correction prompt or the output schema. Provider and parser
+exception messages are reduced to a closed classification token before they reach a log; the durable
+job row uses the same reduction (see "Triage job failure classification" below), not exception text.
 
 ### API error responses
 
@@ -134,13 +142,16 @@ because these messages are authored by this codebase, not raw provider or infras
 
 ### Triage job failure classification
 
-`last_error_message` on `incidentcompass.triage_jobs` is a bounded classification, not the raw
-exception text a provider or validator may have produced: it is `"<error code>: <exception type
-name>."`, using the exact code already stored in the sibling `last_error_code` column (permanent
-budget/governance codes from `TriageNonRetryableFailureClassifier`, `provider_unavailable`, or the
-generic `triage_job_attempt_failed`/`config_snapshot_unavailable` codes), truncated by the same
-`TextTruncator` bound as before. A row is therefore self-explanatory when read directly from the
-database, and a provider failure's response body can never end up stored in this column.
+`last_error_message` on `incidentcompass.triage_jobs` is a bounded classification, not raw exception
+text a provider or validator may have produced. The ordinary form is `"<error code>: <exception type
+name>."`, using the exact code already stored in the sibling `last_error_code` column. The immediate
+`worker_output_invalid` terminal outcome instead stores the fixed content-free message
+`worker_output_invalid: worker output remained invalid after bounded reprompts.`, with no exception
+type. Permanent budget/governance codes from `TriageNonRetryableFailureClassifier`,
+`provider_unavailable` and the generic `triage_job_attempt_failed`/`config_snapshot_unavailable`
+codes retain the ordinary classification and the existing `TextTruncator` bound. A row is therefore
+self-explanatory when read directly from the database, and a provider response body or model output
+cannot end up stored in this column.
 
 The triage job attempt failure event (3101) and its disposition event (3102/3103/3104) are written
 before the durable attempt-failure write is attempted, so a failing durable write (3105) can never
@@ -170,9 +181,9 @@ The call ID, outcome and nullable error code extend the earlier success-only sha
 field names remain stable. Unknown usage is represented by nullable token fields rather than a
 fabricated estimate.
 
-The ledger does not store rendered prompts, full provider responses, document text, provider credentials, API keys or embedding vectors. Token budget accounting is recorded separately as first-class `BudgetEvent` rows with `tokens_delta` and `workers_delta` columns.
+The ledger does not store rendered prompts, full provider responses, document text, provider credentials, API keys or embedding vectors. Token budget accounting is recorded separately as first-class `BudgetEvent` rows with `tokens_delta` and `workers_delta` columns. Every worker or orchestrator correction turn also writes one bounded `BudgetEvent`. A worker correction uses the `worker_output_reprompt:` rationale prefix, retains the role and is capped at 1,000 characters; it contains safe diagnostics, not validation exception text, model output, prompt or schema.
 
-Each `ModelCall` and `BudgetEvent` row is mirrored by a bounded application log event (3201-3204 and 3211-3212 above), so live model observability is readable from logs and auditable from the ledger.
+`ModelCall` rows and token-accounting `BudgetEvent` rows are mirrored by bounded application log events 3201-3204 and 3211-3212 above, while reprompt `BudgetEvent` rows are mirrored by events 3401 and 3402, so live model observability is readable from logs and auditable from the ledger.
 
 ## Hourly Cost Rollups
 

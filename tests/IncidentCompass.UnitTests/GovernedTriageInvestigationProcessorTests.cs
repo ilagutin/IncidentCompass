@@ -9,6 +9,7 @@ using IncidentCompass.Application.Investigation.Reports;
 using IncidentCompass.Application.Investigation.Reports.Context;
 using IncidentCompass.Domain.Incidents;
 using IncidentCompass.Domain.Incidents.Statuses;
+using Microsoft.Extensions.Logging;
 
 namespace IncidentCompass.UnitTests;
 
@@ -102,10 +103,57 @@ public sealed class GovernedTriageInvestigationProcessorTests
             TriageNonRetryableFailureClassifier.TryGetErrorCode(exception));
     }
 
+    [Fact]
+    public async Task ProcessAsync_DocumentationFitMismatchRepromptLogsAndLedgersExactSafeReason()
+    {
+        var model = new ScriptedOrchestratorModel();
+        var harness = CreateHarness(
+            model,
+            reportFailureMessage: OrchestratorRepromptDiagnostics.DocumentationFitMismatch);
+
+        await harness.ProcessAsync();
+
+        var log = harness.Logger.Single(3401);
+        Assert.Equal(LogLevel.Information, log.Level);
+        Assert.Contains("publish_report_validation_failed", log.Message, StringComparison.Ordinal);
+        Assert.Contains(OrchestratorRepromptDiagnostics.DocumentationFitMismatch, log.Message, StringComparison.Ordinal);
+        Assert.Contains("1/1", log.Message, StringComparison.Ordinal);
+
+        var ledgerEvent = Assert.Single(
+            harness.LedgerWriter.Requests,
+            request => request.EventType == TriageLedgerEventType.BudgetEvent &&
+                request.Rationale is { } rationale &&
+                rationale.StartsWith("orchestrator_reprompt:", StringComparison.Ordinal));
+        Assert.Equal("orchestrator", ledgerEvent.Role);
+        Assert.Contains("publish_report_validation_failed", ledgerEvent.Rationale, StringComparison.Ordinal);
+        Assert.Contains(OrchestratorRepromptDiagnostics.DocumentationFitMismatch, ledgerEvent.Rationale, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_UnknownReportValidationMessageUsesContentFreeFallback()
+    {
+        const string arbitraryExceptionMessage = "MODEL_CONTROLLED_REPORT_TEXT_MUST_NOT_ESCAPE";
+        var model = new ScriptedOrchestratorModel();
+        var harness = CreateHarness(model, reportFailureMessage: arbitraryExceptionMessage);
+
+        await harness.ProcessAsync();
+
+        var log = harness.Logger.Single(3401);
+        Assert.Contains(OrchestratorRepromptDiagnostics.UnknownReportValidationFailure, log.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(arbitraryExceptionMessage, log.Message, StringComparison.Ordinal);
+        var ledgerEvent = Assert.Single(
+            harness.LedgerWriter.Requests,
+            request => request.Rationale is { } rationale &&
+                rationale.StartsWith("orchestrator_reprompt:", StringComparison.Ordinal));
+        Assert.Contains(OrchestratorRepromptDiagnostics.UnknownReportValidationFailure, ledgerEvent.Rationale, StringComparison.Ordinal);
+        Assert.DoesNotContain(arbitraryExceptionMessage, ledgerEvent.Rationale, StringComparison.Ordinal);
+    }
+
     private static ProcessorHarness CreateHarness(
         IAiModelClient model,
         string orchestratorRouteId = "report-chat",
-        string analysisRouteId = "analysis-chat")
+        string analysisRouteId = "analysis-chat",
+        string? reportFailureMessage = null)
     {
         var configuration = CreateConfiguration(orchestratorRouteId, analysisRouteId);
         var ledgerWriter = new RecordingLedgerWriter();
@@ -119,16 +167,20 @@ public sealed class GovernedTriageInvestigationProcessorTests
             ledgerReader,
             new WorkerRoleRunner(
                 modelCaller,
-                new WorkerToolCallExecutor([], new ToolRuleEngine(ledgerReader), appender, new UnusedToolResultCommitter())),
+                new WorkerToolCallExecutor([], new ToolRuleEngine(ledgerReader), appender, new UnusedToolResultCommitter()),
+                appender),
             timeProvider);
-        var reports = new RecordingReportRepository();
+        var reports = new RecordingReportRepository(reportFailureMessage);
+        var logger = new RecordingLogger<GovernedTriageInvestigationProcessor>();
         var processor = new GovernedTriageInvestigationProcessor(
             new StaticInvestigationContextRepository(),
             modelCaller,
             delegateExecutor,
             new TriageReportPublisher(reports, new EmptyContextOutcomeRepository()),
-            timeProvider);
-        return new ProcessorHarness(processor, configuration, ledgerWriter, reports);
+            appender,
+            timeProvider,
+            logger);
+        return new ProcessorHarness(processor, configuration, ledgerWriter, reports, logger);
     }
 
     private static TriageConfiguration CreateConfiguration(string orchestratorRouteId, string analysisRouteId) =>
@@ -185,11 +237,14 @@ public sealed class GovernedTriageInvestigationProcessorTests
         GovernedTriageInvestigationProcessor processor,
         TriageConfiguration configuration,
         RecordingLedgerWriter ledgerWriter,
-        RecordingReportRepository reports)
+        RecordingReportRepository reports,
+        RecordingLogger<GovernedTriageInvestigationProcessor> logger)
     {
         public RecordingLedgerWriter LedgerWriter { get; } = ledgerWriter;
 
         public RecordingReportRepository Reports { get; } = reports;
+
+        public RecordingLogger<GovernedTriageInvestigationProcessor> Logger { get; } = logger;
 
         public Task ProcessAsync() =>
             processor.ProcessAsync(CreateJob(), configuration, "worker-test", TestContext.Current.CancellationToken);
@@ -239,12 +294,20 @@ public sealed class GovernedTriageInvestigationProcessorTests
             Task.FromResult(CreateContext());
     }
 
-    private sealed class RecordingReportRepository : ITriageReportRepository
+    private sealed class RecordingReportRepository(string? firstFailureMessage) : ITriageReportRepository
     {
+        private bool firstFailureRaised;
+
         public List<TriageReport> Published { get; } = [];
 
         public Task<Guid> PublishAsync(TriageJob job, string workerId, TriageReport report, CancellationToken cancellationToken)
         {
+            if (firstFailureMessage is not null && !firstFailureRaised)
+            {
+                firstFailureRaised = true;
+                throw new TriageReportValidationException(firstFailureMessage);
+            }
+
             Published.Add(report);
             return Task.FromResult(Guid.NewGuid());
         }

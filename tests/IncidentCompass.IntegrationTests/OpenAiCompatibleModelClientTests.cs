@@ -237,6 +237,43 @@ public sealed class OpenAiCompatibleModelClientTests
         Assert.Equal("timeout", toolCall.Arguments.GetProperty("query").GetString());
     }
 
+    [Theory]
+    [InlineData("{\"query\":\"plain\"}", "plain")]
+    [InlineData("```\n{\"query\":\"unmarked\"}\n```", "unmarked")]
+    [InlineData("```json\r\n{\"query\":\"marked\"}\r\n```", "marked")]
+    [InlineData("~~~JSON\n{\"query\":\"tilde-marked\"}\n~~~", "tilde-marked")]
+    public void ResponseMapper_AcceptsPlainOrSingleFencedObjectToolArguments(
+        string arguments,
+        string expectedQuery)
+    {
+        var response = OpenAiModelResponseMapper.Map(
+            ToolCallResponse(arguments),
+            CreateRequest("tool-model"));
+
+        var toolCall = Assert.Single(response.ProposedToolCalls ?? []);
+        Assert.Equal(expectedQuery, toolCall.Arguments.GetProperty("query").GetString());
+    }
+
+    [Theory]
+    [InlineData("42")]
+    [InlineData("\"{\\\"query\\\":\\\"string-wrapped\\\"}\"")]
+    [InlineData("Use this object:\n```json\n{\"query\":\"mixed\"}\n```")]
+    [InlineData("```json\n```json\n{\"query\":\"nested\"}\n```\n```")]
+    [InlineData("```json\n{\"query\":\"first\"}\n```\n```json\n{\"query\":\"second\"}\n```")]
+    [InlineData("```json\n{\"query\":\"mismatched\"}\n~~~")]
+    public void ResponseMapper_RejectsAnythingOtherThanOneObjectWithOptionalOuterFence(string arguments)
+    {
+        var exception = Assert.Throws<AiModelException>(() =>
+            OpenAiModelResponseMapper.Map(
+                ToolCallResponse(arguments),
+                CreateRequest("requested-model")));
+
+        Assert.Equal(ProviderFailureKind.InvalidResponse, exception.FailureKind);
+        Assert.Equal("invalid_response", exception.ErrorCode);
+        Assert.Equal(new AiModelUsage(11, 7, 18), exception.Usage);
+        Assert.Equal("tool-model", exception.ReturnedModel);
+    }
+
     [Fact]
     public async Task CompleteAsync_SerializesAgenticToolResultTurn()
     {
@@ -609,6 +646,34 @@ public sealed class OpenAiCompatibleModelClientTests
             CorrelationId: "provider-protocol-test",
             Model: model,
             Messages: [new AiChatMessage(AiMessageRole.User, "hello")]);
+    }
+
+    private static string ToolCallResponse(string arguments)
+    {
+        return JsonSerializer.Serialize(new
+        {
+            model = "tool-model",
+            choices = new[]
+            {
+                new
+                {
+                    message = new
+                    {
+                        content = (string?)null,
+                        tool_calls = new[]
+                        {
+                            new
+                            {
+                                id = "call-1",
+                                type = "function",
+                                function = new { name = "memory_search", arguments }
+                            }
+                        }
+                    }
+                }
+            },
+            usage = new { prompt_tokens = 11, completion_tokens = 7, total_tokens = 18 }
+        });
     }
 
     private static void AssertNoNullProperties(JsonElement element)

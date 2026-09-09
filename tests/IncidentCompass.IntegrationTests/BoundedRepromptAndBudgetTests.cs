@@ -17,13 +17,20 @@ namespace IncidentCompass.IntegrationTests;
 [Collection(PostgresRepositoryCollection.CollectionName)]
 public sealed class BoundedRepromptAndBudgetTests(PostgresRepositoryFixture postgres)
 {
+    private const string WorkerOutputSentinel = "INJECTED_MODEL_OUTPUT_MUST_NOT_BE_DURABLE";
+
     [DockerAvailableFact]
     public async Task ProcessClaimedAsync_InvalidWorkerOutputRepromptsAtMostConfiguredLimitThenFailsClosed()
     {
-        using var scope = await CreateScopeAsync(RepromptScenario.InvalidWorkerOutput, maxReprompts: 1, maxTokens: 100000, contextWindowTokens: 8192);
-        var ingested = await RunOneAsync(scope);
+        using var scope = await CreateScopeAsync(RepromptScenario.InvalidWorkerOutput, maxReprompts: 2, maxTokens: 100000, contextWindowTokens: 8192);
+        var ingested = await IngestOneAsync(scope);
+        await ProcessNextAsync(scope, "worker-invalid-output", maxAttempts: 3, retryDelay: TimeSpan.Zero);
 
         var job = await ReadJobAsync(scope.ConnectionString, ingested.JobId!.Value);
+        var attempt = await ScalarAsync<int>(
+            scope.ConnectionString,
+            "SELECT attempt FROM incidentcompass.triage_jobs WHERE id = @job_id;",
+            ("job_id", ingested.JobId.Value));
         var workerModelCalls = await ScalarAsync<long>(
             scope.ConnectionString,
             "SELECT COUNT(*) FROM incidentcompass.triage_ledger WHERE job_id = @job_id AND event_type = 'ModelCall' AND role = 'analysis';",
@@ -33,15 +40,47 @@ public sealed class BoundedRepromptAndBudgetTests(PostgresRepositoryFixture post
             scope.ConnectionString,
             "SELECT COALESCE(SUM(workers_delta), 0) FROM incidentcompass.triage_ledger WHERE job_id = @job_id AND event_type = 'BudgetEvent';",
             ("job_id", ingested.JobId.Value));
+        var leakedLedgerFields = await ScalarAsync<long>(
+            scope.ConnectionString,
+            """
+            SELECT COUNT(*)
+            FROM incidentcompass.triage_ledger
+            WHERE job_id = @job_id
+              AND concat_ws(' ', role, tool_name, rationale, decision_reason, payload_ref) LIKE @sentinel_pattern;
+            """,
+            ("job_id", ingested.JobId.Value),
+            ("sentinel_pattern", "%" + WorkerOutputSentinel + "%"));
+        var repromptEvents = await ReadRepromptBudgetEventsAsync(
+            scope.ConnectionString,
+            ingested.JobId.Value,
+            "worker_output_reprompt:");
 
         Assert.Equal("DeadLettered", job.Status);
-        Assert.Equal(2, workerModelCalls);
+        Assert.Equal(3, workerModelCalls);
         Assert.Equal(1, workerDeltas);
-        // last_error_message is now a bounded classification ("<error code>: <exception type>."),
-        // not the raw exhausted-reprompt exception text, so this checks the new shape instead of
-        // the scenario-specific wording the exception used to carry; the model-call/delta counts
-        // above already discriminate this scenario from the others in this file.
-        Assert.Equal("triage_job_attempt_failed: InvalidOperationException.", job.LastErrorMessage);
+        Assert.Equal(2, repromptEvents.Count);
+        foreach (var repromptEvent in repromptEvents)
+        {
+            AssertRepromptEvent(
+                repromptEvent,
+                "analysis",
+                "worker_output_reprompt:",
+                "not valid JSON");
+            Assert.DoesNotContain(WorkerOutputSentinel, repromptEvent.Rationale, StringComparison.Ordinal);
+        }
+
+        Assert.Equal(0, leakedLedgerFields);
+        Assert.Equal("worker_output_invalid", job.LastErrorCode);
+        Assert.Equal(
+            "worker_output_invalid: worker output remained invalid after bounded reprompts.",
+            job.LastErrorMessage);
+        Assert.DoesNotContain(WorkerOutputSentinel, job.LastErrorMessage, StringComparison.Ordinal);
+        Assert.Equal(1, attempt);
+
+        var reclaimed = await TryClaimNextAsync(scope, "worker-invalid-output-reclaim");
+        Assert.True(
+            reclaimed?.Id != ingested.JobId.Value,
+            "A dead-lettered invalid-worker-output job must not be claimable for another attempt.");
     }
 
     [DockerAvailableFact]
@@ -55,11 +94,14 @@ public sealed class BoundedRepromptAndBudgetTests(PostgresRepositoryFixture post
             scope.ConnectionString,
             "SELECT COUNT(*) FROM incidentcompass.triage_ledger WHERE job_id = @job_id AND event_type = 'ModelCall' AND role IS NULL;",
             ("job_id", ingested.JobId.Value));
+        var repromptEvent = Assert.Single(await ReadRepromptBudgetEventsAsync(
+            scope.ConnectionString,
+            ingested.JobId.Value,
+            "orchestrator_reprompt:"));
 
         Assert.Equal("DeadLettered", job.Status);
         Assert.Equal(2, orchestratorModelCalls);
-        // See the comment on the InvalidWorkerOutput test above: the classified message no longer
-        // echoes the reprompt-exhaustion exception's own text.
+        AssertRepromptEvent(repromptEvent, "orchestrator", "orchestrator_reprompt:", "no_tool_call");
         Assert.Equal("triage_job_attempt_failed: InvalidOperationException.", job.LastErrorMessage);
     }
 
@@ -74,9 +116,14 @@ public sealed class BoundedRepromptAndBudgetTests(PostgresRepositoryFixture post
             scope.ConnectionString,
             "SELECT COUNT(*) FROM incidentcompass.triage_ledger WHERE job_id = @job_id AND event_type = 'ModelCall' AND role IS NULL;",
             ("job_id", ingested.JobId.Value));
+        var repromptEvent = Assert.Single(await ReadRepromptBudgetEventsAsync(
+            scope.ConnectionString,
+            ingested.JobId.Value,
+            "orchestrator_reprompt:"));
 
         Assert.Equal("Succeeded", job.Status);
         Assert.Equal(3, orchestratorModelCalls);
+        AssertRepromptEvent(repromptEvent, "orchestrator", "orchestrator_reprompt:", "delegate_validation_failed");
     }
 
     [DockerAvailableFact]
@@ -90,9 +137,14 @@ public sealed class BoundedRepromptAndBudgetTests(PostgresRepositoryFixture post
             scope.ConnectionString,
             "SELECT COUNT(*) FROM incidentcompass.triage_ledger WHERE job_id = @job_id AND event_type = 'ModelCall' AND role IS NULL;",
             ("job_id", ingested.JobId.Value));
+        var repromptEvent = Assert.Single(await ReadRepromptBudgetEventsAsync(
+            scope.ConnectionString,
+            ingested.JobId.Value,
+            "orchestrator_reprompt:"));
 
         Assert.Equal("Succeeded", job.Status);
         Assert.Equal(3, orchestratorModelCalls);
+        AssertRepromptEvent(repromptEvent, "orchestrator", "orchestrator_reprompt:", "publish_report_validation_failed");
     }
 
     [DockerAvailableFact]
@@ -110,12 +162,15 @@ public sealed class BoundedRepromptAndBudgetTests(PostgresRepositoryFixture post
             scope.ConnectionString,
             "SELECT COALESCE(SUM(tokens_delta), 0) FROM incidentcompass.triage_ledger WHERE job_id = @job_id AND event_type = 'BudgetEvent';",
             ("job_id", ingested.JobId.Value));
+        var repromptEvent = Assert.Single(await ReadRepromptBudgetEventsAsync(
+            scope.ConnectionString,
+            ingested.JobId.Value,
+            "orchestrator_reprompt:"));
 
         Assert.Equal("DeadLettered", job.Status);
         Assert.Equal(2, orchestratorModelCalls);
         Assert.Equal(30, chargedTokens);
-        // See the comment on the InvalidWorkerOutput test above: the classified message no longer
-        // echoes the reprompt-exhaustion exception's own text.
+        AssertRepromptEvent(repromptEvent, "orchestrator", "orchestrator_reprompt:", "unknown_tool");
         Assert.Equal("triage_job_attempt_failed: InvalidOperationException.", job.LastErrorMessage);
     }
 
@@ -434,6 +489,51 @@ public sealed class BoundedRepromptAndBudgetTests(PostgresRepositoryFixture post
         return rows;
     }
 
+    private static async Task<IReadOnlyList<RepromptBudgetEvent>> ReadRepromptBudgetEventsAsync(
+        string connectionString,
+        Guid jobId,
+        string rationalePrefix)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand("""
+            SELECT role, rationale, tokens_delta, workers_delta
+            FROM incidentcompass.triage_ledger
+            WHERE job_id = @job_id
+              AND event_type = 'BudgetEvent'
+              AND rationale LIKE @rationale_pattern
+            ORDER BY id;
+            """, connection);
+        command.Parameters.AddWithValue("job_id", jobId);
+        command.Parameters.AddWithValue("rationale_pattern", rationalePrefix + "%");
+        var rows = new List<RepromptBudgetEvent>();
+        await using var reader = await command.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            rows.Add(new RepromptBudgetEvent(
+                reader.IsDBNull(0) ? null : reader.GetString(0),
+                reader.GetString(1),
+                reader.IsDBNull(2) ? null : reader.GetInt32(2),
+                reader.IsDBNull(3) ? null : reader.GetInt32(3)));
+        }
+
+        return rows;
+    }
+
+    private static void AssertRepromptEvent(
+        RepromptBudgetEvent repromptEvent,
+        string expectedRole,
+        string expectedPrefix,
+        string expectedDiagnostic)
+    {
+        Assert.Equal(expectedRole, repromptEvent.Role);
+        Assert.StartsWith(expectedPrefix, repromptEvent.Rationale, StringComparison.Ordinal);
+        Assert.Contains(expectedDiagnostic, repromptEvent.Rationale, StringComparison.Ordinal);
+        Assert.InRange(repromptEvent.Rationale.Length, 1, 1000);
+        Assert.Null(repromptEvent.TokensDelta);
+        Assert.Null(repromptEvent.WorkersDelta);
+    }
+
     private static async Task<T> ScalarAsync<T>(string connectionString, string sql, params (string Name, object Value)[] parameters)
     {
         await using var connection = new NpgsqlConnection(connectionString);
@@ -532,7 +632,7 @@ public sealed class BoundedRepromptAndBudgetTests(PostgresRepositoryFixture post
                     throw new InvalidOperationException("Worker reprompt did not include validation error.");
                 }
 
-                return Response(request, "{\"keyFacts\":[{\"bad\":true}],\"candidateClassification\":\"Unknown\",\"needsDeeperContext\":false}", []);
+                return Response(request, WorkerOutputSentinel + " {", []);
             }
 
             return Response(request, JsonSerializer.Serialize(new
@@ -651,4 +751,10 @@ public sealed class BoundedRepromptAndBudgetTests(PostgresRepositoryFixture post
         string? ConfigHash);
 
     private sealed record JobRow(string Status, string? LastErrorCode, string LastErrorMessage);
+
+    private sealed record RepromptBudgetEvent(
+        string? Role,
+        string Rationale,
+        int? TokensDelta,
+        int? WorkersDelta);
 }

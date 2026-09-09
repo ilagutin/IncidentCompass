@@ -19,6 +19,7 @@ internal sealed partial class GovernedTriageInvestigationProcessor : IClaimedTri
     private readonly InvestigationModelCaller modelCaller;
     private readonly AnalysisDelegateExecutor delegateExecutor;
     private readonly TriageReportPublisher reportPublisher;
+    private readonly TriageLedgerAppender ledgerAppender;
     private readonly TimeProvider timeProvider;
     private readonly ILogger logger;
 
@@ -27,6 +28,7 @@ internal sealed partial class GovernedTriageInvestigationProcessor : IClaimedTri
         InvestigationModelCaller modelCaller,
         AnalysisDelegateExecutor delegateExecutor,
         TriageReportPublisher reportPublisher,
+        TriageLedgerAppender ledgerAppender,
         TimeProvider timeProvider,
         ILogger<GovernedTriageInvestigationProcessor>? logger = null)
     {
@@ -34,6 +36,7 @@ internal sealed partial class GovernedTriageInvestigationProcessor : IClaimedTri
         this.modelCaller = modelCaller;
         this.delegateExecutor = delegateExecutor;
         this.reportPublisher = reportPublisher;
+        this.ledgerAppender = ledgerAppender;
         this.timeProvider = timeProvider;
         this.logger = logger ?? NullLogger<GovernedTriageInvestigationProcessor>.Instance;
     }
@@ -89,7 +92,15 @@ internal sealed partial class GovernedTriageInvestigationProcessor : IClaimedTri
             : null;
         if (toolCall is null)
         {
-            var afterNoToolCall = RepromptOrThrow(job, configuration, reprompts, "no_tool_call", "Orchestrator did not propose delegate or publish_report after bounded reprompts.");
+            const string diagnostic = "orchestrator response did not propose delegate or publish_report.";
+            var afterNoToolCall = await RepromptOrThrowAsync(
+                job,
+                configuration,
+                reprompts,
+                "no_tool_call",
+                diagnostic,
+                "Orchestrator did not propose delegate or publish_report after bounded reprompts.",
+                cancellationToken);
             messages.Add(new AiChatMessage(AiMessageRole.Assistant, response.Content));
             messages.Add(new AiChatMessage(
                 AiMessageRole.User,
@@ -108,7 +119,15 @@ internal sealed partial class GovernedTriageInvestigationProcessor : IClaimedTri
             return await TryPublishAsync(job, configuration, workerId, toolCall, messages, reprompts, cancellationToken);
         }
 
-        var afterUnknownTool = RepromptOrThrow(job, configuration, reprompts, "unknown_tool", "Orchestrator proposed an unknown tool after bounded reprompts: " + toolCall.Name);
+        const string unknownToolDiagnostic = "orchestrator proposed an unsupported tool.";
+        var afterUnknownTool = await RepromptOrThrowAsync(
+            job,
+            configuration,
+            reprompts,
+            "unknown_tool",
+            unknownToolDiagnostic,
+            "Orchestrator proposed an unsupported tool after bounded reprompts.",
+            cancellationToken);
         messages.Add(new AiChatMessage(AiMessageRole.Tool, UnknownToolResult(toolCall.Name), toolCall.Id));
         messages.Add(new AiChatMessage(AiMessageRole.User, "Validation error: unknown tool '" + toolCall.Name + "'. Call delegate or publish_report."));
         return new OrchestratorTurnOutcome(OrchestratorTurnDisposition.UnknownToolReprompted, afterUnknownTool);
@@ -130,16 +149,25 @@ internal sealed partial class GovernedTriageInvestigationProcessor : IClaimedTri
         }
         catch (TriageReportValidationException exception)
         {
-            var afterPublishFailure = RepromptOrThrow(job, configuration, reprompts, "publish_report_validation_failed", "publish_report remained invalid after bounded reprompts: " + exception.Message, exception);
+            var safeDiagnostic = OrchestratorRepromptDiagnostics.ForReportValidation(exception);
+            var afterPublishFailure = await RepromptOrThrowAsync(
+                job,
+                configuration,
+                reprompts,
+                "publish_report_validation_failed",
+                safeDiagnostic,
+                "publish_report remained invalid after bounded reprompts.",
+                cancellationToken,
+                exception);
             var validationResult = JsonSerializer.Serialize(new
             {
                 errorCode = "publish_report_validation_failed",
-                errorMessage = exception.Message
+                errorMessage = safeDiagnostic
             });
             messages.Add(new AiChatMessage(AiMessageRole.Tool, validationResult, toolCall.Id));
             messages.Add(new AiChatMessage(
                 AiMessageRole.User,
-                "Validation error: " + exception.Message + " Call publish_report again with the corrected report_json."));
+                "Validation error: " + safeDiagnostic + " Call publish_report again with the corrected report_json."));
             return new OrchestratorTurnOutcome(OrchestratorTurnDisposition.PublishRepromptIssued, afterPublishFailure);
         }
     }
@@ -168,14 +196,23 @@ internal sealed partial class GovernedTriageInvestigationProcessor : IClaimedTri
         }
         catch (DelegateToolCallValidationException exception)
         {
-            var afterDelegateFailure = RepromptOrThrow(job, configuration, reprompts, "delegate_validation_failed", "delegate remained invalid after bounded reprompts: " + exception.Message, exception);
+            var safeDiagnostic = OrchestratorRepromptDiagnostics.ForDelegateValidation(exception);
+            var afterDelegateFailure = await RepromptOrThrowAsync(
+                job,
+                configuration,
+                reprompts,
+                "delegate_validation_failed",
+                safeDiagnostic,
+                "delegate remained invalid after bounded reprompts.",
+                cancellationToken,
+                exception);
             var validationResult = JsonSerializer.Serialize(new
             {
                 errorCode = "delegate_validation_failed",
-                errorMessage = exception.Message
+                errorMessage = safeDiagnostic
             });
             messages.Add(new AiChatMessage(AiMessageRole.Tool, validationResult, toolCall.Id));
-            messages.Add(new AiChatMessage(AiMessageRole.User, "Validation error: " + exception.Message + " Call delegate again with object arguments containing role and task."));
+            messages.Add(new AiChatMessage(AiMessageRole.User, "Validation error: " + safeDiagnostic + " Call delegate again with object arguments containing role and task."));
             return new OrchestratorTurnOutcome(OrchestratorTurnDisposition.DelegateRepromptIssued, afterDelegateFailure);
         }
     }
@@ -211,21 +248,35 @@ internal sealed partial class GovernedTriageInvestigationProcessor : IClaimedTri
     /// the allowance is already spent. Returning the count keeps the counter an ordinary local owned by
     /// the loop instead of shared mutable state written through a <c>ref</c> parameter.
     /// </summary>
-    private int RepromptOrThrow(
+    private async Task<int> RepromptOrThrowAsync(
         TriageJob job,
         TriageConfiguration configuration,
         int reprompts,
         string repromptReason,
-        string message,
+        string validationDiagnostic,
+        string exhaustedMessage,
+        CancellationToken cancellationToken,
         Exception? innerException = null)
     {
         if (reprompts >= configuration.Orchestrator.Budget.MaxReprompts)
         {
-            throw new InvalidOperationException(message, innerException);
+            throw new InvalidOperationException(exhaustedMessage, innerException);
         }
 
         var chargedReprompts = reprompts + 1;
-        LogOrchestratorReprompted(logger, job.Id, job.Attempt, repromptReason, chargedReprompts, configuration.Orchestrator.Budget.MaxReprompts);
+        LogOrchestratorReprompted(
+            logger,
+            job.Id,
+            job.Attempt,
+            repromptReason,
+            validationDiagnostic,
+            chargedReprompts,
+            configuration.Orchestrator.Budget.MaxReprompts);
+        await ledgerAppender.AppendRepromptBudgetEventAsync(
+            job,
+            "orchestrator",
+            "orchestrator_reprompt: " + repromptReason + ": " + validationDiagnostic,
+            cancellationToken);
         return chargedReprompts;
     }
 
@@ -237,12 +288,13 @@ internal sealed partial class GovernedTriageInvestigationProcessor : IClaimedTri
     [LoggerMessage(
         EventId = 3401,
         Level = LogLevel.Information,
-        Message = "Orchestrator for triage job {JobId} attempt {Attempt} was reprompted because of {RepromptReason} ({Reprompts}/{MaxReprompts}).")]
+        Message = "Orchestrator for triage job {JobId} attempt {Attempt} was reprompted because of {RepromptReason} ({Reprompts}/{MaxReprompts}): {ValidationDiagnostic}")]
     private static partial void LogOrchestratorReprompted(
         ILogger logger,
         Guid jobId,
         int attempt,
         string repromptReason,
+        string validationDiagnostic,
         int reprompts,
         int maxReprompts);
 }

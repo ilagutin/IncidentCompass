@@ -243,12 +243,17 @@ internal sealed partial class TriageJobRunner(
     }
 
     // The stored message is a bounded, self-explanatory classification, not the raw exception
-    // text: for a provider failure, exception.Message can be an arbitrary upstream HTTP body.
-    // The error code is the same closed token already stored in the sibling last_error_code
-    // column (see TriageNonRetryableFailureClassifier and the codes above), so a row read
-    // directly from the database is explained by its message alone without a second lookup.
+    // text: provider and model-output failures can carry arbitrary upstream content. Exhausted
+    // worker corrections get a fixed reason; other failures use the closed error code plus the
+    // exception type. A row read directly from the database is therefore content-free and can be
+    // understood without copying the original exception message.
     private static string NormalizeMessage(string errorCode, Exception exception)
     {
+        if (string.Equals(errorCode, WorkerOutputInvalidException.ErrorCode, StringComparison.Ordinal))
+        {
+            return WorkerOutputInvalidException.StoredReason;
+        }
+
         var classified = $"{errorCode}: {exception.GetType().Name}.";
         return TextTruncator.Truncate(classified, MaxStoredErrorMessageLength);
     }

@@ -1,3 +1,4 @@
+using IncidentCompass.Application.Core.Text;
 using IncidentCompass.Application.Governance.Ledger;
 using IncidentCompass.Domain.Incidents;
 using IncidentCompass.Domain.Incidents.Statuses;
@@ -6,6 +7,8 @@ namespace IncidentCompass.Application.Investigation.Jobs;
 
 internal sealed class TriageLedgerAppender(ITriageLedgerWriter ledgerWriter)
 {
+    internal const int MaxRepromptRationaleLength = 1000;
+
     public Task AppendAsync(
         TriageJob job,
         TriageLedgerEventType eventType,
@@ -96,6 +99,27 @@ internal sealed class TriageLedgerAppender(ITriageLedgerWriter ledgerWriter)
             toolStatus: null,
             tokensDelta,
             workersDelta,
+            cancellationToken);
+    }
+
+    public Task AppendRepromptBudgetEventAsync(
+        TriageJob job,
+        string role,
+        string rationale,
+        CancellationToken cancellationToken)
+    {
+        return AppendCoreAsync(
+            job,
+            TriageLedgerEventType.BudgetEvent,
+            role,
+            toolName: null,
+            TextTruncator.Truncate(rationale, MaxRepromptRationaleLength),
+            decision: null,
+            decisionReason: null,
+            payloadRef: null,
+            toolStatus: null,
+            tokensDelta: null,
+            workersDelta: null,
             cancellationToken);
     }
 

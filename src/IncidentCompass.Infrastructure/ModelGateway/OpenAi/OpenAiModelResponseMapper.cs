@@ -1,5 +1,6 @@
 using System.Text.Json;
 using IncidentCompass.Application.Core.ModelClients;
+using IncidentCompass.Application.Investigation.Jobs;
 using IncidentCompass.Infrastructure.ModelGateway.OpenAi.Dtos;
 using IncidentCompass.Infrastructure.OpenAiCompatible;
 
@@ -93,7 +94,12 @@ internal static class OpenAiModelResponseMapper
     {
         try
         {
-            using var argumentsDocument = JsonDocument.Parse(argumentsJson ?? string.Empty);
+            if (!StrictJsonOutputNormalizer.TryNormalize(argumentsJson ?? string.Empty, out var normalizedJson))
+            {
+                throw OpenAiModelErrorMapper.InvalidToolCall(usage, returnedModel);
+            }
+
+            using var argumentsDocument = JsonDocument.Parse(normalizedJson);
             if (argumentsDocument.RootElement.ValueKind != JsonValueKind.Object)
             {
                 throw OpenAiModelErrorMapper.InvalidToolCall(usage, returnedModel);

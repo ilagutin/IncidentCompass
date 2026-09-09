@@ -7,6 +7,9 @@ namespace IncidentCompass.UnitTests;
 
 public sealed class ShippedWorkerInstructionExamplesTests
 {
+    private static readonly HashSet<string> SupportedSchemaTypes =
+        new(["object", "array", "string", "boolean", "number"], StringComparer.Ordinal);
+
     private static readonly Regex JsonExamplePattern = new(
         "~~~json\\r?\\n(?<example>\\{[\\s\\S]*?\\})\\r?\\n~~~",
         RegexOptions.CultureInvariant);
@@ -48,6 +51,46 @@ public sealed class ShippedWorkerInstructionExamplesTests
                     outputSchema,
                     role.Name);
             }
+        }
+    }
+
+    [Fact]
+    public void EveryShippedRoleSchema_UsesSupportedStringTypesWithoutUnions()
+    {
+        var root = RepositoryRootLocator.Find();
+        var configPath = Path.Combine(root, "config", "incidentcompass.config.json");
+        using var configDocument = JsonDocument.Parse(File.ReadAllText(configPath));
+
+        foreach (var role in configDocument.RootElement.GetProperty("Roles").EnumerateObject())
+        {
+            var schemaPath = ResolveConfigReference(root, role.Value.GetProperty("OutputSchema").GetString()!);
+            using var schemaDocument = JsonDocument.Parse(File.ReadAllText(schemaPath));
+
+            AssertSupportedSchemaNode(schemaDocument.RootElement, role.Name, "output");
+        }
+    }
+
+    private static void AssertSupportedSchemaNode(JsonElement schema, string roleName, string path)
+    {
+        Assert.True(
+            schema.TryGetProperty("type", out var type),
+            $"Role '{roleName}' schema is missing type at {path}.");
+        Assert.True(
+            type.ValueKind == JsonValueKind.String,
+            $"Role '{roleName}' schema type at {path} must be one supported string, not an array or union.");
+        Assert.Contains(type.GetString()!, SupportedSchemaTypes);
+
+        if (schema.TryGetProperty("properties", out var properties) && properties.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var property in properties.EnumerateObject())
+            {
+                AssertSupportedSchemaNode(property.Value, roleName, path + "." + property.Name);
+            }
+        }
+
+        if (schema.TryGetProperty("items", out var items) && items.ValueKind == JsonValueKind.Object)
+        {
+            AssertSupportedSchemaNode(items, roleName, path + "[]");
         }
     }
 

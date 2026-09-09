@@ -85,6 +85,29 @@ public sealed class TriageJobRunnerNonRetryableFailureTests
     }
 
     [Fact]
+    public async Task ProcessClaimedAsync_InvalidWorkerOutputDeadLettersImmediatelyWithFixedReason()
+    {
+        const string modelControlledDiagnostic = "MODEL_OUTPUT_MUST_NOT_BE_STORED";
+        var recorder = new RecordingRuntimeRepository();
+        var validationFailure = new WorkerOutputValidationException(
+            ["analysis worker output is not valid JSON: " + modelControlledDiagnostic],
+            violationsTruncated: false);
+        var runner = CreateRunner(
+            recorder,
+            new ThrowingProcessor(new WorkerOutputInvalidException(validationFailure)));
+
+        await ProcessAsync(runner, attempt: 1, maxAttempts: 5);
+
+        var failure = Assert.Single(recorder.Failures);
+        Assert.Equal(TriageJobStatus.DeadLettered, failure.Status);
+        Assert.Equal(WorkerOutputInvalidException.ErrorCode, failure.ErrorCode);
+        Assert.Equal(WorkerOutputInvalidException.StoredReason, failure.ErrorMessage);
+        Assert.DoesNotContain(modelControlledDiagnostic, failure.ErrorMessage, StringComparison.Ordinal);
+        Assert.Null(failure.NextAttemptAtUtc);
+        Assert.Equal(TriageJobRetryBudgetDisposition.ConsumeAttempt, failure.RetryBudgetDisposition);
+    }
+
+    [Fact]
     public async Task ProcessClaimedAsync_ExhaustionWrappedByBoundedRepromptStillDeadLetters()
     {
         var recorder = new RecordingRuntimeRepository();

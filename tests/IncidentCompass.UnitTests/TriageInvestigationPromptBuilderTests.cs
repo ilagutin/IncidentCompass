@@ -40,6 +40,27 @@ public sealed class TriageInvestigationPromptBuilderTests
     }
 
     [Fact]
+    public void BuildWorkerCorrectionPrompt_IncludesEveryBoundedViolationAndTheExactOutputSchema()
+    {
+        const string outputSchema = """
+            { "type": "object", "required": ["matched"] }
+            """;
+        var validation = new WorkerOutputValidationException(
+            ["memory worker output is missing required property output.matched.",
+             "memory worker output contains 2 unsupported properties at output."],
+            violationsTruncated: true);
+
+        var prompt = TriageInvestigationPromptBuilder.BuildWorkerCorrectionPrompt(validation, outputSchema);
+        var lines = prompt.Split('\n').Select(static line => line.TrimEnd('\r')).ToArray();
+
+        Assert.Equal("Validation errors in the previous worker output:", lines[0]);
+        Assert.Contains($"- {validation.Violations[0]}", lines);
+        Assert.Contains($"- {validation.Violations[1]}", lines);
+        Assert.Contains($"- {WorkerOutputValidationException.TruncationMarker}", lines);
+        Assert.Contains(outputSchema, prompt, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void BuildOrchestratorPrompt_PreservesEmptyScalarsAndShortArtifactPayload()
     {
         const string shortArtifactPayload = """{"message":"short"}""";

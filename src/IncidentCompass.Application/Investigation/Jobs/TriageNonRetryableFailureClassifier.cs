@@ -2,9 +2,9 @@ namespace IncidentCompass.Application.Investigation.Jobs;
 
 /// <summary>
 /// Classifies attempt failures that are permanent for the job rather than transient. Budget
-/// exhaustion and governance denial cannot succeed on a later attempt, so the runner dead-letters
-/// them with their own error code. The inner-exception chain is walked because bounded-reprompt
-/// paths wrap the original failure.
+/// exhaustion, governance denial and exhausted worker-output corrections cannot succeed on a later
+/// attempt with the same configuration, so the runner dead-letters them with their own error code.
+/// The inner-exception chain is walked because bounded paths can wrap the original failure.
 /// </summary>
 internal static class TriageNonRetryableFailureClassifier
 {
@@ -18,6 +18,8 @@ internal static class TriageNonRetryableFailureClassifier
                     return budgetExhausted.ErrorCode;
                 case TriageGovernanceDeniedException governanceDenied:
                     return governanceDenied.ErrorCode;
+                case WorkerOutputInvalidException:
+                    return WorkerOutputInvalidException.ErrorCode;
                 default:
                     continue;
             }

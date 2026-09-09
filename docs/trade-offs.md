@@ -201,7 +201,34 @@ Reaching a bounded-run limit is treated as a permanent outcome for the job, not 
 
 The reason is that a replay reads the same configuration snapshot and the same policy rules, so it would exhaust or be denied in the same place while spending another full budget of provider tokens. Retrying would multiply cost and delay the operator signal without changing the outcome. The distinct codes (`triage_budget_*` and `triage_governance_*`) are what an operator greps to tell an under-provisioned budget apart from an ordinary fault; the durable `BudgetEvent` and policy-decision ledger rows written before the failure are unchanged, so a dead-lettered exhaustion is exactly as audit-visible as the retried failure was.
 
-Inside a worker the same line is drawn explicitly rather than by where a throw happens to sit. Only the worker output failing schema validation is repromptable, because the model can correct its own JSON on the next bounded turn. A budget stop or a governance denial raised during a worker turn leaves the worker loop instead of being spent as a reprompt, so a denied tool call is never retried by reprompting the model.
+Inside a worker the same line is drawn explicitly rather than by where a throw happens to sit. Only
+the worker output failing schema validation is repromptable, because the model can correct its own
+JSON on the next bounded turn. Each worker correction is a `Warning` with job, attempt, role and
+counter data and writes a bounded `BudgetEvent`; orchestrator corrections have the same durable
+ledger visibility and a specific closed reason. A budget stop or a governance denial raised during a
+worker turn leaves the worker loop instead of being spent as a reprompt, so a denied tool call is
+never retried by reprompting the model.
+
+The output validator returns at most 20 violations from one response, so a correction turn can ask the
+model to repair all known issues at once. That correction prompt includes the role's output schema, but
+neither the schema nor the prompt is logged or written to the ledger. Diagnostics use fixed validator
+wording and application-selected paths into the configured schema. An unexpected, model-controlled
+property contributes only a count, not its name. Model output and raw `JsonException` text or paths are
+excluded. Property names are not treated as universally safe merely because they appeared in JSON.
+
+Exactly one matching outer Markdown fence around otherwise bare JSON is tolerated at the worker-output
+and orchestrator tool-argument boundaries as a recovery aid. The opener may be bare or carry the
+`json` language tag, and must match either a closing triple backtick or triple tilde fence. Mixed
+prose, nested, multiple or mismatched fences, and fenced or otherwise string-encoded `report_json`
+content remain invalid. The published role instructions still require bare JSON. Schemas intentionally
+remain union-free: optional fields whose value would be
+`null` must be omitted, rather than using a `type` union with `null`. This keeps the shipped schemas
+and instructions aligned without broadening the validator's accepted schema dialect.
+
+When the worker has spent its correction allowance, it dead-letters immediately as
+`worker_output_invalid`. Its durable reason is a fixed bounded classification with no response or
+validator-exception content, rather than a retryable generic exception. The strict report envelope is
+separate work; this tolerance does not relax it.
 
 The trade-off is honest: an attempt that failed only because a transient slowdown consumed its wall clock is also dead-lettered rather than retried. That is deliberate for a reference deployment, where a visible dead-letter with a specific code is more useful than a silent retry loop, but it means budgets must be provisioned for the slowest acceptable run. Provider outages are classified first and keep their separate delayed-retry path, so an outage never reaches this classification.
 
