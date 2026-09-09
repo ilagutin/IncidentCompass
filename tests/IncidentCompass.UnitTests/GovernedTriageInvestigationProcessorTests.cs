@@ -149,11 +149,56 @@ public sealed class GovernedTriageInvestigationProcessorTests
         Assert.DoesNotContain(arbitraryExceptionMessage, ledgerEvent.Rationale, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// A spent reprompt allowance is a bounded-run limit, not an ordinary fault: it must leave the
+    /// loop as <see cref="TriageBudgetExhaustedException"/> under its own code so the runner
+    /// dead-letters the attempt instead of spending a retry under `triage_job_attempt_failed`.
+    /// </summary>
+    [Fact]
+    public async Task ProcessAsync_SpentRepromptAllowanceFailsClosedUnderItsOwnBudgetCode()
+    {
+        var model = new ScriptedOrchestratorModel();
+        var harness = CreateHarness(
+            model,
+            reportFailureMessage: OrchestratorRepromptDiagnostics.DocumentationFitMismatch,
+            reportFailureCount: 2);
+
+        var exception = await Assert.ThrowsAsync<TriageBudgetExhaustedException>(harness.ProcessAsync);
+
+        Assert.Equal(
+            TriageBudgetExhaustedException.OrchestratorRepromptLimitReachedCode,
+            exception.ErrorCode);
+        // The validation failure the loop could not correct stays on the chain the classifier walks.
+        Assert.IsType<TriageReportValidationException>(exception.InnerException);
+        Assert.Empty(harness.Reports.Published);
+        // The runner must dead-letter this instead of spending the retry budget on the same config hash.
+        Assert.Equal(
+            TriageBudgetExhaustedException.OrchestratorRepromptLimitReachedCode,
+            TriageNonRetryableFailureClassifier.TryGetErrorCode(exception));
+
+        // Exactly one reprompt was charged and ledgered; the turn that could not be corrected is
+        // reported separately, so the cause of the exhaustion is not lost to the single error code.
+        var repromptLog = harness.Logger.Single(3401);
+        Assert.Contains("1/1", repromptLog.Message, StringComparison.Ordinal);
+        var exhaustionLog = harness.Logger.Single(3403);
+        Assert.Equal(LogLevel.Warning, exhaustionLog.Level);
+        Assert.Contains("publish_report_validation_failed", exhaustionLog.Message, StringComparison.Ordinal);
+        Assert.Contains(
+            OrchestratorRepromptDiagnostics.DocumentationFitMismatch,
+            exhaustionLog.Message,
+            StringComparison.Ordinal);
+        Assert.Single(
+            harness.LedgerWriter.Requests,
+            request => request.Rationale is { } rationale &&
+                rationale.StartsWith("orchestrator_reprompt:", StringComparison.Ordinal));
+    }
+
     private static ProcessorHarness CreateHarness(
         IAiModelClient model,
         string orchestratorRouteId = "report-chat",
         string analysisRouteId = "analysis-chat",
-        string? reportFailureMessage = null)
+        string? reportFailureMessage = null,
+        int reportFailureCount = 1)
     {
         var configuration = CreateConfiguration(orchestratorRouteId, analysisRouteId);
         var ledgerWriter = new RecordingLedgerWriter();
@@ -170,7 +215,7 @@ public sealed class GovernedTriageInvestigationProcessorTests
                 new WorkerToolCallExecutor([], new ToolRuleEngine(ledgerReader), appender, new UnusedToolResultCommitter()),
                 appender),
             timeProvider);
-        var reports = new RecordingReportRepository(reportFailureMessage);
+        var reports = new RecordingReportRepository(reportFailureMessage, reportFailureCount);
         var logger = new RecordingLogger<GovernedTriageInvestigationProcessor>();
         var processor = new GovernedTriageInvestigationProcessor(
             new StaticInvestigationContextRepository(),
@@ -294,18 +339,18 @@ public sealed class GovernedTriageInvestigationProcessorTests
             Task.FromResult(CreateContext());
     }
 
-    private sealed class RecordingReportRepository(string? firstFailureMessage) : ITriageReportRepository
+    private sealed class RecordingReportRepository(string? failureMessage, int failureCount) : ITriageReportRepository
     {
-        private bool firstFailureRaised;
+        private int failuresRaised;
 
         public List<TriageReport> Published { get; } = [];
 
         public Task<Guid> PublishAsync(TriageJob job, string workerId, TriageReport report, CancellationToken cancellationToken)
         {
-            if (firstFailureMessage is not null && !firstFailureRaised)
+            if (failureMessage is not null && failuresRaised < failureCount)
             {
-                firstFailureRaised = true;
-                throw new TriageReportValidationException(firstFailureMessage);
+                failuresRaised++;
+                throw new TriageReportValidationException(failureMessage);
             }
 
             Published.Add(report);

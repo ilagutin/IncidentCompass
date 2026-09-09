@@ -87,9 +87,16 @@ public sealed class BoundedRepromptAndBudgetTests(PostgresRepositoryFixture post
     public async Task ProcessClaimedAsync_NoToolOrchestratorTurnRepromptsAtMostConfiguredLimitThenFailsClosed()
     {
         using var scope = await CreateScopeAsync(RepromptScenario.NoOrchestratorTool, maxReprompts: 1, maxTokens: 100000, contextWindowTokens: 8192);
-        var ingested = await RunOneAsync(scope);
+        var ingested = await IngestOneAsync(scope);
+        // Attempts are deliberately left on the job, so the dead-letter below is attributable to the
+        // spent reprompt allowance rather than to the attempt guard.
+        await ProcessNextAsync(scope, "worker-reprompt", maxAttempts: 3, retryDelay: TimeSpan.Zero);
 
         var job = await ReadJobAsync(scope.ConnectionString, ingested.JobId!.Value);
+        var attempt = await ScalarAsync<int>(
+            scope.ConnectionString,
+            "SELECT attempt FROM incidentcompass.triage_jobs WHERE id = @job_id;",
+            ("job_id", ingested.JobId.Value));
         var orchestratorModelCalls = await ScalarAsync<long>(
             scope.ConnectionString,
             "SELECT COUNT(*) FROM incidentcompass.triage_ledger WHERE job_id = @job_id AND event_type = 'ModelCall' AND role IS NULL;",
@@ -102,7 +109,11 @@ public sealed class BoundedRepromptAndBudgetTests(PostgresRepositoryFixture post
         Assert.Equal("DeadLettered", job.Status);
         Assert.Equal(2, orchestratorModelCalls);
         AssertRepromptEvent(repromptEvent, "orchestrator", "orchestrator_reprompt:", "no_tool_call");
-        Assert.Equal("triage_job_attempt_failed: InvalidOperationException.", job.LastErrorMessage);
+        Assert.Equal("triage_budget_orchestrator_reprompt_limit_reached", job.LastErrorCode);
+        Assert.Equal(
+            "triage_budget_orchestrator_reprompt_limit_reached: TriageBudgetExhaustedException.",
+            job.LastErrorMessage);
+        Assert.Equal(1, attempt);
     }
 
     [DockerAvailableFact]
@@ -171,7 +182,10 @@ public sealed class BoundedRepromptAndBudgetTests(PostgresRepositoryFixture post
         Assert.Equal(2, orchestratorModelCalls);
         Assert.Equal(30, chargedTokens);
         AssertRepromptEvent(repromptEvent, "orchestrator", "orchestrator_reprompt:", "unknown_tool");
-        Assert.Equal("triage_job_attempt_failed: InvalidOperationException.", job.LastErrorMessage);
+        Assert.Equal("triage_budget_orchestrator_reprompt_limit_reached", job.LastErrorCode);
+        Assert.Equal(
+            "triage_budget_orchestrator_reprompt_limit_reached: TriageBudgetExhaustedException.",
+            job.LastErrorMessage);
     }
 
     [DockerAvailableFact]

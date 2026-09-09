@@ -82,6 +82,7 @@ An id is stable once published. A retired event keeps its id reserved rather tha
 | 3304 | Warning | Worker tool call ended in a non-success status with a bounded error code. |
 | 3401 | Information | Orchestrator was reprompted, with its specific closed reason, bounded reprompt counter and durable `BudgetEvent` ledger record. |
 | 3402 | Warning | Worker role output was reprompted, with job, attempt, role, a safe validator diagnostic list, bounded reprompt counter and durable `BudgetEvent` ledger record. |
+| 3403 | Warning | Orchestrator spent its bounded reprompt allowance, with the closed reason and safe diagnostic of the turn it could not correct. The attempt then dead-letters as `triage_budget_orchestrator_reprompt_limit_reached`. |
 | 3501 | Debug | Immediate tool policy allowed a worker tool. |
 | 3502 | Warning | Immediate tool policy denied a worker tool. |
 | 3503 | Information | Immediate tool policy requires approval for a worker tool. |

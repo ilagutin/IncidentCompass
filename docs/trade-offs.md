@@ -240,7 +240,7 @@ work.
 
 ## Budget And Governance Exhaustion Dead-Letters Instead Of Retrying
 
-Reaching a bounded-run limit is treated as a permanent outcome for the job, not a transient fault. When an attempt hits the token budget, the wall-clock budget, the route context window, the per-attempt worker budget (`MaxWorkers`) or a bounded turn limit (the configured orchestrator `MaxTurns` plus its reprompt allowance, or the worker turn allowance), when backend governance denies a worker tool call, or when the rehydrated configuration names an orchestrator route it does not contain, the job is dead-lettered immediately with its own `last_error_code` and no next attempt time. It does not spend the remaining `MaxAttempts`.
+Reaching a bounded-run limit is treated as a permanent outcome for the job, not a transient fault. When an attempt hits the token budget, the wall-clock budget, the route context window, the per-attempt worker budget (`MaxWorkers`), a bounded turn limit (the configured orchestrator `MaxTurns` plus its reprompt allowance, or the worker turn allowance) or the orchestrator's reprompt allowance itself (`MaxReprompts`, as `triage_budget_orchestrator_reprompt_limit_reached`), when backend governance denies a worker tool call, or when the rehydrated configuration names an orchestrator route it does not contain, the job is dead-lettered immediately with its own `last_error_code` and no next attempt time. It does not spend the remaining `MaxAttempts`.
 
 The reason is that a replay reads the same configuration snapshot and the same policy rules, so it would exhaust or be denied in the same place while spending another full budget of provider tokens. Retrying would multiply cost and delay the operator signal without changing the outcome. The distinct codes (`triage_budget_*` and `triage_governance_*`) are what an operator greps to tell an under-provisioned budget apart from an ordinary fault; the durable `BudgetEvent` and policy-decision ledger rows written before the failure are unchanged, so a dead-lettered exhaustion is exactly as audit-visible as the retried failure was.
 
@@ -272,6 +272,15 @@ When the worker has spent its correction allowance, it dead-letters immediately 
 `worker_output_invalid`. Its durable reason is a fixed bounded classification with no response or
 validator-exception content, rather than a retryable generic exception. The strict report envelope is
 separate work; this tolerance does not relax it.
+
+The orchestrator half of the same mechanism is treated identically. When the orchestrator has spent
+its `MaxReprompts` allowance - on an absent tool call, an unsupported tool, invalid `delegate`
+arguments or an invalid `publish_report` - the attempt dead-letters as
+`triage_budget_orchestrator_reprompt_limit_reached`. One code covers all four causes because the
+permanent condition is one condition, the allowance being spent, and that is the knob an operator
+would change; which turn could not be corrected stays visible per reprompt in log event 3401 and its
+`orchestrator_reprompt:` ledger `BudgetEvent`, and for the uncorrectable turn itself in log event
+3403.
 
 The trade-off is honest: an attempt that failed only because a transient slowdown consumed its wall clock is also dead-lettered rather than retried. That is deliberate for a reference deployment, where a visible dead-letter with a specific code is more useful than a silent retry loop, but it means budgets must be provisioned for the slowest acceptable run. Provider outages are classified first and keep their separate delayed-retry path, so an outage never reaches this classification.
 
