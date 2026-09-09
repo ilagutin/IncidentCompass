@@ -20,7 +20,6 @@ internal sealed partial class InvestigationModelCaller(
     ILogger<InvestigationModelCaller>? logger = null)
 {
     private readonly ILogger logger = logger ?? NullLogger<InvestigationModelCaller>.Instance;
-
     public async Task<AiModelResponse> CompleteAsync(
         TriageJobCallContext context,
         TriageRouteSettings route,
@@ -35,7 +34,9 @@ internal sealed partial class InvestigationModelCaller(
             Messages: messages,
             Temperature: route.Temperature,
             MaxOutputTokens: route.MaxOutputTokens,
-            Tools: tools);
+            Tools: tools,
+            ProviderId: route.ProviderId,
+            Reasoning: route.Reasoning);
 
         var callId = Guid.NewGuid();
         var startedAtUtc = timeProvider.GetUtcNow();
@@ -219,7 +220,8 @@ internal sealed partial class InvestigationModelCaller(
             response.ProposedToolCalls?.Count ?? 0,
             callId,
             Outcome: "success",
-            ErrorCode: null);
+            ErrorCode: null,
+            ReasoningTokens: response.Usage?.ReasoningTokens);
 
         var accounting = new InvestigationModelCallAccounting(
             callId,
@@ -284,7 +286,8 @@ internal sealed partial class InvestigationModelCaller(
             ProposedToolCallCount: 0,
             CallId: callId,
             Outcome: RuntimeTelemetryOutcome.Failed.ToString().ToLowerInvariant(),
-            ErrorCode: errorCode);
+            ErrorCode: errorCode,
+            ReasoningTokens: exception.Usage?.ReasoningTokens);
         return new InvestigationModelCallAccounting(
             callId,
             context.Role,

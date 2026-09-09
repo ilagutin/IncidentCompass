@@ -82,6 +82,22 @@ internal sealed class TriageConfigurationLoadValidator(
             {
                 throw Invalid("Routes." + routeId + ".ContextWindowTokens", route.ContextWindowTokens.Value.ToString(CultureInfo.InvariantCulture), "a positive integer when set");
             }
+
+            if (route.Reasoning is { } reasoning && !Enum.IsDefined(reasoning))
+            {
+                throw Invalid(
+                    "Routes." + routeId + ".Reasoning",
+                    ((int)reasoning).ToString(CultureInfo.InvariantCulture),
+                    "one of: off, low, medium, high");
+            }
+
+            if (string.Equals(route.Kind, "Embedding", StringComparison.Ordinal) && route.Reasoning is not null)
+            {
+                throw Invalid(
+                    "Routes." + routeId + ".Reasoning",
+                    route.Reasoning.Value.ToString(),
+                    "unset for an embedding route");
+            }
         }
     }
     private static void ValidateOrchestrator(

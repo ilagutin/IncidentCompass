@@ -26,4 +26,5 @@ public sealed record ModelCallLedgerMetadata(
     [property: JsonPropertyName("proposedToolCallCount"), JsonPropertyOrder(9)] int ProposedToolCallCount,
     [property: JsonPropertyName("callId"), JsonPropertyOrder(10)] Guid CallId,
     [property: JsonPropertyName("outcome"), JsonPropertyOrder(11)] string Outcome,
-    [property: JsonPropertyName("errorCode"), JsonPropertyOrder(12)] string? ErrorCode);
+    [property: JsonPropertyName("errorCode"), JsonPropertyOrder(12)] string? ErrorCode,
+    [property: JsonPropertyName("reasoningTokens"), JsonPropertyOrder(13), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? ReasoningTokens = null);

@@ -70,6 +70,55 @@ public sealed class InvestigationModelCallerTests
         Assert.Equal("A concise response.", response.Content);
         Assert.Contains(writer.Requests, request => request.EventType == TriageLedgerEventType.ModelCall);
     }
+
+    [Fact]
+    public async Task CompleteAsync_PropagatesProviderIdAndNeutralReasoningPreference()
+    {
+        var writer = new RecordingLedgerWriter();
+        var model = new StaticModelClient(new AiModelUsage(1, 1, 2));
+        var caller = CreateCaller(model, writer, TimeProvider.System);
+        var context = CreateContext(TimeProvider.System.GetUtcNow(), maxWallClockSeconds: 60);
+        var route = context.Configuration.Routes[context.RouteId] with
+        {
+            Reasoning = AiReasoningLevel.Low
+        };
+
+        await caller.CompleteAsync(
+            context,
+            route,
+            [new AiChatMessage(AiMessageRole.User, "Investigate.")],
+            tools: null,
+            CancellationToken.None);
+
+        Assert.Equal("mock", model.LastRequest!.ProviderId);
+        Assert.Equal(AiReasoningLevel.Low, model.LastRequest.Reasoning);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(37)]
+    public async Task CompleteAsync_SuccessRecordsProviderReportedReasoningTokensWithoutSeparateCharge(
+        int reasoningTokens)
+    {
+        var writer = new RecordingLedgerWriter();
+        var model = new StaticModelClient(new AiModelUsage(10, 20, 30, reasoningTokens));
+        var caller = CreateCaller(model, writer, TimeProvider.System);
+        var context = CreateContext(TimeProvider.System.GetUtcNow(), maxWallClockSeconds: 60);
+
+        await caller.CompleteAsync(
+            context,
+            context.Configuration.Routes[context.RouteId],
+            [new AiChatMessage(AiMessageRole.User, "Investigate.")],
+            tools: null,
+            CancellationToken.None);
+
+        var modelCall = Assert.Single(writer.Requests, request => request.EventType == TriageLedgerEventType.ModelCall);
+        using var metadata = JsonDocument.Parse(modelCall.Rationale!);
+        Assert.Equal(reasoningTokens, metadata.RootElement.GetProperty("reasoningTokens").GetInt32());
+        var charge = Assert.Single(writer.Requests, request => request.EventType == TriageLedgerEventType.BudgetEvent);
+        Assert.Equal(30, charge.TokensDelta);
+    }
+
     [Fact]
     public async Task CompleteAsync_AllZeroProviderUsageChargesEstimatedTokens()
     {
@@ -246,7 +295,7 @@ public sealed class InvestigationModelCallerTests
                 "test-provider",
                 "Upstream response body must not be persisted.",
                 failureKind: ProviderFailureKind.OutputLimitReached,
-                usage: new AiModelUsage(1200, 2396, 3596),
+                usage: new AiModelUsage(1200, 2396, 3596, ReasoningTokens: 2000),
                 returnedModel: "returned-model")),
             writer,
             TimeProvider.System);
@@ -265,6 +314,7 @@ public sealed class InvestigationModelCallerTests
         Assert.Equal("provider_output_limit_reached", failure.Accounting.Metadata.ErrorCode);
         Assert.Equal("returned-model", failure.Accounting.Metadata.Model);
         Assert.Equal(0, failure.Accounting.Metadata.ProposedToolCallCount);
+        Assert.Equal(2000, failure.Accounting.Metadata.ReasoningTokens);
         Assert.Empty(writer.Requests);
     }
 
@@ -467,9 +517,12 @@ public sealed class InvestigationModelCallerTests
     {
         public int CallCount { get; private set; }
 
+        public AiModelRequest? LastRequest { get; private set; }
+
         public Task<AiModelResponse> CompleteAsync(AiModelRequest request, CancellationToken cancellationToken)
         {
             CallCount++;
+            LastRequest = request;
             cancellationToken.ThrowIfCancellationRequested();
             return Task.FromResult(new AiModelResponse(
                 "A concise response.",

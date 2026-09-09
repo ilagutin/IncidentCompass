@@ -57,4 +57,20 @@ public sealed class ModelCallLedgerMetadataTests
 
         Assert.Equal(expected, JsonSerializer.Serialize(Metadata));
     }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(48)]
+    public void Serialize_AppendsExplicitProviderReasoningTokensAfterLegacyFields(int reasoningTokens)
+    {
+        var metadata = Metadata with { ReasoningTokens = reasoningTokens };
+        var expected =
+            "{\"kind\":\"orchestrator\",\"routeId\":\"report-chat\",\"model\":\"local-model\"," +
+            "\"provider\":\"local-oai\",\"usageSource\":\"provider\",\"inputTokens\":128," +
+            "\"outputTokens\":64,\"totalTokens\":192,\"durationMs\":1234,\"proposedToolCallCount\":1," +
+            "\"callId\":\"11111111-1111-1111-1111-111111111111\",\"outcome\":\"success\"," +
+            $"\"errorCode\":null,\"reasoningTokens\":{reasoningTokens}}}";
+
+        Assert.Equal(expected, JsonSerializer.Serialize(metadata));
+    }
 }

@@ -12,10 +12,14 @@ namespace IncidentCompass.Application.Core.ModelClients;
 /// <param name="Temperature">The optional sampling temperature after application-level policy resolution.</param>
 /// <param name="MaxOutputTokens">The optional provider output-token limit after application-level policy resolution.</param>
 /// <param name="Tools">The optional backend-owned tool definitions that may be offered to the model.</param>
+/// <param name="ProviderId">The optional configured provider identifier after route resolution.</param>
+/// <param name="Reasoning">The optional provider-neutral reasoning preference after route resolution.</param>
 public sealed record AiModelRequest(
     string CorrelationId,
     string Model,
     IReadOnlyList<AiChatMessage> Messages,
     double? Temperature = null,
     int? MaxOutputTokens = null,
-    IReadOnlyList<AiToolDefinition>? Tools = null);
+    IReadOnlyList<AiToolDefinition>? Tools = null,
+    string? ProviderId = null,
+    AiReasoningLevel? Reasoning = null);

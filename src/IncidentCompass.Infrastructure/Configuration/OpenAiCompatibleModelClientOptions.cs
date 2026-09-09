@@ -20,11 +20,16 @@ public sealed class OpenAiCompatibleModelClientOptions
 
     public int MaxRetryDelaySeconds { get; init; } = 5;
 
+    public Dictionary<string, OpenAiReasoningMode> ReasoningModes { get; init; } = new(StringComparer.Ordinal);
+
     public bool AllowInsecureHttpForLoopback { get; init; }
 
     public bool IsValid()
     {
         return MaxRetryDelaySeconds is > 0 and <= 3600 &&
+               ReasoningModes.All(static entry =>
+                   !string.IsNullOrWhiteSpace(entry.Key) &&
+                   Enum.IsDefined(entry.Value)) &&
                OpenAiCompatibleEndpointPolicy.IsValid(
                    ApiKey,
                    BaseUrl,

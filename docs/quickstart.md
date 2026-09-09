@@ -115,6 +115,11 @@ file are the model names used by the Worker investigation loop:
 `IncidentCompass__ModelGateway__DefaultModel` is still validated as gateway configuration, but it is
 not the source of truth for triage route calls. The route config is.
 
+Chat routes can optionally include `"Reasoning": "off"`, `"low"`, `"medium"` or `"high"`. If
+the value is absent, no reasoning-specific provider field is sent and existing routes keep their
+current behavior. `MaxOutputTokens` is unchanged: on most servers it remains a limit shared by
+reasoning and the final answer.
+
 The checked-in config references `config/incidentcompass.schema.json` for editor completion and
 structural feedback. Run the same semantic validator used at startup before launching either host:
 
@@ -240,6 +245,15 @@ $env:IncidentCompass__ModelGateway__OpenAiCompatible__ChatCompletionsPath = "/v1
 $env:IncidentCompass__ModelGateway__OpenAiCompatible__ApiKey = "local-dev-key"
 $env:IncidentCompass__ModelGateway__OpenAiCompatible__AllowInsecureHttpForLoopback = "true"
 ~~~
+
+To enable reasoning for a logical provider, configure its explicit request protocol under
+`IncidentCompass:ModelGateway:OpenAiCompatible:ReasoningModes`. The map key must match the route's
+`ProviderId`; its value is `Disabled`, `ReasoningEffort` or `ChatTemplateKwargs`. This selection is
+not inferred from the model name. `ReasoningEffort` sends lowercase `reasoning_effort` values, with
+`off` mapped to `none`. `ChatTemplateKwargs` sends
+`chat_template_kwargs.enable_thinking`, mapping `off` to `false` and every enabled level to `true`;
+it does not preserve intensity, and a local server may ignore it. A missing mapping sends no
+reasoning-specific field.
 
 For embeddings:
 

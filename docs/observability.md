@@ -173,7 +173,8 @@ The live model telemetry mechanism is the append-only triage ledger. Each invest
 - proposed tool-call count;
 - stable call ID;
 - outcome (`success` or `failed`);
-- nullable safe error code.
+- nullable safe error code;
+- nullable provider-reported reasoning token count.
 
 That payload is the named `ModelCallLedgerMetadata` record. Its JSON property names, casing and order
 are pinned by attribute because ledger rows and the cost-rollup reader share this persisted contract.
@@ -181,7 +182,7 @@ The call ID, outcome and nullable error code extend the earlier success-only sha
 field names remain stable. Unknown usage is represented by nullable token fields rather than a
 fabricated estimate.
 
-The ledger does not store rendered prompts, full provider responses, document text, provider credentials, API keys or embedding vectors. Token budget accounting is recorded separately as first-class `BudgetEvent` rows with `tokens_delta` and `workers_delta` columns. Every worker or orchestrator correction turn also writes one bounded `BudgetEvent`. A worker correction uses the `worker_output_reprompt:` rationale prefix, retains the role and is capped at 1,000 characters; it contains safe diagnostics, not validation exception text, model output, prompt or schema.
+The ledger does not store rendered prompts, full provider responses, document text, provider credentials, API keys, embedding vectors or reasoning text. A numeric provider-reported reasoning token count may be stored in `ModelCall` metadata, but no reasoning text is logged or persisted. Token budget accounting is recorded separately as first-class `BudgetEvent` rows with `tokens_delta` and `workers_delta` columns. Every worker or orchestrator correction turn also writes one bounded `BudgetEvent`. A worker correction uses the `worker_output_reprompt:` rationale prefix, retains the role and is capped at 1,000 characters; it contains safe diagnostics, not validation exception text, model output, prompt or schema.
 
 `ModelCall` rows and token-accounting `BudgetEvent` rows are mirrored by bounded application log events 3201-3204 and 3211-3212 above, while reprompt `BudgetEvent` rows are mirrored by events 3401 and 3402, so live model observability is readable from logs and auditable from the ledger.
 

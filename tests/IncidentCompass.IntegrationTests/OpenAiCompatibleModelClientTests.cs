@@ -118,7 +118,10 @@ public sealed class OpenAiCompatibleModelClientTests
               "usage": {
                 "prompt_tokens": 1596,
                 "completion_tokens": 2000,
-                "total_tokens": 3596
+                "total_tokens": 3596,
+                "completion_tokens_details": {
+                  "reasoning_tokens": 1987
+                }
               }
             }
             """;
@@ -128,8 +131,36 @@ public sealed class OpenAiCompatibleModelClientTests
 
         Assert.Equal(ProviderFailureKind.OutputLimitReached, exception.FailureKind);
         Assert.Equal("provider_output_limit_reached", exception.ErrorCode);
-        Assert.Equal(new AiModelUsage(1596, 2000, 3596), exception.Usage);
+        Assert.Equal(new AiModelUsage(1596, 2000, 3596, 1987), exception.Usage);
         Assert.Equal("reasoning-model", exception.ReturnedModel);
+    }
+
+    [Fact]
+    public void ResponseMapper_MapsProviderReportedReasoningUsage()
+    {
+        const string responseContent = """
+            {
+              "model": "reasoning-model",
+              "choices": [
+                {
+                  "message": { "content": "bounded answer" }
+                }
+              ],
+              "usage": {
+                "prompt_tokens": 21,
+                "completion_tokens": 34,
+                "total_tokens": 55,
+                "completion_tokens_details": {
+                  "reasoning_tokens": 13,
+                  "reasoning_content": "must not cross the provider boundary"
+                }
+              }
+            }
+            """;
+
+        var response = OpenAiModelResponseMapper.Map(responseContent, CreateRequest("requested-model"));
+
+        Assert.Equal(new AiModelUsage(21, 34, 55, 13), response.Usage);
     }
 
     [Fact]

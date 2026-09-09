@@ -21,7 +21,8 @@ internal static class OpenAiModelResponseMapper
             : new AiModelUsage(
                 completion.Usage.PromptTokens,
                 completion.Usage.CompletionTokens,
-                completion.Usage.TotalTokens);
+                completion.Usage.TotalTokens,
+                completion.Usage.CompletionTokensDetails?.ReasoningTokens);
         var choices = completion?.Choices;
         var choice = choices is { Count: > 0 } ? choices[0] : null;
         var message = choice?.Message;

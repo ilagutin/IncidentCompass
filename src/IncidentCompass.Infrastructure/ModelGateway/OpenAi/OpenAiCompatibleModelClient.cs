@@ -23,7 +23,7 @@ internal sealed class OpenAiCompatibleModelClient(
 
         var clientOptions = GetClientOptions();
         var endpointUri = GetEndpointUri(clientOptions);
-        var payloadJson = OpenAiModelRequestFactory.CreatePayloadJson(request);
+        var payloadJson = OpenAiModelRequestFactory.CreatePayloadJson(request, clientOptions);
         var maxRetryAttempts = Math.Max(0, clientOptions.MaxRetryAttempts);
         var idempotencyKey = CreateIdempotencyKey();
 

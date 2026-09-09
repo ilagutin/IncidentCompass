@@ -10,8 +10,11 @@ namespace IncidentCompass.Infrastructure.ModelGateway.OpenAi;
 
 internal static class OpenAiModelRequestFactory
 {
-    public static string CreatePayloadJson(AiModelRequest request)
+    public static string CreatePayloadJson(
+        AiModelRequest request,
+        OpenAiCompatibleModelClientOptions clientOptions)
     {
+        var reasoningMode = ResolveReasoningMode(request.ProviderId, clientOptions.ReasoningModes);
         var payload = new OpenAiChatCompletionRequest(
             Model: request.Model,
             Messages: request.Messages.Select(ToOpenAiMessage).ToArray(),
@@ -19,9 +22,59 @@ internal static class OpenAiModelRequestFactory
             MaxTokens: request.MaxOutputTokens,
             Tools: request.Tools is { Count: > 0 }
                 ? request.Tools.Select(ToOpenAiTool).ToArray()
-                : null);
+                : null,
+            ReasoningEffort: CreateReasoningEffort(request.Reasoning, reasoningMode),
+            ChatTemplateKwargs: CreateChatTemplateKwargs(request.Reasoning, reasoningMode));
 
         return JsonSerializer.Serialize(payload, OpenAiCompatibleJson.Options);
+    }
+
+    private static OpenAiReasoningMode ResolveReasoningMode(
+        string? providerId,
+        Dictionary<string, OpenAiReasoningMode> reasoningModes)
+    {
+        return !string.IsNullOrWhiteSpace(providerId) &&
+               reasoningModes.TryGetValue(providerId, out var reasoningMode)
+            ? reasoningMode
+            : OpenAiReasoningMode.Disabled;
+    }
+
+    private static string? CreateReasoningEffort(
+        AiReasoningLevel? reasoning,
+        OpenAiReasoningMode reasoningMode)
+    {
+        if (reasoning is null || reasoningMode != OpenAiReasoningMode.ReasoningEffort)
+        {
+            return null;
+        }
+
+        return reasoning.Value switch
+        {
+            AiReasoningLevel.Off => "none",
+            AiReasoningLevel.Low => "low",
+            AiReasoningLevel.Medium => "medium",
+            AiReasoningLevel.High => "high",
+            _ => throw new ArgumentOutOfRangeException(nameof(reasoning), reasoning, null)
+        };
+    }
+
+    private static OpenAiChatTemplateKwargs? CreateChatTemplateKwargs(
+        AiReasoningLevel? reasoning,
+        OpenAiReasoningMode reasoningMode)
+    {
+        if (reasoning is null || reasoningMode != OpenAiReasoningMode.ChatTemplateKwargs)
+        {
+            return null;
+        }
+
+        var enableThinking = reasoning.Value switch
+        {
+            AiReasoningLevel.Off => false,
+            AiReasoningLevel.Low or AiReasoningLevel.Medium or AiReasoningLevel.High => true,
+            _ => throw new ArgumentOutOfRangeException(nameof(reasoning), reasoning, null)
+        };
+
+        return new OpenAiChatTemplateKwargs(enableThinking);
     }
 
     public static HttpRequestMessage CreateHttpRequest(

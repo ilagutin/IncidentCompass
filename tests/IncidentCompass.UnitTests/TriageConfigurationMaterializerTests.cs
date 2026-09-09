@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using IncidentCompass.Application.Core.ModelClients;
 using IncidentCompass.Application.Governance.Tools;
 using IncidentCompass.Application.Intake.Normalization;
 using IncidentCompass.Application.Tickets;
@@ -24,6 +25,67 @@ public sealed class TriageConfigurationMaterializerTests
         Assert.Equal("attempt", rule.Scope);
         Assert.Empty(configuration.Redaction.Patterns);
         Assert.Empty(configuration.CurrentReleases);
+        Assert.Null(configuration.Routes["analysis-chat"].Reasoning);
+    }
+
+    [Theory]
+    [InlineData("off", AiReasoningLevel.Off)]
+    [InlineData("low", AiReasoningLevel.Low)]
+    [InlineData("medium", AiReasoningLevel.Medium)]
+    [InlineData("high", AiReasoningLevel.High)]
+    public void Materialize_MapsStrictLowercaseReasoningLevel(
+        string configuredValue,
+        AiReasoningLevel expected)
+    {
+        var node = ValidConfigNode();
+        node["Routes"]!["analysis-chat"]!["Reasoning"] = configuredValue;
+
+        var configuration = CreateMaterializer().Materialize("hash-1", node, ResolvedReferences());
+
+        Assert.Equal(expected, configuration.Routes["analysis-chat"].Reasoning);
+    }
+
+    [Theory]
+    [InlineData("unknown")]
+    [InlineData("Low")]
+    public void Materialize_RejectsUnknownOrWrongCaseReasoningString(string configuredValue)
+    {
+        var node = ValidConfigNode();
+        node["Routes"]!["analysis-chat"]!["Reasoning"] = configuredValue;
+
+        var exception = Assert.Throws<TriageConfigurationLoadException>(() =>
+            CreateMaterializer().Materialize("hash-1", node, ResolvedReferences()));
+
+        Assert.Contains("Routes.analysis-chat.Reasoning", exception.Message, StringComparison.Ordinal);
+        Assert.Contains($"unsupported value '{configuredValue}'", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("off, low, medium, high", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Materialize_RejectsNumericReasoningValue()
+    {
+        var node = ValidConfigNode();
+        node["Routes"]!["analysis-chat"]!["Reasoning"] = 1;
+
+        var exception = Assert.Throws<TriageConfigurationLoadException>(() =>
+            CreateMaterializer().Materialize("hash-1", node, ResolvedReferences()));
+
+        Assert.Contains("Routes.analysis-chat.Reasoning", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("unsupported value '1'", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("off, low, medium, high", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Materialize_RejectsReasoningOnEmbeddingRoute()
+    {
+        var node = ValidConfigNode();
+        node["Routes"]!["memory-embed"]!["Reasoning"] = "off";
+
+        var exception = Assert.Throws<TriageConfigurationLoadException>(() =>
+            CreateMaterializer().Materialize("hash-1", node, ResolvedReferences()));
+
+        Assert.Contains("Routes.memory-embed.Reasoning", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("embedding route", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]

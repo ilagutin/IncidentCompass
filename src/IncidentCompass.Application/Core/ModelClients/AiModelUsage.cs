@@ -9,7 +9,9 @@ namespace IncidentCompass.Application.Core.ModelClients;
 /// <param name="InputTokens">The provider-reported input token count when available.</param>
 /// <param name="OutputTokens">The provider-reported output token count when available.</param>
 /// <param name="TotalTokens">The provider-reported total token count when available.</param>
+/// <param name="ReasoningTokens">The provider-reported reasoning token count when available.</param>
 public sealed record AiModelUsage(
     int? InputTokens,
     int? OutputTokens,
-    int? TotalTokens);
+    int? TotalTokens,
+    int? ReasoningTokens = null);

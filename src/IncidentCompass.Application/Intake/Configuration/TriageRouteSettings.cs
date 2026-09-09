@@ -1,3 +1,5 @@
+using IncidentCompass.Application.Core.ModelClients;
+
 namespace IncidentCompass.Application.Intake.Configuration;
 
 public sealed record TriageRouteSettings(
@@ -6,4 +8,5 @@ public sealed record TriageRouteSettings(
     string Model,
     double? Temperature,
     int? MaxOutputTokens,
-    int? ContextWindowTokens);
+    int? ContextWindowTokens,
+    AiReasoningLevel? Reasoning = null);

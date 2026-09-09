@@ -121,6 +121,25 @@ Routing is configuration-driven:
 - cheap model;
 - evaluation model.
 
+### Route Reasoning Preference
+
+A chat route may set its optional `Reasoning` value to `off`, `low`, `medium` or `high`. When the
+value is absent, the client sends no reasoning-specific request field, so existing shipped routes
+retain their current request shape.
+
+For an OpenAI-compatible host, `ModelGateway:OpenAiCompatible:ReasoningModes` is an explicit map
+from the route's logical provider ID to one of `Disabled`, `ReasoningEffort` or
+`ChatTemplateKwargs`. The client never infers a reasoning protocol from a model name. A missing
+provider-ID mapping, or a `Disabled` mapping, sends no reasoning-specific request field.
+
+With `ReasoningEffort`, the route values map to the lowercase `reasoning_effort` values `none`,
+`low`, `medium` and `high` respectively. With `ChatTemplateKwargs`, the client sends
+`chat_template_kwargs.enable_thinking`: `off` becomes `false`; `low`, `medium` and `high` become
+`true`. That mode intentionally loses intensity, and a local server may ignore the field.
+
+`MaxOutputTokens` retains its existing semantics. On most servers it still limits the combined
+reasoning and final-answer output, rather than reserving a separate final-answer allowance.
+
 ## Investigation Budget Events
 
 Investigation model calls write compact redacted `ModelCall` metadata. Each row includes a unique

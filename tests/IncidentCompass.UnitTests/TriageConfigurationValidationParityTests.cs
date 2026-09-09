@@ -23,6 +23,10 @@ public sealed class TriageConfigurationValidationParityTests
         { "valid", true, true, null },
         { "provider", false, false, "Providers.local-oai.Kind" },
         { "route", false, false, "Routes.analysis-chat.Model" },
+        { "valid-reasoning", true, true, null },
+        { "unknown-reasoning", false, false, "Routes.analysis-chat.Reasoning" },
+        { "numeric-reasoning", false, false, "Routes.analysis-chat.Reasoning" },
+        { "embedding-reasoning", false, false, "Routes.memory-embed.Reasoning" },
         { "role", false, false, "Roles.analysis.OutputSchema" },
         { "tool", false, false, "Tools.memory_search.Kind" },
         { "rule", false, false, "Rules.Type" },
@@ -138,6 +142,18 @@ public sealed class TriageConfigurationValidationParityTests
                 return;
             case "route":
                 root["Routes"]!["analysis-chat"]!["Model"] = string.Empty;
+                return;
+            case "valid-reasoning":
+                root["Routes"]!["analysis-chat"]!["Reasoning"] = "low";
+                return;
+            case "unknown-reasoning":
+                root["Routes"]!["analysis-chat"]!["Reasoning"] = "automatic";
+                return;
+            case "numeric-reasoning":
+                root["Routes"]!["analysis-chat"]!["Reasoning"] = 1;
+                return;
+            case "embedding-reasoning":
+                root["Routes"]!["memory-embed"]!["Reasoning"] = "off";
                 return;
             case "role":
                 root["Roles"]!["analysis"]!["OutputSchema"] = string.Empty;
