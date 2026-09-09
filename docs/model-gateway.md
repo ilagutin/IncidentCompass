@@ -62,7 +62,8 @@ into that call through linked cancellation.
 ## Requirements
 
 - Model name is configurable.
-- The per-HTTP-attempt timeout is configurable and defaults to 30 seconds.
+- The chat-generation per-HTTP-attempt timeout is configurable and defaults to 300 seconds.
+- The embedding per-HTTP-attempt timeout is separately configurable and defaults to 30 seconds.
 - Chat-generation retries are limited to HTTP 429/503 responses and failures that are positively known
   to occur before dispatch: name resolution, secure-connection establishment, proxy-tunnel
   establishment, or a connection error whose socket cause is connection refused, timed out, host
@@ -140,6 +141,32 @@ With `ReasoningEffort`, the route values map to the lowercase `reasoning_effort`
 `MaxOutputTokens` retains its existing semantics. On most servers it still limits the combined
 reasoning and final-answer output, rather than reserving a separate final-answer allowance.
 
+### Shipped Local-Safe Profile
+
+The shipped profile pairs the chat provider's 300-second `TimeoutSeconds` with an orchestrator
+`MaxWallClockSeconds` of 600. Both `analysis-chat` and `report-chat` allow `MaxOutputTokens: 8000`
+and retain `ContextWindowTokens: 8192`; the orchestrator retains `MaxTokens: 200000` and
+`MaxReprompts: 2`. These settings form one local-safe profile for slower local generation. They are
+ceilings, not target token consumption or expected latency, and each call is still canceled when
+the investigation's remaining wall-clock budget expires.
+
+`ContextWindowTokens` only limits the backend's prompt-size estimate for a route. It does not
+subtract from or reserve room inside the separate 8000-token provider output ceiling. The embedding
+adapter retains its separate 30-second default timeout.
+
+The separation between these deadlines preserves two intentionally different dispositions. A
+stalled call that reaches its provider-owned deadline first fails as
+`provider_generation_timeout`, consumes the current job attempt and remains retryable while job
+attempts remain. If the investigation's remaining wall clock expires first, the bounded-run failure
+dead-letters immediately without spending another job attempt. Bringing the provider timeout too
+close to the investigation budget would make a later call hit the wall-clock path before its own
+timeout. Keeping the per-call ceiling noticeably lower leaves both outcomes meaningfully reachable;
+it does not prevent the remaining wall clock from canceling a call that starts late.
+
+Cloud operators can tighten the host timeout and triage route/budget overrides for their measured
+provider latency and cost requirements. Until streaming stall detection is available, the larger
+timeouts also mean a stalled generation can take longer to surface as a failure.
+
 ## Investigation Budget Events
 
 Investigation model calls write compact redacted `ModelCall` metadata. Each row includes a unique
@@ -160,5 +187,5 @@ Budget decisions sum `BudgetEvent.tokens_delta` and `BudgetEvent.workers_delta`,
 prompts, full provider responses, `ModelCall` rows or `BudgetEvent` rationale text. `MaxTokens`
 prevents starting a call once the current-attempt token budget is already reached; one-call overshoot
 is possible and is recorded. `MaxWallClockSeconds` is checked between calls and passed into model
-calls through cancellation. This failure fix does not select new route models, timeout defaults,
-wall-clock defaults or per-route output-token limits.
+calls through cancellation. The shipped ceilings above do not change these accounting or
+cancellation rules.

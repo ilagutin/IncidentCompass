@@ -20,10 +20,10 @@ internal sealed record TesterOptions(
         var baseUrl = environmentBaseUrl;
         var publicBaseUrl = environmentPublicBaseUrl;
         var requestTimeout = ReadOptionalPositiveSeconds(environmentRequestTimeoutSeconds, "INCIDENTCOMPASS_TESTER_REQUEST_TIMEOUT_SECONDS") ?? TimeSpan.FromSeconds(30);
-        var pollTimeout = ReadOptionalPositiveSeconds(environmentPollTimeoutSeconds, "INCIDENTCOMPASS_TESTER_POLL_TIMEOUT_SECONDS") ?? TimeSpan.FromMinutes(3);
+        var pollTimeout = ReadOptionalPositiveSeconds(environmentPollTimeoutSeconds, "INCIDENTCOMPASS_TESTER_POLL_TIMEOUT_SECONDS") ?? TimeSpan.FromMinutes(12);
         var pollInterval = ReadOptionalPositiveSeconds(environmentPollIntervalSeconds, "INCIDENTCOMPASS_TESTER_POLL_INTERVAL_SECONDS") ?? TimeSpan.FromSeconds(2);
-        var scenarioTimeout = TimeSpan.FromMinutes(4);
-        var totalTimeout = TimeSpan.FromMinutes(15);
+        var scenarioTimeout = TimeSpan.FromMinutes(13);
+        var totalTimeout = TimeSpan.FromMinutes(75);
         for (var index = 0; index < args.Length; index++)
         {
             var argument = args[index];

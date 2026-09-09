@@ -115,6 +115,29 @@ file are the model names used by the Worker investigation loop:
 `IncidentCompass__ModelGateway__DefaultModel` is still validated as gateway configuration, but it is
 not the source of truth for triage route calls. The route config is.
 
+The shipped local-safe profile uses these ceilings:
+
+| Setting | Default |
+|---|---|
+| Chat `ModelGateway:OpenAiCompatible:TimeoutSeconds`, per HTTP attempt | 300 seconds |
+| Embedding `Embeddings:OpenAiCompatible:TimeoutSeconds`, per HTTP attempt | 30 seconds |
+| `Orchestrator.Budget.MaxWallClockSeconds`, per investigation attempt | 600 seconds |
+| `analysis-chat` and `report-chat` `MaxOutputTokens`, per call | 8000 each |
+| `analysis-chat` and `report-chat` `ContextWindowTokens` | 8192 each |
+| `Orchestrator.Budget.MaxWorkers` | 6 |
+| `Orchestrator.Budget.MaxTokens` | 200000 |
+| `Orchestrator.Budget.MaxReprompts` | 2 |
+| `Orchestrator.Budget.MaxTurns` | 16 |
+
+This is one profile for slower local generation, not a target spend or expected run duration.
+`ContextWindowTokens` limits the backend's estimate of prompt size for a route; it does not reserve
+or subtract the route's output-token allowance.
+The remaining investigation wall clock can cancel a call before its provider timeout. Cloud
+operators can tighten `IncidentCompass__ModelGateway__OpenAiCompatible__TimeoutSeconds` through
+normal host configuration and lower the route and orchestrator ceilings in their triage config.
+Until streaming stall detection is available, allowing longer generation also delays detection of
+a real stall.
+
 Chat routes can optionally include `"Reasoning": "off"`, `"low"`, `"medium"` or `"high"`. If
 the value is absent, no reasoning-specific provider field is sent and existing routes keep their
 current behavior. `MaxOutputTokens` is unchanged: on most servers it remains a limit shared by

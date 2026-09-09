@@ -138,6 +138,16 @@ Default Docker Compose values point at a host-side OpenAI-compatible server:
 
 Set these in `.env` before starting the stack when your provider uses different model ids or paths.
 
+The normal demo uses the shipped local-safe profile: a 300-second chat provider timeout per HTTP
+attempt, a 600-second orchestrator wall-clock budget, and `MaxOutputTokens: 8000` on both
+`analysis-chat` and `report-chat`. Their `ContextWindowTokens` remains 8192, and the orchestrator
+keeps `MaxTokens: 200000` and `MaxReprompts: 2`. These are ceilings rather than target consumption
+or expected latency. `ContextWindowTokens` limits the backend's prompt-size estimate and does not
+reserve room from the 8000-token output allowance. On most servers, reasoning and the final answer
+share that output allowance. The separately configured embedding timeout remains 30 seconds. Cloud
+operators can tighten the host timeout and triage configuration overrides. Longer timeouts also
+delay detection of a real stall until streaming stall detection is available.
+
 ## Demo Scenarios
 
 The Tester first exports a real error span through the OpenTelemetry SDK to the Collector, which forwards it to `/v1/traces`, then runs five scenarios from docs and samples-backed local data:
@@ -192,8 +202,15 @@ and are not written into the result.
 
 This evaluator script requires PowerShell 7 or later and must be launched with `pwsh`. Windows
 PowerShell 5.1 is rejected before artifact directories, Compose projects or containers are created.
-`TimeoutSeconds` is the per-attempt deadline and covers intake, terminal polling and transient HTTP
-retries. A failed attempt receives a separate five-second bounded recovery readback, is checkpointed,
+The script separates two deadlines. `ProviderTimeoutSeconds` defaults to 420 seconds and supplies
+the per-HTTP-attempt timeout for the evaluation stack's chat and embedding providers. It remains
+below the Worker's 600-second investigation budget. `AttemptTimeoutSeconds` defaults to 660 seconds
+and bounds the evaluator's outer attempt across intake, terminal polling and transient HTTP retries,
+leaving 60 seconds beyond the Worker budget for terminal observation. The normal demo's chat
+provider timeout remains 300 seconds, and its embedding timeout remains 30 seconds; the 420-second
+embedding override is limited to the evaluation stack.
+
+A failed attempt receives a separate five-second bounded recovery readback, is checkpointed,
 and does not prevent the remaining attempts from running. Ctrl+C and container termination request a
 final bounded checkpoint before the evaluator exits with cancellation status.
 

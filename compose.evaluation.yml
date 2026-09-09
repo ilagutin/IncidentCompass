@@ -6,16 +6,16 @@ services:
     ports: !reset []
     environment:
       IncidentCompass__ConfigSource__Path: /app/config/incidentcompass.evaluation.config.json
-      IncidentCompass__ModelGateway__OpenAiCompatible__TimeoutSeconds: ${INCIDENTCOMPASS_EVALUATION_PROVIDER_TIMEOUT_SECONDS:-120}
-      IncidentCompass__Embeddings__OpenAiCompatible__TimeoutSeconds: ${INCIDENTCOMPASS_EVALUATION_PROVIDER_TIMEOUT_SECONDS:-120}
+      IncidentCompass__ModelGateway__OpenAiCompatible__TimeoutSeconds: ${INCIDENTCOMPASS_EVALUATION_PROVIDER_TIMEOUT_SECONDS:-420}
+      IncidentCompass__Embeddings__OpenAiCompatible__TimeoutSeconds: ${INCIDENTCOMPASS_EVALUATION_PROVIDER_TIMEOUT_SECONDS:-420}
     volumes:
       - ./evaluations/triage/incidentcompass.config.json:/app/config/incidentcompass.evaluation.config.json:ro
 
   worker:
     environment:
       IncidentCompass__ConfigSource__Path: /app/config/incidentcompass.evaluation.config.json
-      IncidentCompass__ModelGateway__OpenAiCompatible__TimeoutSeconds: ${INCIDENTCOMPASS_EVALUATION_PROVIDER_TIMEOUT_SECONDS:-120}
-      IncidentCompass__Embeddings__OpenAiCompatible__TimeoutSeconds: ${INCIDENTCOMPASS_EVALUATION_PROVIDER_TIMEOUT_SECONDS:-120}
+      IncidentCompass__ModelGateway__OpenAiCompatible__TimeoutSeconds: ${INCIDENTCOMPASS_EVALUATION_PROVIDER_TIMEOUT_SECONDS:-420}
+      IncidentCompass__Embeddings__OpenAiCompatible__TimeoutSeconds: ${INCIDENTCOMPASS_EVALUATION_PROVIDER_TIMEOUT_SECONDS:-420}
       IncidentCompass__Telegram__Enabled: "false"
       IncidentCompass__Telegram__BotToken: ""
       IncidentCompass__Tickets__GitHub__Token: ""
@@ -31,6 +31,7 @@ services:
       INCIDENTCOMPASS_TESTER_EVALUATION_REVISION: ${INCIDENTCOMPASS_TESTER_EVALUATION_REVISION:-unknown}
       INCIDENTCOMPASS_TESTER_EVALUATION_CONTENT_IDENTITY: ${INCIDENTCOMPASS_TESTER_EVALUATION_CONTENT_IDENTITY:-unknown}
       INCIDENTCOMPASS_TESTER_EVALUATION_CONTENT_DIRTY: ${INCIDENTCOMPASS_TESTER_EVALUATION_CONTENT_DIRTY:-true}
+      INCIDENTCOMPASS_TESTER_EVALUATION_ATTEMPT_TIMEOUT_SECONDS: ${INCIDENTCOMPASS_EVALUATION_ATTEMPT_TIMEOUT_SECONDS:-660}
       INCIDENTCOMPASS_LLM_BASE_URL: ${INCIDENTCOMPASS_LLM_BASE_URL:-http://host.docker.internal:1234}
       INCIDENTCOMPASS_LLM_MODEL: ${INCIDENTCOMPASS_LLM_MODEL:-local-model}
       INCIDENTCOMPASS_EMBEDDINGS_MODEL: ${INCIDENTCOMPASS_EMBEDDINGS_MODEL:-local-embedding-model}

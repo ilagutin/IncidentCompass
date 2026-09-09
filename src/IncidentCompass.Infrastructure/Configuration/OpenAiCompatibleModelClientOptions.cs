@@ -12,7 +12,7 @@ public sealed class OpenAiCompatibleModelClientOptions
 
     public string? Organization { get; init; }
 
-    public int TimeoutSeconds { get; init; } = 30;
+    public int TimeoutSeconds { get; init; } = 300;
 
     public int MaxRetryAttempts { get; init; } = 2;
 

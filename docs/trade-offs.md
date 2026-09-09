@@ -24,6 +24,18 @@ release gate remains the mock-backed demo plus the automated tests.
 The bounded-reprompt `3/3` result was measured with `Orchestrator.Budget.MaxReprompts: 2`; the earlier
 baseline predates bounded reprompts.
 
+These rates were recorded on 2026-07-02 and 2026-07-03, against the development build that shipped as
+`v0.1.0` on 2026-07-04, the release that introduced bounded orchestrator and worker reprompts, the
+governed `memory_search` tool and grounded report publication. The table is kept because it is the
+measured evidence behind those decisions, including the honest regression it records: adding
+grounding moved the memory trajectory from `5/5` to `3/5`.
+
+It is a historical record, not a statement about the current build. Reprompt handling and
+worker-output validation have changed since `v0.1.0`, so a rerun today would not be expected to
+reproduce these rates. Read the numbers only as reach rates for the terminal step on the build and
+date named above - not as a release gate, not as a measure of report quality, and not as a
+comparison between the two models.
+
 ## Test Fault Seams Live In Production Code
 
 Five interfaces exist in `src` for one reason: integration tests need to crash the process at an
@@ -151,6 +163,37 @@ Tool policy evaluates `rate_cap`, `precondition` and budget state by reading the
 
 `MaxTokens` means the backend will not start a new model call once the current-attempt budget is already reached. A single in-flight call can still overshoot the limit because final usage is known only after the provider responds. The overshoot is recorded as a `BudgetEvent` instead of hidden.
 
+## Local-Safe Ceilings Allow Slower Generation
+
+The shipped configuration uses one local-safe profile: 300 seconds per chat-provider HTTP attempt,
+600 seconds per investigation attempt, and `MaxOutputTokens: 8000` for both `analysis-chat` and
+`report-chat`. Their `ContextWindowTokens` remains 8192, and the orchestrator retains
+`MaxTokens: 200000` and `MaxReprompts: 2`.
+
+The 300-second provider deadline accommodates slower local reasoning generation while keeping one
+call noticeably below the 600-second investigation budget. That separation leaves time for other
+investigation work and keeps a provider-owned generation timeout reachable before the whole attempt
+expires. The earlier 2000-token analysis ceiling cut off a local reasoning-model response before it
+could complete its final answer. The 8000-token ceiling gives `analysis-chat` room for both reasoning
+and the answer; `report-chat` uses the same bound for a consistent shipped profile. On most servers,
+reasoning and final-answer tokens share that output allowance.
+
+`ContextWindowTokens: 8192` only bounds the backend's prompt-size estimate. It neither subtracts
+from nor reserves room in the separate 8000-token output allowance. Embedding calls keep their
+separate 30-second default timeout.
+
+All three values are safety ceilings, not target token consumption or expected latency. A successful
+run can finish far below them, and raising an output ceiling does not reserve tokens for the final
+answer or require the provider to consume them.
+
+This profile gives slower local models more time and output allowance. Cloud operators can tighten
+host timeout and triage route/budget overrides to match their latency and cost requirements.
+Until streaming stall detection is implemented, a real stall can take longer to produce a failure.
+The investigation's remaining wall-clock budget still cancels an in-flight model call; increasing
+the provider timeout does not extend that budget. A provider-owned timeout first consumes the current
+job attempt and can retry while attempts remain. A later call canceled by the remaining investigation
+wall clock instead dead-letters immediately without consuming another job attempt.
+
 ## Provider Retries Prefer Bounded Uncertainty
 
 The OpenAI-compatible generation client retries only HTTP 429/503 responses and failures known to
@@ -192,8 +235,8 @@ That boundary favors audit honesty over a guessed cost: unknown failed usage can
 cost rollup below the provider's eventual invoice. Success accounting still estimates missing or
 incomplete usage. When both ledger rows exist, model-call accounting is atomic as a pair, but it is
 not an exactly-once distributed billing system beyond the database lock and call-id deduplication
-boundary. Streaming idle detection, progress recovery, fallback routes and revised route, timeout,
-wall-clock and output-token defaults remain separate design work.
+boundary. Streaming idle detection, progress recovery and fallback routes remain separate design
+work.
 
 ## Budget And Governance Exhaustion Dead-Letters Instead Of Retrying
 

@@ -7,7 +7,8 @@ param(
     [string] $EmbeddingModel = "local-embedding-model",
     [string] $EmbeddingApiKey = "local-evaluation-key",
     [int] $Runs = 3,
-    [int] $TimeoutSeconds = 120,
+    [int] $ProviderTimeoutSeconds = 420,
+    [int] $AttemptTimeoutSeconds = 660,
     [string] $ResultPath = "artifacts\evaluation\triage-evaluation-result-v2.json"
 )
 
@@ -126,14 +127,24 @@ try {
     if ($Runs -ne 3) {
         throw "Runs must be exactly 3 for the version 1 evaluation contract."
     }
-    if ($TimeoutSeconds -le 0) {
-        throw "TimeoutSeconds must be positive."
+    if ($ProviderTimeoutSeconds -le 0) {
+        throw "ProviderTimeoutSeconds must be positive."
+    }
+    if ($AttemptTimeoutSeconds -le 0) {
+        throw "AttemptTimeoutSeconds must be positive."
     }
 
     $configurationPath = Join-Path $repoRoot "evaluations\triage\incidentcompass.config.json"
     $configuration = Get-Content -LiteralPath $configurationPath -Raw | ConvertFrom-Json
     if (@($configuration.Actions.AllowedTools).Count -ne 0 -or $configuration.Actions.DefaultMode -ne "disabled") {
         throw "The evaluation configuration must have empty action grants and disabled action mode."
+    }
+    $wallClockSeconds = [int] $configuration.Orchestrator.Budget.MaxWallClockSeconds
+    if ($ProviderTimeoutSeconds -ge $wallClockSeconds) {
+        throw "ProviderTimeoutSeconds must be lower than the evaluation investigation wall-clock budget ($wallClockSeconds seconds)."
+    }
+    if ($AttemptTimeoutSeconds -le $wallClockSeconds) {
+        throw "AttemptTimeoutSeconds must exceed the evaluation investigation wall-clock budget ($wallClockSeconds seconds)."
     }
 
     $resolvedResult = Resolve-EvaluationResultPath -Path $ResultPath -RepositoryRoot $repoRoot
@@ -156,6 +167,7 @@ try {
         "INCIDENTCOMPASS_EMBEDDINGS_MODEL",
         "INCIDENTCOMPASS_EMBEDDINGS_API_KEY",
         "INCIDENTCOMPASS_EVALUATION_PROVIDER_TIMEOUT_SECONDS",
+        "INCIDENTCOMPASS_EVALUATION_ATTEMPT_TIMEOUT_SECONDS",
         "INCIDENTCOMPASS_EVALUATION_ARTIFACTS_DIRECTORY",
         "INCIDENTCOMPASS_TESTER_EVALUATION_OUTPUT",
         "INCIDENTCOMPASS_TESTER_EVALUATION_RUNS",
@@ -176,7 +188,8 @@ try {
         $env:INCIDENTCOMPASS_EMBEDDINGS_BASE_URL = $EmbeddingBaseUrl
         $env:INCIDENTCOMPASS_EMBEDDINGS_MODEL = $EmbeddingModel
         $env:INCIDENTCOMPASS_EMBEDDINGS_API_KEY = $EmbeddingApiKey
-        $env:INCIDENTCOMPASS_EVALUATION_PROVIDER_TIMEOUT_SECONDS = $TimeoutSeconds.ToString()
+        $env:INCIDENTCOMPASS_EVALUATION_PROVIDER_TIMEOUT_SECONDS = $ProviderTimeoutSeconds.ToString()
+        $env:INCIDENTCOMPASS_EVALUATION_ATTEMPT_TIMEOUT_SECONDS = $AttemptTimeoutSeconds.ToString()
         $env:INCIDENTCOMPASS_EVALUATION_ARTIFACTS_DIRECTORY = $resultDirectory
         $env:INCIDENTCOMPASS_TESTER_EVALUATION_OUTPUT = "/artifacts/$resultLeaf"
         $env:INCIDENTCOMPASS_TESTER_EVALUATION_RUNS = $Runs.ToString()
@@ -193,7 +206,7 @@ try {
             "tester",
             "--evaluation",
             "--attempt-timeout-seconds",
-            $TimeoutSeconds.ToString())
+            $AttemptTimeoutSeconds.ToString())
     }
     catch {
         $evaluationError = $_
