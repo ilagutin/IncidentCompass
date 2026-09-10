@@ -63,6 +63,49 @@ public sealed class GovernedTriageInvestigationProcessorTests
             request => request.EventType == TriageLedgerEventType.WorkerCompleted);
     }
 
+    /// <summary>
+    /// A worker quotes the tool results it was given, so its output is connector text by the time it
+    /// leaves the role. It reaches durable state as the <c>WorkerOutput</c> artifact and reaches the
+    /// model again as the delegate result the orchestrator's next turn is built from, and the ledger
+    /// rationale is a third copy. All three have to be the redacted form: redacting only the row would
+    /// leave the orchestrator holding what the row hides.
+    /// </summary>
+    [Fact]
+    public async Task ProcessAsync_WorkerOutputSecretReachesNeitherTheArtifactNorTheOrchestrator()
+    {
+        // Shaped to match the built-in AWS access-key rule: AKIA plus sixteen upper-case characters.
+        const string seededSecret = "AKIADELEGATEPATH0000";
+        var model = new ScriptedOrchestratorModel($$"""
+            {"keyFacts":["The checkout node still holds {{seededSecret}} in configuration."],"candidateClassification":"SimpleKnownError","needsDeeperContext":false,"rationale":"Rotate {{seededSecret}} before closing."}
+            """);
+        var harness = CreateHarness(model);
+
+        await harness.ProcessAsync();
+
+        var artifact = Assert.Single(harness.Artifacts.Inserted);
+        Assert.Equal(ArtifactKind.WorkerOutput, artifact.Kind);
+        var storedPayload = artifact.RedactedPayload.GetRawText();
+        Assert.DoesNotContain(seededSecret, storedPayload, StringComparison.Ordinal);
+        Assert.Contains("[REDACTED]", storedPayload, StringComparison.Ordinal);
+        // The rest of the worker's finding survives; only the credential is gone.
+        Assert.Contains("still holds", storedPayload, StringComparison.Ordinal);
+
+        // The delegate result is a tool message on the orchestrator's second turn, and its rationale
+        // is a WorkerCompleted ledger entry. Neither may carry what the artifact dropped.
+        Assert.Equal(2, model.OrchestratorCalls);
+        Assert.Contains(
+            model.RequestMessages,
+            message => message.Contains("Rotate [REDACTED] before closing.", StringComparison.Ordinal));
+        Assert.DoesNotContain(
+            model.RequestMessages,
+            message => message.Contains(seededSecret, StringComparison.Ordinal));
+        var completed = Assert.Single(
+            harness.LedgerWriter.Requests,
+            request => request.EventType == TriageLedgerEventType.WorkerCompleted);
+        Assert.NotNull(completed.Rationale);
+        Assert.DoesNotContain(seededSecret, completed.Rationale, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task ProcessAsync_OrchestratorRouteMissingFailsClosedBeforeAnyModelCall()
     {
@@ -206,13 +249,14 @@ public sealed class GovernedTriageInvestigationProcessorTests
         var appender = new TriageLedgerAppender(ledgerWriter);
         var timeProvider = new ConstantTimeProvider(DateTimeOffset.UtcNow);
         var modelCaller = new InvestigationModelCaller(model, ledgerReader, appender, timeProvider);
+        var artifacts = new RecordingArtifactRepository();
         var delegateExecutor = new AnalysisDelegateExecutor(
-            new NoOpArtifactRepository(),
+            artifacts,
             appender,
             ledgerReader,
             new WorkerRoleRunner(
                 modelCaller,
-                new WorkerToolCallExecutor([], new ToolRuleEngine(ledgerReader), appender, new UnusedToolResultCommitter()),
+                new WorkerToolCallExecutor([], new ToolRuleEngine(ledgerReader), appender, new UnusedToolResultCommitter(), timeProvider),
                 appender),
             timeProvider);
         var reports = new RecordingReportRepository(reportFailureMessage, reportFailureCount);
@@ -225,7 +269,7 @@ public sealed class GovernedTriageInvestigationProcessorTests
             appender,
             timeProvider,
             logger);
-        return new ProcessorHarness(processor, configuration, ledgerWriter, reports, logger);
+        return new ProcessorHarness(processor, configuration, ledgerWriter, reports, logger, artifacts);
     }
 
     private static TriageConfiguration CreateConfiguration(string orchestratorRouteId, string analysisRouteId) =>
@@ -283,13 +327,16 @@ public sealed class GovernedTriageInvestigationProcessorTests
         TriageConfiguration configuration,
         RecordingLedgerWriter ledgerWriter,
         RecordingReportRepository reports,
-        RecordingLogger<GovernedTriageInvestigationProcessor> logger)
+        RecordingLogger<GovernedTriageInvestigationProcessor> logger,
+        RecordingArtifactRepository artifacts)
     {
         public RecordingLedgerWriter LedgerWriter { get; } = ledgerWriter;
 
         public RecordingReportRepository Reports { get; } = reports;
 
         public RecordingLogger<GovernedTriageInvestigationProcessor> Logger { get; } = logger;
+
+        public RecordingArtifactRepository Artifacts { get; } = artifacts;
 
         public Task ProcessAsync() =>
             processor.ProcessAsync(CreateJob(), configuration, "worker-test", TestContext.Current.CancellationToken);
@@ -299,18 +346,26 @@ public sealed class GovernedTriageInvestigationProcessorTests
     /// Answers an orchestrator turn (the request carries the orchestrator tool surface) with delegate
     /// first and publish_report second, and any worker turn with schema-valid output.
     /// </summary>
-    private sealed class ScriptedOrchestratorModel : IAiModelClient
+    private sealed class ScriptedOrchestratorModel(string workerOutput = WorkerOutput) : IAiModelClient
     {
         public int OrchestratorCalls { get; private set; }
 
         public int WorkerCalls { get; private set; }
 
+        /// <summary>
+        /// Every message of every request, captured at call time. The delegate result the orchestrator
+        /// is given arrives as a tool message on its second turn, so this is where a worker's text
+        /// becomes model input again.
+        /// </summary>
+        public List<string> RequestMessages { get; } = [];
+
         public Task<AiModelResponse> CompleteAsync(AiModelRequest request, CancellationToken cancellationToken)
         {
+            RequestMessages.AddRange(request.Messages.Select(message => message.Content));
             if (request.Tools is not { Count: > 0 })
             {
                 WorkerCalls++;
-                return Task.FromResult(Response(WorkerOutput, []));
+                return Task.FromResult(Response(workerOutput, []));
             }
 
             OrchestratorCalls++;
@@ -365,11 +420,18 @@ public sealed class GovernedTriageInvestigationProcessorTests
             Task.FromResult<IReadOnlyList<ReadOnlyContextOutcome>>([]);
     }
 
-    private sealed class NoOpArtifactRepository : ITriageArtifactRepository
+    private sealed class RecordingArtifactRepository : ITriageArtifactRepository
     {
-        public Task InsertAsync(TriageArtifact artifact, CancellationToken cancellationToken) => Task.CompletedTask;
+        public List<TriageArtifact> Inserted { get; } = [];
 
-        public Task ReplaceJobLevelAsync(TriageArtifact artifact, CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task InsertAsync(TriageArtifact artifact, CancellationToken cancellationToken)
+        {
+            Inserted.Add(artifact);
+            return Task.CompletedTask;
+        }
+
+        public Task ReplaceJobLevelAsync(TriageArtifact artifact, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
     }
 
     /// <summary>The analysis role grants no tools, so no tool result is ever committed here.</summary>

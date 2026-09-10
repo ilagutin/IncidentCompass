@@ -137,9 +137,17 @@ snapshotted `CurrentReleases` entry is the only release selector. Candidate path
 and revalidated below the selected root before opening, reparse/symlink traversal is rejected, and
 only configured text extensions within byte, frame, candidate and excerpt limits are read. Source
 bodies and absolute host paths are not logged or persisted. Durable artifacts contain only a
-repository-relative path, bounded excerpt, line range, release and `heuristic` mapping label.
+repository-relative path, bounded excerpt, line range, release and `heuristic` mapping label, and the
+excerpt is redacted before it is stored like every other tool payload.
 
-## Intake Redaction And Pseudonymization
+## Redaction And Pseudonymization
+
+Redaction runs at two boundaries, not one. Incoming signals are redacted during intake, before the
+signal row is written. Everything a worker tool reads from a connector afterwards is redacted again on
+its own way to durable state, because that text never passed through intake. Both boundaries use the
+same rules; the rest of this section describes intake first and the tool boundary second.
+
+### Intake
 
 Built-in secret patterns remain active for every signal. The triage config can add attribute-key
 redaction and bounded .NET regular-expression replacements before persistence and before model calls.
@@ -171,6 +179,59 @@ The salt comes only from host secrets or `IncidentCompass__Pseudonymization__Sal
 the triage config, config snapshot, artifact or ledger. If the salt is absent, identifiers fail safe to
 `[REDACTED]`, so distinct-user continuity is unavailable but raw identifiers are not stored. Rotating
 the salt changes every pseudonym and breaks counts across the rotation boundary.
+
+Pseudonymization is an intake-only step. It needs the configured user-identifier attribute paths of a
+normalized signal, and a memory chunk, ticket field or source excerpt has no such paths.
+
+### Worker tool artifacts
+
+A worker tool reads from incident memory, the local source root or a ticket provider. That text is not
+signal data and never passed through intake, so it is redacted where it becomes durable instead. One
+place does it, on the same governed path every immediate tool call takes:
+
+- the tool returns its payloads as drafts, not as artifacts, so a tool has no way to write a row
+  itself and no way to skip this step;
+- the worker tool executor redacts the model-visible tool output and turns each draft into an
+  artifact, redacting the payload, canonicalizing it and hashing the redacted form, so
+  `triage_artifacts.content_hash` describes the bytes that were actually stored;
+- the delegated worker's own output takes the same path before it is stored as a `WorkerOutput`
+  artifact, because that text quotes the tool results the worker was given, and the delegate result
+  the orchestrator receives is built from the stored payload rather than from the worker's raw text;
+- a failed tool's error message is redacted with the same rules before it becomes this turn's tool
+  message and a `ToolResult` ledger rationale.
+
+Both surfaces have to be covered together: the same connector text reaches the model once as this
+turn's tool message and again through the stored artifact, which the orchestrator reads back into
+later prompts. Redacting only the row would leave the immediate turn unprotected.
+
+Redaction operates on the parsed JSON document, rewriting values and rebuilding objects and arrays
+node by node. A redacted payload is therefore still valid JSON with the same keys. Value kinds
+survive the pattern rules, which only rewrite strings, but not the property-name denylist: a value
+whose property name looks like a secret holder is replaced with the string `[REDACTED]` whatever its
+original kind was, so `{"tokenCount": 42}` is stored as `{"tokenCount":"[REDACTED]"}`. That is
+deliberate. A field named like a secret is redacted whether it arrives as a string, a number or an
+object, because the alternative is a rule that a caller can defeat by changing the value's type.
+Nothing downstream reads a tool or worker payload as a typed value except two SQL reads, and both are
+guarded by `jsonb_typeof`: `isMassIssue` on a `NeighborSet`, a kind this boundary does not write, and
+`score` on a citable evidence artifact, a kind it does. Neither name is on the denylist, and a value
+that had been flattened would read back as NULL rather than fail the query.
+
+The pass is idempotent: running a redacted payload through it a second time changes nothing. That is
+a property worth having because the same connector text is stored twice, once as a `RetrievedItem`
+and again inside the `ToolResult` payload, and because a redacted document is what the worker output
+path hands to the orchestrator after storing it. It is not what protects re-triage: the re-triage
+scheduler copies `redacted_payload` and `content_hash` forward verbatim and never re-redacts, and it
+copies only intake-written kinds.
+
+Two limits are worth stating plainly. The property-name denylist sees different keys depending on
+which payload it is applied to. A tool payload's keys are backend-authored (`excerpt`, `title`,
+`quote`, `url` and so on), so the denylist contributes little there and the pattern rules do the
+work. A `WorkerOutput` payload's keys come from model-authored JSON instead, bounded by the role's
+configured output schema, which is what makes the type-flattening above reachable on a name the
+backend did not choose. And source excerpts get no exemption: `source_lookup` returns application
+code, the same rules run over it, and a line containing `password =` or `pwd =` loses its right-hand
+side while the rest of the excerpt survives. That cost, the analysis behind it and the bound that
+keeps it to a single line are recorded in `docs/trade-offs.md`.
 
 ## Tools
 

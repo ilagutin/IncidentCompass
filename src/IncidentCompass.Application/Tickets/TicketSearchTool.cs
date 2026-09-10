@@ -9,7 +9,7 @@ using IncidentCompass.Domain.Incidents;
 
 namespace IncidentCompass.Application.Tickets;
 
-internal sealed class TicketSearchTool(ITicketSearch ticketSearch, TimeProvider timeProvider) : IImmediateAgentTool
+internal sealed class TicketSearchTool(ITicketSearch ticketSearch) : IImmediateAgentTool
 {
     public AiToolDefinition Definition { get; } = new(
         "ticket_search",
@@ -39,7 +39,7 @@ internal sealed class TicketSearchTool(ITicketSearch ticketSearch, TimeProvider 
     {
         if (context.TriggerSignal is null)
         {
-            return Successful(TicketSearchResult.Unavailable("ticket_search_signal_unavailable"), context);
+            return Successful(TicketSearchResult.Unavailable("ticket_search_signal_unavailable"));
         }
 
         var request = TicketSearchContextExtractor.Create(
@@ -47,19 +47,19 @@ internal sealed class TicketSearchTool(ITicketSearch ticketSearch, TimeProvider 
             context.FaultServiceName,
             context.TriggerSignal);
         var result = await ticketSearch.SearchAsync(request, cancellationToken);
-        return Successful(result, context);
+        return Successful(result);
     }
 
-    private ToolExecutionResult Successful(TicketSearchResult result, AgentToolExecutionContext context)
+    private static ToolExecutionResult Successful(TicketSearchResult result)
     {
-        var artifacts = result.Matches.Select(match => CreateArtifact(context, match)).ToArray();
+        var drafts = result.Matches.Select(CreateDraft).ToArray();
         return new ToolExecutionResult(
             ToolExecutionStatus.Succeeded,
-            CreateOutput(result, artifacts),
-            Artifacts: artifacts);
+            CreateOutput(result, drafts),
+            Artifacts: drafts);
     }
 
-    private TriageArtifact CreateArtifact(AgentToolExecutionContext context, TicketSearchMatch match)
+    private static ToolArtifactDraft CreateDraft(TicketSearchMatch match)
     {
         _ = int.TryParse(match.ExternalId, out var issueNumber);
         var payload = new JsonObject
@@ -75,16 +75,13 @@ internal sealed class TicketSearchTool(ITicketSearch ticketSearch, TimeProvider 
             ["url"] = match.Url,
             ["score"] = match.Score
         };
-        var canonical = CanonicalJsonSerializer.Canonicalize(payload);
-        return new TriageArtifact(
-            Guid.NewGuid(), context.Job.Id, context.Job.Attempt, ArtifactKind.RetrievedItem,
+        return new ToolArtifactDraft(
+            ArtifactKind.RetrievedItem,
             $"ticket:{match.Provider}:{match.Scope}:{match.ExternalId}",
-            CanonicalJsonSerializer.ToElement(payload),
-            CanonicalJsonSerializer.ComputeSha256Hex(canonical),
-            timeProvider.GetUtcNow());
+            payload);
     }
 
-    private static JsonElement CreateOutput(TicketSearchResult result, TriageArtifact[] artifacts)
+    private static JsonElement CreateOutput(TicketSearchResult result, ToolArtifactDraft[] drafts)
     {
         var items = new JsonArray();
         for (var index = 0; index < result.Matches.Count; index++)
@@ -92,7 +89,7 @@ internal sealed class TicketSearchTool(ITicketSearch ticketSearch, TimeProvider 
             var match = result.Matches[index];
             items.Add(new JsonObject
             {
-                ["artifactId"] = artifacts[index].Id.ToString(),
+                ["artifactId"] = drafts[index].Id.ToString(),
                 ["provider"] = match.Provider,
                 ["scope"] = match.Scope,
                 ["externalId"] = match.ExternalId,

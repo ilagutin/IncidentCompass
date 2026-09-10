@@ -14,6 +14,7 @@ Privacy and access
 
 - [Full Prompt Logging vs Privacy](#full-prompt-logging-vs-privacy)
 - [Configurable Redaction Is Best Effort](#configurable-redaction-is-best-effort)
+- [Source Excerpts Are Redacted Like Everything Else](#source-excerpts-are-redacted-like-everything-else)
 - [Pseudonymization Salt Rotation](#pseudonymization-salt-rotation)
 - [Simple Access Control vs Enterprise RBAC](#simple-access-control-vs-enterprise-rbac)
 - [Local Tenant Partition And API-Key Mapping](#local-tenant-partition-and-api-key-mapping)
@@ -141,6 +142,52 @@ secret, and a plural such as `cookies` or an unlisted vendor word is missed. The
 in `docs/security-model.md` so an operator can predict it and add configured attribute keys for the
 names it does not know. A configured pattern that exceeds its 200 ms match timeout also destroys the
 whole field rather than risk emitting a value redaction did not finish cleaning.
+
+## Source Excerpts Are Redacted Like Everything Else
+
+`source_lookup` returns application code, and the report's whole value is that it is grounded in that
+code. Redacting it therefore costs something real, so the rules were checked one at a time against
+ordinary source before the decision was made:
+
+- the AWS access-key rule (`AKIA` plus sixteen upper-case characters) effectively never fires on code
+  that does not contain a key;
+- the prefixed-token rule needs `sk-`, `glpat-`, `xox?-`, `gh?_` or `github_pat_` at a word boundary,
+  so identifiers such as `risk-scored` or `task-runner` do not match it;
+- the bearer rule can fire on prose: a comment reading `Bearer authentication` loses the word after
+  `Bearer`, because the rule cannot tell a documented header name from a real token;
+- the connection-string rule is the expensive one. It matches `password` or `pwd` followed by `=`, so
+  a line such as `if (request.Password == expectedHash)` loses everything after the name, and
+  `var password = ReadFromVault();` loses its right-hand side.
+
+The choice is to redact source excerpts with exactly the same pass as every other payload, and to
+accept the last two costs. The reasoning is that a credential in a prompt is a worse failure than a
+mangled line, the LLM is not a security boundary, and a rule that skipped source would make
+`redacted_payload` mean something different depending on which tool wrote the row.
+
+What was changed to make that affordable: the connection-string rule's tail is bounded by line breaks
+as well as by `;`, so its pattern is `(password|pwd)\s*=\s*[^;\r\n]+` rather than `[^;]+`. Before
+that, the negated character class also matched newlines, so on a multi-line excerpt with no later `;`
+a single match could swallow every remaining line. The damage is now confined to the one line that
+looks like a credential, the surrounding lines and the rest of the line after the `;` still reach the
+model, and `ToolArtifactRedactionTests` asserts exactly that.
+
+That narrowing is not free, and the loss is on the redaction side. A credential value that continues
+onto the next line is no longer fully removed. The verified case is backslash continuation, the form
+`.env`, `.properties`, shell scripts and Dockerfiles use:
+
+```
+DB_PASSWORD=hunter2\
+supersecret-tail
+```
+
+The old rule ran past the newline and took `supersecret-tail` with it. The new one stops at the line
+break: `DB_PASSWORD=[REDACTED]` is written, and `supersecret-tail` survives into the payload. This is
+knowingly accepted rather than overlooked. A rule that keeps consuming lines destroys a whole source
+excerpt every time it fires on ordinary code such as `if (request.Password == expectedHash)`, which
+is the common case; a continued credential line inside a retrieved payload is the rare one, and the
+tail that survives is a fragment with its name already gone. `SecretRedactorTests` pins both halves
+so neither can change without a decision. Operators who need a different balance can add configured
+patterns; they cannot turn the built-in rules off.
 
 ## Pseudonymization Salt Rotation
 

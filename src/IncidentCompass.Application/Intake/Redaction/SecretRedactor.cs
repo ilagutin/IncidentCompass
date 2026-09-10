@@ -177,6 +177,13 @@ internal static partial class SecretRedactor
     [GeneratedRegex(@"\b(?:(?:sk|glpat|xox[baprs])-[A-Za-z0-9\-_]{10,}|(?:ghp|gho|ghu|ghs)[_-][A-Za-z0-9\-_]{10,}|github_pat_[A-Za-z0-9_]{10,})\b")]
     private static partial Regex SecretPrefixedTokenPattern();
 
-    [GeneratedRegex(@"(password|pwd)\s*=\s*[^;]+", RegexOptions.IgnoreCase)]
+    /// <summary>
+    /// A connection-string password runs to the next <c>;</c> and never crosses a line, so the tail
+    /// is bounded by line breaks as well. Without that bound the negated class also matches newlines:
+    /// on a multi-line value with no later <c>;</c> - a source excerpt containing <c>password ==</c>,
+    /// for example - one match would swallow every remaining line and replace the whole excerpt.
+    /// Bounding the tail keeps the loss to the one line that actually looks like a credential.
+    /// </summary>
+    [GeneratedRegex(@"(password|pwd)\s*=\s*[^;\r\n]+", RegexOptions.IgnoreCase)]
     private static partial Regex ConnectionStringPasswordPattern();
 }

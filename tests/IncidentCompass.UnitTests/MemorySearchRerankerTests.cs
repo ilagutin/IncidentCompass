@@ -93,7 +93,7 @@ public sealed class MemorySearchRerankerTests
         var embedding = new CountingEmbeddingClient();
         var repository = new CountingMemoryRepository(
             Enumerable.Range(1, 8).Select(index => Match(index, 0.9)).ToArray());
-        var tool = new MemorySearchTool(embedding, repository, TimeProvider.System);
+        var tool = new MemorySearchTool(embedding, repository);
         var validation = tool.Validate(JsonSerializer.SerializeToElement(new { query = "checkout timeout" }));
 
         var result = await tool.ExecuteAsync(
@@ -112,7 +112,7 @@ public sealed class MemorySearchRerankerTests
     {
         var embedding = new CountingEmbeddingClient();
         var repository = new CountingMemoryRepository([]);
-        var tool = new MemorySearchTool(embedding, repository, TimeProvider.System);
+        var tool = new MemorySearchTool(embedding, repository);
         var configuration = Configuration() with
         {
             Routes = new Dictionary<string, TriageRouteSettings>(StringComparer.Ordinal)
@@ -137,8 +137,7 @@ public sealed class MemorySearchRerankerTests
     {
         var tool = new MemorySearchTool(
             new CountingEmbeddingClient(),
-            new CountingMemoryRepository([]),
-            TimeProvider.System);
+            new CountingMemoryRepository([]));
 
         var withWeight = tool.Validate(JsonSerializer.SerializeToElement(new
         {

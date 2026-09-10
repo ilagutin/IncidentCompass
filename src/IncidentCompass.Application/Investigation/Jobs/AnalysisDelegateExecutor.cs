@@ -3,6 +3,7 @@ using System.Text.Json.Nodes;
 using IncidentCompass.Application.Core.ModelClients;
 using IncidentCompass.Application.Core.Serialization;
 using IncidentCompass.Application.Governance.Ledger;
+using IncidentCompass.Application.Governance.Tools;
 using IncidentCompass.Application.Intake.Artifacts;
 using IncidentCompass.Application.Intake.Configuration;
 using IncidentCompass.Domain.Incidents;
@@ -49,8 +50,14 @@ internal sealed class AnalysisDelegateExecutor(
             task,
             attemptStartedAtUtc,
             cancellationToken);
-        var artifact = await InsertWorkerOutputArtifactAsync(job, roleName, workerContent, cancellationToken);
-        var delegateResult = WorkerDelegateResultFactory.Create(roleName, workerContent, artifact.Id);
+        var artifact = await InsertWorkerOutputArtifactAsync(job, configuration, roleName, workerContent, cancellationToken);
+        // The delegate result is built from the stored payload, not from the worker's raw text: its
+        // serialized form becomes an orchestrator model message and its rationale becomes ledger
+        // state, so leaving it raw would hand both surfaces exactly what the artifact row hides.
+        // Reading it back off the artifact also means the summary the orchestrator sees and the row
+        // its artifactId points at are the same bytes.
+        var delegateResult = WorkerDelegateResultFactory.Create(
+            roleName, artifact.RedactedPayload.GetRawText(), artifact.Id);
 
         await ledgerAppender.AppendAsync(
             job,
@@ -87,22 +94,34 @@ internal sealed class AnalysisDelegateExecutor(
             "The triage attempt worker budget was reached before delegation.");
     }
 
+    /// <summary>
+    /// The worker's own output is model text that quotes the tool results it was given, so it takes
+    /// the same redaction path as any tool artifact rather than a private one. It goes through
+    /// <see cref="RedactedToolArtifactFactory"/> for that reason and so that this file is not a
+    /// second place that constructs a <see cref="TriageArtifact"/> from unredacted text.
+    /// <para>
+    /// Order matters here: the role's output schema was validated against the raw text before this
+    /// runs, and redaction can still change a value afterwards - it rewrites strings, and it replaces
+    /// a value of any kind whose property name looks like a secret holder. No shipped role schema
+    /// names such a property, and the parsers downstream read only <c>keyFacts</c>,
+    /// <c>candidateClassification</c>, <c>needsDeeperContext</c>, <c>matched</c>, <c>items</c>,
+    /// <c>artifactId</c> and <c>title</c>, none of which the denylist matches. A role schema that did
+    /// name one would make the redacted document fail the delegate parse, which fails the attempt
+    /// rather than leaking anything.
+    /// </para>
+    /// </summary>
     private async Task<TriageArtifact> InsertWorkerOutputArtifactAsync(
         TriageJob job,
+        TriageConfiguration configuration,
         string roleName,
         string content,
         CancellationToken cancellationToken)
     {
         var payload = JsonNode.Parse(content) ?? new JsonObject { ["raw"] = content };
-        var canonicalPayload = CanonicalJsonSerializer.Canonicalize(payload);
-        var artifact = new TriageArtifact(
-            Guid.NewGuid(),
-            job.Id,
-            job.Attempt,
-            ArtifactKind.WorkerOutput,
-            $"worker:{roleName}",
-            CanonicalJsonSerializer.ToElement(payload),
-            CanonicalJsonSerializer.ComputeSha256Hex(canonicalPayload),
+        var artifact = RedactedToolArtifactFactory.Create(
+            job,
+            new ToolArtifactDraft(ArtifactKind.WorkerOutput, $"worker:{roleName}", payload),
+            configuration.Redaction,
             timeProvider.GetUtcNow());
 
         await artifactRepository.InsertAsync(artifact, cancellationToken);

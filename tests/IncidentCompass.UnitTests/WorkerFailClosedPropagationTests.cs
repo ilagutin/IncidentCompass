@@ -211,7 +211,8 @@ public sealed class WorkerFailClosedPropagationTests
                 [new ProbeTool()],
                 new ToolRuleEngine(ledgerReader),
                 appender,
-                new NoOpToolResultCommitter()),
+                new NoOpToolResultCommitter(),
+                timeProvider),
             appender,
             logger);
         var delegateExecutor = new AnalysisDelegateExecutor(

@@ -321,6 +321,12 @@ Follow `docs/code-organization.md` for maintainability guardrails. In short: kee
 
 Worker tools execute within the layered monolith under backend governance. Worker roles receive only registered backend tools that are both configured and granted to that role. Proposed worker calls are recorded as `ToolProposed`, evaluated by the single live `ToolRuleEngine` over current-attempt ledger state by default, recorded as `PolicyDecision`, and successful executions commit a `ToolResult` artifact plus `ToolResult` ledger event atomically. `ToolResult` status and `BudgetEvent` deltas are stored in first-class ledger state, not parsed from rationale text. Configured rule scopes are limited to `attempt` and `job` for the MVP; `fault` scope remains deferred. The shipped immediate read tools are `memory_search`, `source_lookup` and `ticket_search`; synthetic `tool_x`/`tool_y` exist only in integration-test composition for cross-tool governance cases.
 
+A tool returns its durable payloads as drafts rather than as artifacts. The worker tool executor is
+the only thing that turns a draft into a stored artifact, and it redacts the payload and the
+model-visible tool output on the way, so connector text cannot reach `triage_artifacts` or a later
+prompt unredacted and a new tool cannot express the unredacted shape at all. See
+`docs/security-model.md` for the boundary and `docs/trade-offs.md` for what it costs source excerpts.
+
 ## Post-report Action Approval Boundary
 
 An action approval is one durable row with six states. `023-action-approvals-outbox.sql` defines

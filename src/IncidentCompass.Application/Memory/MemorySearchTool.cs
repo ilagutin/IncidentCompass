@@ -12,7 +12,7 @@ using IncidentCompass.Domain.Incidents;
 
 namespace IncidentCompass.Application.Memory;
 
-internal sealed class MemorySearchTool(IEmbeddingClient embeddingClient, IMemoryRepository memoryRepository, TimeProvider timeProvider) : IImmediateAgentTool
+internal sealed class MemorySearchTool(IEmbeddingClient embeddingClient, IMemoryRepository memoryRepository) : IImmediateAgentTool
 {
     private const int DefaultTopK = 5;
     private const double DefaultMinScore = 0.25;
@@ -95,29 +95,20 @@ internal sealed class MemorySearchTool(IEmbeddingClient embeddingClient, IMemory
             candidates,
             topK);
 
-        var artifacts = matches
-            .Select(match => CreateRetrievedArtifact(context, embedding, match))
+        var drafts = matches
+            .Select(match => CreateRetrievedDraft(context, embedding, match))
             .ToArray();
         return new ToolExecutionResult(
             ToolExecutionStatus.Succeeded,
-            CreateOutput(context, matches, artifacts),
-            Artifacts: artifacts);
+            CreateOutput(context, matches, drafts),
+            Artifacts: drafts);
     }
 
-    private TriageArtifact CreateRetrievedArtifact(AgentToolExecutionContext context, EmbeddingResponse embedding, MemorySearchMatch match)
-    {
-        var payload = CreateRetrievedPayload(context, embedding, match);
-        var canonicalPayload = CanonicalJsonSerializer.Canonicalize(payload);
-        return new TriageArtifact(
-            Guid.NewGuid(),
-            context.Job.Id,
-            context.Job.Attempt,
+    private static ToolArtifactDraft CreateRetrievedDraft(AgentToolExecutionContext context, EmbeddingResponse embedding, MemorySearchMatch match) =>
+        new(
             ArtifactKind.RetrievedItem,
             "memory_item:" + match.MemoryItemId,
-            CanonicalJsonSerializer.ToElement(payload),
-            CanonicalJsonSerializer.ComputeSha256Hex(canonicalPayload),
-            timeProvider.GetUtcNow());
-    }
+            CreateRetrievedPayload(context, embedding, match));
 
     private static JsonObject CreateRetrievedPayload(AgentToolExecutionContext context, EmbeddingResponse embedding, MemorySearchMatch match)
     {
@@ -144,7 +135,7 @@ internal sealed class MemorySearchTool(IEmbeddingClient embeddingClient, IMemory
         };
     }
 
-    private static JsonElement CreateOutput(AgentToolExecutionContext context, IReadOnlyList<MemorySearchMatch> matches, TriageArtifact[] artifacts)
+    private static JsonElement CreateOutput(AgentToolExecutionContext context, IReadOnlyList<MemorySearchMatch> matches, ToolArtifactDraft[] drafts)
     {
         var items = new JsonArray();
         for (var i = 0; i < matches.Count; i++)
@@ -153,7 +144,7 @@ internal sealed class MemorySearchTool(IEmbeddingClient embeddingClient, IMemory
             var documentation = MemoryDocumentationStatusEvaluator.Assess(context.Configuration, context.FaultServiceName, match);
             items.Add(new JsonObject
             {
-                ["artifactId"] = artifacts[i].Id.ToString(),
+                ["artifactId"] = drafts[i].Id.ToString(),
                 ["memoryItemId"] = match.MemoryItemId.ToString(),
                 ["title"] = match.Title,
                 ["kind"] = match.Kind,

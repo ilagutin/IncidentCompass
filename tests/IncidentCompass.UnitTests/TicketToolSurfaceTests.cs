@@ -56,10 +56,11 @@ public sealed class TicketToolSurfaceTests
             : [];
 
     private static WorkerToolCallExecutor CreateExecutor() => new(
-        [new TicketSearchTool(new UnavailableTicketSearchDouble(), TimeProvider.System)],
+        [new TicketSearchTool(new UnavailableTicketSearchDouble())],
         new ToolRuleEngine(new ThrowingLedgerReader()),
         new TriageLedgerAppender(new ThrowingLedgerWriter()),
-        new ThrowingCommitter());
+        new ThrowingCommitter(),
+        TimeProvider.System);
 
     private static TriageConfiguration Configuration(bool withRole, bool withGrant)
     {

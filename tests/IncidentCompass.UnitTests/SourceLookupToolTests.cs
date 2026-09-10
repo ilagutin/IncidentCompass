@@ -16,7 +16,7 @@ public sealed class SourceLookupToolTests
             "source_match",
             [new SourceLookupMatch("src/Checkout.cs", 10, 12, "line 10\nline 11\nline 12", "r1", "heuristic")],
             []));
-        var tool = new SourceLookupTool(adapter, TimeProvider.System);
+        var tool = new SourceLookupTool(adapter);
         var context = CreateContext(includeRelease: true);
 
         var result = await tool.ExecuteAsync(context, Json("{}"), TestContext.Current.CancellationToken);
@@ -25,19 +25,19 @@ public sealed class SourceLookupToolTests
         Assert.Equal("r1", adapter.Request.Release);
         Assert.Equal("src/Checkout.cs", Assert.Single(adapter.Request.Frames).Path);
         Assert.True(result.Output.GetProperty("matched").GetBoolean());
-        var artifact = Assert.Single(result.Artifacts!);
-        Assert.Equal(ArtifactKind.RetrievedItem, artifact.Kind);
-        Assert.StartsWith("source:", artifact.DomainRef, StringComparison.Ordinal);
-        Assert.Equal("SourceCode", artifact.RedactedPayload.GetProperty("evidenceKind").GetString());
-        Assert.Equal("r1", artifact.RedactedPayload.GetProperty("release").GetString());
-        Assert.Equal("heuristic", artifact.RedactedPayload.GetProperty("mappingMethod").GetString());
+        var draft = Assert.Single(result.Artifacts!);
+        Assert.Equal(ArtifactKind.RetrievedItem, draft.Kind);
+        Assert.StartsWith("source:", draft.DomainRef, StringComparison.Ordinal);
+        Assert.Equal("SourceCode", draft.Payload["evidenceKind"]!.GetValue<string>());
+        Assert.Equal("r1", draft.Payload["release"]!.GetValue<string>());
+        Assert.Equal("heuristic", draft.Payload["mappingMethod"]!.GetValue<string>());
     }
 
     [Fact]
     public async Task Execute_MissingCurrentReleaseReturnsDurableUnavailableShapeWithoutAdapterCall()
     {
         var adapter = new CapturingLookup(SourceLookupResult.NoMatch("unused"));
-        var tool = new SourceLookupTool(adapter, TimeProvider.System);
+        var tool = new SourceLookupTool(adapter);
 
         var result = await tool.ExecuteAsync(
             CreateContext(includeRelease: false),
@@ -53,7 +53,7 @@ public sealed class SourceLookupToolTests
     [Fact]
     public void Validate_RejectsAnyModelSelectedArgument()
     {
-        var tool = new SourceLookupTool(new CapturingLookup(SourceLookupResult.NoMatch("unused")), TimeProvider.System);
+        var tool = new SourceLookupTool(new CapturingLookup(SourceLookupResult.NoMatch("unused")));
 
         var validation = tool.Validate(Json("{\"path\":\"secret.cs\"}"));
 

@@ -34,12 +34,13 @@ public sealed class SourceToolSurfaceTests
 
     private static WorkerToolCallExecutor CreateExecutor()
     {
-        var tool = new SourceLookupTool(new UnavailableLookup(), TimeProvider.System);
+        var tool = new SourceLookupTool(new UnavailableLookup());
         return new WorkerToolCallExecutor(
             [tool],
             new ToolRuleEngine(new ThrowingLedgerReader()),
             new TriageLedgerAppender(new ThrowingLedgerWriter()),
-            new ThrowingCommitter());
+            new ThrowingCommitter(),
+            TimeProvider.System);
     }
 
     private static TriageConfiguration Configuration(bool withRole, bool withGrant)

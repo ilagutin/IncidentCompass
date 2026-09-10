@@ -9,9 +9,7 @@ using IncidentCompass.Domain.Incidents;
 
 namespace IncidentCompass.Application.SourceContext;
 
-internal sealed class SourceLookupTool(
-    ISourceContextLookup sourceContextLookup,
-    TimeProvider timeProvider) : IImmediateAgentTool
+internal sealed class SourceLookupTool(ISourceContextLookup sourceContextLookup) : IImmediateAgentTool
 {
     public AiToolDefinition Definition { get; } = new(
         "source_lookup",
@@ -44,43 +42,40 @@ internal sealed class SourceLookupTool(
         if (!context.Configuration.CurrentReleases.TryGetValue(context.FaultServiceName, out var release) ||
             string.IsNullOrWhiteSpace(release))
         {
-            return SuccessfulOutcome(SourceLookupResult.Unavailable("source_release_unavailable"), context, release: null);
+            return SuccessfulOutcome(SourceLookupResult.Unavailable("source_release_unavailable"), release: null);
         }
 
         if (context.TriggerSignal is null)
         {
-            return SuccessfulOutcome(SourceLookupResult.Unavailable("source_signal_unavailable"), context, release);
+            return SuccessfulOutcome(SourceLookupResult.Unavailable("source_signal_unavailable"), release);
         }
 
         var frames = SourceStackTraceExtractor.Extract(context.TriggerSignal);
         if (frames.Count == 0)
         {
-            return SuccessfulOutcome(SourceLookupResult.NoMatch("source_frames_not_found"), context, release);
+            return SuccessfulOutcome(SourceLookupResult.NoMatch("source_frames_not_found"), release);
         }
 
         var result = await sourceContextLookup.LookupAsync(
             new SourceLookupRequest(context.FaultServiceName, release, frames),
             cancellationToken);
-        return SuccessfulOutcome(result, context, release);
+        return SuccessfulOutcome(result, release);
     }
 
-    private ToolExecutionResult SuccessfulOutcome(
+    private static ToolExecutionResult SuccessfulOutcome(
         SourceLookupResult result,
-        AgentToolExecutionContext context,
         string? release)
     {
-        var artifacts = result.Matches
-            .Select(match => CreateArtifact(context, match))
+        var drafts = result.Matches
+            .Select(CreateDraft)
             .ToArray();
         return new ToolExecutionResult(
             ToolExecutionStatus.Succeeded,
-            CreateOutput(result, artifacts, release),
-            Artifacts: artifacts);
+            CreateOutput(result, drafts, release),
+            Artifacts: drafts);
     }
 
-    private TriageArtifact CreateArtifact(
-        AgentToolExecutionContext context,
-        SourceLookupMatch match)
+    private static ToolArtifactDraft CreateDraft(SourceLookupMatch match)
     {
         var payload = new JsonObject
         {
@@ -92,21 +87,15 @@ internal sealed class SourceLookupTool(
             ["release"] = match.Release,
             ["mappingMethod"] = match.MappingMethod
         };
-        var canonical = CanonicalJsonSerializer.Canonicalize(payload);
-        return new TriageArtifact(
-            Guid.NewGuid(),
-            context.Job.Id,
-            context.Job.Attempt,
+        return new ToolArtifactDraft(
             ArtifactKind.RetrievedItem,
             $"source:{match.Release}:{match.RelativePath}",
-            CanonicalJsonSerializer.ToElement(payload),
-            CanonicalJsonSerializer.ComputeSha256Hex(canonical),
-            timeProvider.GetUtcNow());
+            payload);
     }
 
     private static JsonElement CreateOutput(
         SourceLookupResult result,
-        TriageArtifact[] artifacts,
+        ToolArtifactDraft[] drafts,
         string? release)
     {
         var items = new JsonArray();
@@ -115,7 +104,7 @@ internal sealed class SourceLookupTool(
             var match = result.Matches[index];
             items.Add(new JsonObject
             {
-                ["artifactId"] = artifacts[index].Id.ToString(),
+                ["artifactId"] = drafts[index].Id.ToString(),
                 ["title"] = match.RelativePath,
                 ["relativePath"] = match.RelativePath,
                 ["lineStart"] = match.LineStart,

@@ -139,7 +139,7 @@ public sealed class ActionToolRuleEngineTests
         };
         var executor = new WorkerToolCallExecutor(
             [], new ToolRuleEngine(new LedgerReader()),
-            new TriageLedgerAppender(new LedgerWriter()), new ToolResultCommitter());
+            new TriageLedgerAppender(new LedgerWriter()), new ToolResultCommitter(), TimeProvider.System);
 
         Assert.Empty(executor.CreateToolSurface(configuration, configuration.Roles["analysis"]));
     }

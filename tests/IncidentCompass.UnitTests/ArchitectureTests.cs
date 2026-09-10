@@ -1,9 +1,12 @@
+using System.Text.RegularExpressions;
 using System.Xml.Linq;
+using IncidentCompass.Application.Governance.Tools;
+using IncidentCompass.Domain.Incidents;
 using IncidentCompass.TestSupport;
 
 namespace IncidentCompass.UnitTests;
 
-public sealed class ArchitectureTests
+public sealed partial class ArchitectureTests
 {
     private const string ApplicationNamespace = "IncidentCompass.Application";
     private const string ApplicationCoreNamespace = ApplicationNamespace + ".Core";
@@ -25,6 +28,35 @@ public sealed class ArchitectureTests
         "partial",
         "unsafe"
     ];
+
+    /// <summary>
+    /// Every file that writes a <c>triage_artifacts</c> row in a shape this test can see, with a
+    /// description of what its payload is. Most entries redact or carry an already-redacted payload;
+    /// an entry that does not says so, because an honest list is more useful than a list that only
+    /// admits safe writers.
+    /// </summary>
+    private static readonly Dictionary<string, string> RedactionBoundaryFiles = new(StringComparer.Ordinal)
+    {
+        ["src/IncidentCompass.Application/Governance/Tools/RedactedToolArtifactFactory.cs"] =
+            "runs redaction over every tool-produced payload and hashes the redacted form",
+        ["src/IncidentCompass.Application/Intake/Artifacts/GroundedFactsAssembler.cs"] =
+            "assembles intake artifacts from the signal that intake already redacted before persisting it",
+        ["src/IncidentCompass.Infrastructure/Intake/PostgresRecurrenceEscalationReTriageScheduler.cs"] =
+            "copies payloads that are already stored in redacted_payload onto the re-triage job",
+        ["src/IncidentCompass.Infrastructure/Intake/PostgresTriageArtifactRepository.cs"] =
+            "is the ITriageArtifactRepository adapter: it persists a TriageArtifact its caller " +
+            "already built at one of the boundaries above and adds no payload of its own",
+        ["src/IncidentCompass.Infrastructure/Investigation/PostgresTriageJobInvestigationContextRepository.cs"] =
+            "rehydrates rows read back out of redacted_payload",
+        ["src/IncidentCompass.Infrastructure/Investigation/PostgresTriageToolResultCommitter.cs"] =
+            "writes the ToolResult row from output the Application layer redacted before handing it over",
+        ["src/IncidentCompass.Infrastructure/Governance/ActionApprovals/PostgresActionProposalWriter.cs"] =
+            "writes the ProposedAction row by direct SQL from the backend-built approval contract " +
+            "(action id, category, mode, canonical payload and hashes), never from connector text",
+        ["src/IncidentCompass.Infrastructure/Governance/ActionApprovals/PostgresActionResultWriter.cs"] =
+            "writes the ActionResult row by direct SQL; its payload is the action's own status, " +
+            "summary and failure code plus the connector response the action executor returned",
+    };
 
     private static readonly HashSet<string> ExactReferenceProjects = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -256,6 +288,80 @@ public sealed class ArchitectureTests
         }
 
         Assert.Empty(failures);
+    }
+
+    /// <summary>
+    /// A review aid for <c>triage_artifacts.redacted_payload</c>, not a proof about it. It lists the
+    /// files that write that column in the two ordinary shapes - a <c>new TriageArtifact(...)</c>
+    /// expression, and a direct <c>INSERT INTO ... triage_artifacts</c> - and fails when that list
+    /// changes, so a new writer is argued for here instead of appearing quietly. Each entry says what
+    /// its payload actually is; saying so is the point, and an entry is free to describe a payload
+    /// this boundary does not redact.
+    /// <para>
+    /// What it does not do is close the set. It is a text scan, so a <c>with</c> expression on an
+    /// existing artifact, a factory method, fully-qualified construction and SQL assembled at runtime
+    /// all walk straight through it. The real protection is the type contract: an immediate tool
+    /// returns <c>ToolArtifactDraft</c> and cannot express a persisted artifact at all, so a tool that
+    /// skips redaction does not compile. That is asserted separately, below. This test is the
+    /// cheap backstop for everything outside the tool path.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void TriageArtifactWrites_StayOnTheReviewedList()
+    {
+        var repositoryRoot = RepositoryRootLocator.Find();
+        var sourceDirectory = Path.Combine(repositoryRoot, "src");
+        var actual = EnumerateSourceFiles(sourceDirectory)
+            .Where(sourcePath => WritesTriageArtifacts(File.ReadAllText(sourcePath)))
+            .Select(sourcePath => Path.GetRelativePath(repositoryRoot, sourcePath).Replace('\\', '/'))
+            .ToHashSet(StringComparer.Ordinal);
+        var failures = actual
+            .Where(path => !RedactionBoundaryFiles.ContainsKey(path))
+            .Select(path => path +
+                " writes triage_artifacts outside the reviewed list. A worker tool should return a" +
+                " ToolArtifactDraft instead; anything else has to be listed here with a description of" +
+                " what its payload is and where it was redacted.")
+            .Concat(RedactionBoundaryFiles
+                .Where(entry => !actual.Contains(entry.Key))
+                .Select(entry => entry.Key +
+                    " no longer writes triage_artifacts, so drop it from the reviewed list (" +
+                    entry.Value + ")."))
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.Empty(failures);
+    }
+
+    private static bool WritesTriageArtifacts(string source) =>
+        source.Contains("new TriageArtifact(", StringComparison.Ordinal) ||
+        DirectArtifactInsertPattern().IsMatch(source);
+
+    /// <summary>
+    /// The direct-SQL half of the scan. Two writers assemble the row themselves instead of going
+    /// through <c>ITriageArtifactRepository</c>, so matching only the constructor would have left
+    /// them invisible to this list.
+    /// </summary>
+    [GeneratedRegex(@"INSERT\s+INTO\s+incidentcompass\.triage_artifacts", RegexOptions.IgnoreCase)]
+    private static partial Regex DirectArtifactInsertPattern();
+
+    /// <summary>
+    /// The compile-time half of the same rule: an immediate tool hands back drafts, and the executor
+    /// is what turns a draft into a persisted artifact. If this contract is ever widened back to the
+    /// persisted type, tools regain the ability to write an unredacted payload and only a reviewer
+    /// would notice.
+    /// </summary>
+    [Fact]
+    public void ImmediateToolResults_CarryDraftsRatherThanPersistedArtifacts()
+    {
+        var artifacts = typeof(ToolExecutionResult).GetProperty(nameof(ToolExecutionResult.Artifacts));
+
+        Assert.NotNull(artifacts);
+        Assert.Equal(
+            typeof(IReadOnlyCollection<ToolArtifactDraft>),
+            artifacts.PropertyType);
+        Assert.DoesNotContain(
+            typeof(ToolArtifactDraft).GetProperties(),
+            property => property.PropertyType == typeof(TriageArtifact));
     }
 
     [Fact]
