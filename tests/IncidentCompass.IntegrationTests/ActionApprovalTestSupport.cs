@@ -28,9 +28,7 @@ internal static class ActionApprovalTestSupport
                 ["ConnectionStrings:ActionApprovalTests"] = connectionString,
                 ["IncidentCompass:Postgres:ConnectionStringName"] = "ActionApprovalTests",
                 ["IncidentCompass:ModelGateway:Provider"] = "Mock",
-                ["IncidentCompass:ModelGateway:DefaultModel"] = "mock-chat",
                 ["IncidentCompass:Embeddings:Provider"] = "Mock",
-                ["IncidentCompass:Embeddings:DefaultModel"] = "mock-embedding",
                 ["IncidentCompass:Tickets:GitHub:Owner"] = "owner",
                 ["IncidentCompass:Tickets:GitHub:Repository"] = "repo",
                 ["IncidentCompass:Tickets:GitHub:Token"] = "test-token"

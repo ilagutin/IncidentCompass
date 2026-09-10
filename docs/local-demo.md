@@ -225,6 +225,14 @@ environment placeholders with the same names, fallback behavior and values used 
 then parses the route and budget snapshot once before the first attempt. This avoids a second numeric
 configuration baseline in the evaluator.
 
+`evaluations/triage/incidentcompass.config.json` deliberately owns no instructions or schemas. Its
+`ref:` values name the shipped `config/instructions` and `config/schemas` files by relative path, so
+the evaluation measures the prompts and output schemas that actually ship instead of a copy that can
+drift away from them. The loader resolves a `ref:` against the configuration file's own directory
+and nothing else, which means the file loads from its repository path with no compose file involved;
+`compose.evaluation.yml` mounts it at the matching path inside the image so the same references
+resolve there.
+
 This evaluator records measurements; the repository does not claim a model-quality result without a
 retained run artifact. Three attempts per case are too small for broad statistical conclusions.
 Diagnosis term checks are authored acceptance heuristics, not proof that a diagnosis is true.

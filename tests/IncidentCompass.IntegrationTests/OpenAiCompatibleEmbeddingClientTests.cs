@@ -374,7 +374,6 @@ public sealed class OpenAiCompatibleEmbeddingClientTests
         var configurationValues = new Dictionary<string, string?>
         {
             ["IncidentCompass:Embeddings:Provider"] = "OpenAiCompatible",
-            ["IncidentCompass:Embeddings:DefaultModel"] = "embedding-model",
             ["IncidentCompass:Embeddings:OpenAiCompatible:BaseUrl"] = baseUrl,
             ["IncidentCompass:Embeddings:OpenAiCompatible:ApiKey"] = "test-api-key",
             ["IncidentCompass:Embeddings:OpenAiCompatible:AllowInsecureHttpForLoopback"] = "true",

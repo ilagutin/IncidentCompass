@@ -20,7 +20,7 @@ public sealed class TriageConfigSchemaTests
     {
         var configurationPaths = TriageConfigurationFileLocator.FindAll();
 
-        TriageConfigurationFileLocator.AssertDiscoveryCoversShippedAndFixtureConfigurations(configurationPaths);
+        TriageConfigurationFileLocator.AssertDiscoveryCoversEveryKnownConfiguration(configurationPaths);
         foreach (var configurationPath in configurationPaths)
         {
             var result = Evaluate(LoadConfiguration(configurationPath));

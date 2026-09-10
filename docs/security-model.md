@@ -98,9 +98,12 @@ The repository ships four compose files, and only the first carries demo credent
 - `compose.production.yml` is the bounded single-host overlay described in
   `docs/single-host-production.md`. It carries no demo credentials of its own: the database,
   provider, API-key and source values it sets are required variables, so Compose refuses to start
-  when one is missing and the base file's demo defaults cannot take effect. Demo auth is forced off,
-  and the API and PostgreSQL ports bind to loopback. It is a reference deployment for one trusted
-  machine and one trusted operator, not a hardened multi-tenant production template.
+  when one is missing and the base file's demo defaults cannot take effect. It re-declares the three
+  database credential variables on its own `postgres` service rather than inheriting them, so the
+  database server it starts cannot fall back to the demo name, user or password no matter what the
+  rest of the file requires. Demo auth is forced off, and the API and PostgreSQL ports bind to
+  loopback. It is a reference deployment for one trusted machine and one trusted operator, not a
+  hardened multi-tenant production template.
 
 A real deployment must still supply its own configuration and secrets management. Neither
 `docker-compose.yml` nor its default credentials may be deployed as-is.

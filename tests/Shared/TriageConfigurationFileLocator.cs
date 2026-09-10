@@ -1,6 +1,4 @@
-using IncidentCompass.TestSupport;
-
-namespace IncidentCompass.UnitTests;
+namespace IncidentCompass.TestSupport;
 
 /// <summary>
 /// Finds every triage configuration file the repository carries, so the schema-dialect and
@@ -42,17 +40,30 @@ internal static class TriageConfigurationFileLocator
         Path.Combine(RepositoryRootLocator.Find(), "config", ConfigurationFileName);
 
     /// <summary>
-    /// Guards a discovery result against both emptiness and truncation. The shipped configuration is
-    /// the one the published documentation and the container images describe; the fixture
-    /// configurations under <c>tests/</c> are the ones a new exclusion rule or a renamed fixture
-    /// directory would silently drop, which would leave a green test that only ever looked at the
-    /// shipped file. Asserting the shipped path alone cannot tell a complete result from a truncated
-    /// one, so both halves of the discovery are asserted here.
+    /// The evaluation configuration, which the triage evaluation stack loads from this repository path
+    /// and mounts at the same path inside its images.
     /// </summary>
-    public static void AssertDiscoveryCoversShippedAndFixtureConfigurations(
+    public static string Evaluation() =>
+        Path.Combine(RepositoryRootLocator.Find(), "evaluations", "triage", ConfigurationFileName);
+
+    /// <summary>
+    /// Guards a discovery result against both emptiness and truncation. Every configuration named by
+    /// path elsewhere in the repository is asserted by name: the shipped one the published
+    /// documentation and the container images describe, and the evaluation one the evaluation stack
+    /// loads. The fixture configurations under <c>tests/</c> are asserted by presence instead, because
+    /// they are added and renamed freely.
+    ///
+    /// Asserting the shipped path alone cannot tell a complete result from a truncated one: a new
+    /// exclusion rule, a moved file or a renamed directory can drop one of the others and leave a
+    /// green test that only ever looked at the shipped file. That is the regression this exists to
+    /// catch, so each part of the discovery is asserted separately. No total count is asserted, so an
+    /// added configuration does not fail this guard for no reason.
+    /// </summary>
+    public static void AssertDiscoveryCoversEveryKnownConfiguration(
         IReadOnlyList<string> configurationPaths)
     {
-        Assert.Contains(Shipped(), configurationPaths);
+        AssertDiscovered(configurationPaths, Shipped(), "the shipped configuration");
+        AssertDiscovered(configurationPaths, Evaluation(), "the evaluation configuration");
 
         var root = RepositoryRootLocator.Find();
         Assert.True(
@@ -63,48 +74,39 @@ internal static class TriageConfigurationFileLocator
     }
 
     /// <summary>
-    /// Resolves one <c>ref:</c> reference of the given configuration to a file on disk. A reference
-    /// resolves against the configuration's own directory, which is what the loader does. The single
-    /// exception is the evaluation configuration, which carries no instructions or schemas of its own
-    /// because <c>compose.evaluation.yml</c> mounts it into the shipped configuration directory, so
-    /// its references resolve against <c>config/</c>.
+    /// Resolves one <c>ref:</c> reference of the given configuration to a file on disk against the
+    /// configuration's own directory, which is exactly what
+    /// <c>FileTriageConfigurationRepository</c> does. Every configuration in the repository
+    /// therefore resolves here the same way it resolves at runtime, with no per-file exception: a
+    /// configuration that shares another directory's instructions says so in its own reference.
     /// </summary>
     public static string ResolveReference(string configurationPath, string reference)
     {
         const string prefix = "ref:";
         Assert.StartsWith(prefix, reference, StringComparison.Ordinal);
         var relativePath = reference[prefix.Length..].Replace('/', Path.DirectorySeparatorChar);
-        var referenceDirectory = IsDeployedIntoShippedConfigurationDirectory(configurationPath)
-            ? Path.Combine(RepositoryRootLocator.Find(), "config")
-            : Path.GetDirectoryName(configurationPath)!;
-        var resolvedPath = Path.Combine(referenceDirectory, relativePath);
+        var resolvedPath = Path.GetFullPath(
+            Path.Combine(Path.GetDirectoryName(configurationPath)!, relativePath));
 
         Assert.True(
             File.Exists(resolvedPath),
             $"Configuration '{configurationPath}' references '{reference}', which does not exist at " +
-            $"'{resolvedPath}'. Every configuration except the deployed evaluation one must carry the " +
-            "file it references beside itself.");
+            $"'{resolvedPath}'. A reference must resolve against the configuration's own directory, " +
+            "because that is the only directory the loader looks in.");
         return resolvedPath;
     }
 
-    /// <summary>
-    /// The evaluation configuration is named here rather than detected by a missing directory or a
-    /// missing file, because either of those tests would let a deleted or renamed fixture reference
-    /// fall through to the shipped file of the same name: the caller would then validate
-    /// <c>config/schemas/source.json</c> while reporting the fixture it thought it read. Naming the
-    /// one configuration that is deployed elsewhere keeps every other missing reference a loud
-    /// failure. A second configuration deployed the same way fails loudly here first, which is the
-    /// point at which it should be added.
-    /// </summary>
-    private static bool IsDeployedIntoShippedConfigurationDirectory(string configurationPath) =>
-        string.Equals(
-            Path.GetFullPath(configurationPath),
-            Path.GetFullPath(Path.Combine(
-                RepositoryRootLocator.Find(),
-                "evaluations",
-                "triage",
-                ConfigurationFileName)),
-            StringComparison.OrdinalIgnoreCase);
+    private static void AssertDiscovered(
+        IReadOnlyList<string> configurationPaths,
+        string expectedPath,
+        string description)
+    {
+        Assert.True(
+            configurationPaths.Any(path => string.Equals(path, expectedPath, StringComparison.Ordinal)),
+            $"Configuration discovery did not return {description} at '{expectedPath}', so it has been " +
+            "truncated by an exclusion rule or by a moved file and now covers only: " +
+            string.Join(", ", configurationPaths));
+    }
 
     private static bool IsUnderTestsDirectory(string root, string path) =>
         Path.GetRelativePath(root, path)

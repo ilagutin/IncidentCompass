@@ -135,14 +135,17 @@ public sealed class TicketSearchWorkerPathTests(PostgresRepositoryFixture postgr
 
     private static async Task<IngestResponse> PostSignalAsync(HttpClient client, string prefix)
     {
+        // The service name is fixed because the ticket fixtures are bound to it, so the signal's
+        // fingerprint is made distinct through the error message instead.
+        var unique = IngestFingerprintUniqueness.Token();
         var response = await client.PostAsJsonAsync("/api/v1/incidents", new
         {
             sourceKind = "otel",
             serviceName = "checkout",
             environment = "prod",
-            externalId = prefix + Guid.NewGuid().ToString("N"),
+            externalId = prefix + "-" + unique,
             observedAtUtc = DateTimeOffset.UtcNow,
-            attributes = new { errorType = "TimeoutException", errorMessage = prefix + Guid.NewGuid().ToString("N") }
+            attributes = new { errorType = "TimeoutException", errorMessage = prefix + " " + unique }
         }, TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         return (await response.Content.ReadFromJsonAsync<IngestResponse>(TestContext.Current.CancellationToken))!;

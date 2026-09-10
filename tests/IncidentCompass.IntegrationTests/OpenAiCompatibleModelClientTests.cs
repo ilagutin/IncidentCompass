@@ -25,10 +25,6 @@ public sealed class OpenAiCompatibleModelClientTests
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["IncidentCompass:ModelGateway:Provider"] = "OpenAiCompatible",
-                ["IncidentCompass:ModelGateway:DefaultModel"] = "retry-model",
-                ["IncidentCompass:ModelGateway:StrongModel"] = "retry-model",
-                ["IncidentCompass:ModelGateway:CheapModel"] = "retry-model",
-                ["IncidentCompass:ModelGateway:EvaluationModel"] = "retry-model",
                 ["IncidentCompass:ModelGateway:OpenAiCompatible:BaseUrl"] = baseUrl,
                 ["IncidentCompass:ModelGateway:OpenAiCompatible:ApiKey"] = "test-api-key",
                 ["IncidentCompass:ModelGateway:OpenAiCompatible:AllowInsecureHttpForLoopback"] = "true",
@@ -73,10 +69,6 @@ public sealed class OpenAiCompatibleModelClientTests
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["IncidentCompass:ModelGateway:Provider"] = "OpenAiCompatible",
-                ["IncidentCompass:ModelGateway:DefaultModel"] = "tool-model",
-                ["IncidentCompass:ModelGateway:StrongModel"] = "tool-model",
-                ["IncidentCompass:ModelGateway:CheapModel"] = "tool-model",
-                ["IncidentCompass:ModelGateway:EvaluationModel"] = "tool-model",
                 ["IncidentCompass:ModelGateway:OpenAiCompatible:BaseUrl"] = baseUrl,
                 ["IncidentCompass:ModelGateway:OpenAiCompatible:ApiKey"] = "test-api-key",
                 ["IncidentCompass:ModelGateway:OpenAiCompatible:AllowInsecureHttpForLoopback"] = "true",
@@ -316,10 +308,6 @@ public sealed class OpenAiCompatibleModelClientTests
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["IncidentCompass:ModelGateway:Provider"] = "OpenAiCompatible",
-                ["IncidentCompass:ModelGateway:DefaultModel"] = "agentic-model",
-                ["IncidentCompass:ModelGateway:StrongModel"] = "agentic-model",
-                ["IncidentCompass:ModelGateway:CheapModel"] = "agentic-model",
-                ["IncidentCompass:ModelGateway:EvaluationModel"] = "agentic-model",
                 ["IncidentCompass:ModelGateway:OpenAiCompatible:BaseUrl"] = baseUrl,
                 ["IncidentCompass:ModelGateway:OpenAiCompatible:ApiKey"] = "test-api-key",
                 ["IncidentCompass:ModelGateway:OpenAiCompatible:AllowInsecureHttpForLoopback"] = "true",
@@ -406,10 +394,6 @@ public sealed class OpenAiCompatibleModelClientTests
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["IncidentCompass:ModelGateway:Provider"] = "OpenAiCompatible",
-                ["IncidentCompass:ModelGateway:DefaultModel"] = "error-model",
-                ["IncidentCompass:ModelGateway:StrongModel"] = "error-model",
-                ["IncidentCompass:ModelGateway:CheapModel"] = "error-model",
-                ["IncidentCompass:ModelGateway:EvaluationModel"] = "error-model",
                 ["IncidentCompass:ModelGateway:OpenAiCompatible:BaseUrl"] = baseUrl,
                 ["IncidentCompass:ModelGateway:OpenAiCompatible:ApiKey"] = "test-api-key",
                 ["IncidentCompass:ModelGateway:OpenAiCompatible:AllowInsecureHttpForLoopback"] = "true",
@@ -445,10 +429,6 @@ public sealed class OpenAiCompatibleModelClientTests
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["IncidentCompass:ModelGateway:Provider"] = "OpenAiCompatible",
-                ["IncidentCompass:ModelGateway:DefaultModel"] = "config-model",
-                ["IncidentCompass:ModelGateway:StrongModel"] = "config-model",
-                ["IncidentCompass:ModelGateway:CheapModel"] = "config-model",
-                ["IncidentCompass:ModelGateway:EvaluationModel"] = "config-model",
                 ["IncidentCompass:ModelGateway:OpenAiCompatible:BaseUrl"] = "not-a-valid-uri",
                 ["IncidentCompass:ModelGateway:OpenAiCompatible:ApiKey"] = "test-api-key"
             })
@@ -482,10 +462,6 @@ public sealed class OpenAiCompatibleModelClientTests
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["IncidentCompass:ModelGateway:Provider"] = "OpenAiCompatible",
-                ["IncidentCompass:ModelGateway:DefaultModel"] = "config-model",
-                ["IncidentCompass:ModelGateway:StrongModel"] = "config-model",
-                ["IncidentCompass:ModelGateway:CheapModel"] = "config-model",
-                ["IncidentCompass:ModelGateway:EvaluationModel"] = "config-model",
                 ["IncidentCompass:ModelGateway:OpenAiCompatible:BaseUrl"] = "http://127.0.0.1:12345",
                 ["IncidentCompass:ModelGateway:OpenAiCompatible:ApiKey"] = "test-api-key"
             })

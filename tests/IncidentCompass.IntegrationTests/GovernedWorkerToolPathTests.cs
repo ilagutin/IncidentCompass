@@ -344,7 +344,7 @@ public sealed class GovernedWorkerToolPathTests(PostgresRepositoryFixture postgr
 
     private static async Task<IngestSignalResponseDto> PostIngestAsync(HttpClient client)
     {
-        var unique = Guid.NewGuid().ToString("N");
+        var unique = IngestFingerprintUniqueness.Token();
         var response = await client.PostAsJsonAsync(
             "/api/v1/incidents",
             new TesterEnvelopeDto(

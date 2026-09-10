@@ -23,7 +23,7 @@ internal sealed record EvaluationOptions(
         var corpus = Read(args, "--evaluation-corpus", "INCIDENTCOMPASS_TESTER_EVALUATION_CORPUS")
             ?? "/app/evaluations/triage/corpus-v1.json";
         var configurationPath = Read(args, "--evaluation-config", "INCIDENTCOMPASS_TESTER_EVALUATION_CONFIG")
-            ?? "/app/config/incidentcompass.evaluation.config.json";
+            ?? "/app/evaluations/triage/incidentcompass.config.json";
         var options = new EvaluationOptions(
             BaseUrl: ToBaseUri(Read(args, "--base-url", "INCIDENTCOMPASS_TESTER_BASE_URL") ?? "http://localhost:5198"),
             RequestTimeout: TimeSpan.FromSeconds(ReadInt(args, "--request-timeout-seconds", "INCIDENTCOMPASS_TESTER_REQUEST_TIMEOUT_SECONDS", 30)),

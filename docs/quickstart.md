@@ -125,8 +125,9 @@ file are the model names used by the Worker investigation loop:
 - `INCIDENTCOMPASS_LLM_MODEL` controls chat routes such as `analysis-chat` and `report-chat`.
 - `INCIDENTCOMPASS_EMBEDDINGS_MODEL` controls the `memory-embed` route used by `memory_search`.
 
-`IncidentCompass__ModelGateway__DefaultModel` is still validated as gateway configuration, but it is
-not the source of truth for triage route calls. The route config is.
+The host `ModelGateway` and `Embeddings` sections configure the provider, the request ceilings and
+the transport. They carry no model name of their own: the route config is the source of truth for
+which model a triage call uses.
 
 The shipped local-safe profile uses these ceilings:
 

@@ -127,16 +127,9 @@ temperature and output/context ceilings. The shipped routes are `analysis-chat`,
 `memory-embed`. Roles, the orchestrator and the `memory_search` tool select a route by its ID, so a
 route is the only thing that decides which model a triage call uses.
 
-`ModelGateway:DefaultModel`, `StrongModel`, `CheapModel` and `EvaluationModel` are host gateway
-settings. They are declared on `ModelGatewayOptions` and required to be non-empty by
-`ModelGatewayOptionsValidator`, but no code selects a model through them: nothing reads them after
-validation. `Embeddings:DefaultModel` is dead in the same way. It is declared on `EmbeddingOptions`,
-required to be non-blank by `EmbeddingOptionsValidator`, published in both `appsettings.json` files
-and required by `compose.production.yml`, yet nothing reads it either: `MemorySearchTool` and
-`MemorySeedHostedService` both take the embedding model from the resolved `memory-embed` route. All
-five are validated configuration, not a routing tier, and they are recorded here so an operator is
-not misled into tuning them expecting a routing effect. Removing them is a separate change because
-it would alter published host configuration.
+There is no host-level model setting beside the route. `ModelGateway` and `Embeddings` configure the
+provider, the request ceilings and the transport; the model name for a call comes from the route the
+caller resolved and from nowhere else.
 
 ### Route Reasoning Preference
 

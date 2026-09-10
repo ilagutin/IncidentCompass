@@ -29,8 +29,7 @@ public sealed class HostCompositionTests
 
     public static IEnumerable<object[]> InvalidModelGatewayConfigurations =>
     [
-        [new Dictionary<string, string?> { ["IncidentCompass:ModelGateway:DefaultModel"] = "" }],
-        [new Dictionary<string, string?> { ["IncidentCompass:ModelGateway:StrongModel"] = " " }],
+        [new Dictionary<string, string?> { ["IncidentCompass:ModelGateway:Provider"] = " " }],
         [new Dictionary<string, string?> { ["IncidentCompass:ModelGateway:DefaultTemperature"] = "1.5" }],
         [
             new Dictionary<string, string?>
@@ -48,8 +47,7 @@ public sealed class HostCompositionTests
             }
         ],
         [new Dictionary<string, string?> { ["IncidentCompass:ModelGateway:MaxInputMessageCharacters"] = "0" }],
-        [new Dictionary<string, string?> { ["IncidentCompass:ModelGateway:MaxCorrelationIdLength"] = "129" }],
-        [new Dictionary<string, string?> { ["IncidentCompass:ModelGateway:AllowedModels:0"] = " " }]
+        [new Dictionary<string, string?> { ["IncidentCompass:ModelGateway:MaxCorrelationIdLength"] = "129" }]
     ];
 
     public static IEnumerable<object[]> AcceptedProviderSpellings =>
@@ -385,7 +383,7 @@ public sealed class HostCompositionTests
     {
         using var host = CreateHostWithConfiguration(new Dictionary<string, string?>
         {
-            ["IncidentCompass:Embeddings:DefaultModel"] = ""
+            ["IncidentCompass:Embeddings:MockDimensions"] = "0"
         });
 
         var exception = await Record.ExceptionAsync(() => host.StartAsync());
@@ -395,7 +393,7 @@ public sealed class HostCompositionTests
         Assert.NotNull(exception);
         Assert.Contains(
             GetOptionsValidationFailures(exception),
-            failure => failure.Contains("DefaultModel", StringComparison.OrdinalIgnoreCase));
+            failure => failure.Contains("MockDimensions", StringComparison.OrdinalIgnoreCase));
     }
 
     [Theory]
@@ -527,9 +525,7 @@ public sealed class HostCompositionTests
         var values = new Dictionary<string, string?>(telegramValues)
         {
             ["IncidentCompass:ModelGateway:Provider"] = "Mock",
-            ["IncidentCompass:ModelGateway:DefaultModel"] = "mock-chat",
-            ["IncidentCompass:Embeddings:Provider"] = "Mock",
-            ["IncidentCompass:Embeddings:DefaultModel"] = "mock-embedding"
+            ["IncidentCompass:Embeddings:Provider"] = "Mock"
         };
         return new HostBuilder()
             .ConfigureAppConfiguration(configuration => configuration.AddInMemoryCollection(values))
@@ -586,9 +582,7 @@ public sealed class HostCompositionTests
         var values = new Dictionary<string, string?>(ticketValues)
         {
             ["IncidentCompass:ModelGateway:Provider"] = "Mock",
-            ["IncidentCompass:ModelGateway:DefaultModel"] = "mock-chat",
-            ["IncidentCompass:Embeddings:Provider"] = "Mock",
-            ["IncidentCompass:Embeddings:DefaultModel"] = "mock-embedding"
+            ["IncidentCompass:Embeddings:Provider"] = "Mock"
         };
         return new HostBuilder()
             .ConfigureAppConfiguration(configuration => configuration.AddInMemoryCollection(values))

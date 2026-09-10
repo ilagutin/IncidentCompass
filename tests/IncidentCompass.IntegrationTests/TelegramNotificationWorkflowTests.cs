@@ -145,9 +145,7 @@ public sealed class TelegramNotificationWorkflowTests
         builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["IncidentCompass:ModelGateway:Provider"] = "Mock",
-            ["IncidentCompass:ModelGateway:DefaultModel"] = "mock-chat",
-            ["IncidentCompass:Embeddings:Provider"] = "Mock",
-            ["IncidentCompass:Embeddings:DefaultModel"] = "mock-embedding"
+            ["IncidentCompass:Embeddings:Provider"] = "Mock"
         });
         builder.Services.AddApplication(builder.Configuration);
         builder.Services.AddInfrastructure(builder.Configuration);

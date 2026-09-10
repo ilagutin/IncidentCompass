@@ -325,7 +325,7 @@ public sealed class BoundedRepromptAndBudgetTests(PostgresRepositoryFixture post
 
     private static async Task<IngestSignalResponseDto> IngestOneAsync(TestScope scope)
     {
-        var unique = Guid.NewGuid().ToString("N");
+        var unique = IngestFingerprintUniqueness.Token();
         var response = await scope.Client.PostAsJsonAsync(
             "/api/v1/incidents",
             new TesterEnvelopeDto(
