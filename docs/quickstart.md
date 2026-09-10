@@ -127,7 +127,7 @@ The shipped local-safe profile uses these ceilings:
 | `Orchestrator.Budget.MaxWorkers` | 6 |
 | `Orchestrator.Budget.MaxTokens` | 200000 |
 | `Orchestrator.Budget.MaxReprompts` | 2 |
-| `Orchestrator.Budget.MaxTurns` | 16 |
+| `Orchestrator.Budget.MaxTurns` | 16 (code default; the shipped config does not set it) |
 
 This is one profile for slower local generation, not a target spend or expected run duration.
 `ContextWindowTokens` limits the backend's estimate of prompt size for a route; it does not reserve

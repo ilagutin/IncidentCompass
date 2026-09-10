@@ -28,6 +28,8 @@ flowchart LR
   - `Notifications/`: ordered notification routing and the non-secret Telegram tool descriptor.
     The Worker-owned workflow accepts report identity and a configured route id, not recipient or
     message text.
+  - `Observability/`: the tenant-scoped model-cost rollup read request, validator, response and
+    persistence port.
   - `SourceContext/`: provider-neutral source lookup contracts, bounded stack-frame extraction and
     the governed `source_lookup` worker tool.
   - `Tickets/`: system-neutral ticket-search, cited-ticket resolution and ticket-action-history
@@ -41,6 +43,9 @@ flowchart LR
   evaluation and approved-action pumps. Triage jobs and evaluations use renewable ownership-fenced
   leases and per-process concurrency limits; approved actions use immutable dispatch fences, deadlines
   and at-most-once backend invocation.
+- `IncidentCompass.Tester`: the HTTP-only demo and evaluation driver. It references no other project
+  in the solution and speaks to the API as a black box, so it deliberately declares its own local
+  copies of Domain and Application concepts instead of sharing types.
 
 ## Intake Flow
 
@@ -79,7 +84,7 @@ The PostgreSQL schema added in `infra/postgres/init/007-intake.sql` stores `sign
 
 ## Memory Worker
 
-Incident memory uses PostgreSQL through `incidentcompass.memory_items` and `incidentcompass.memory_chunks`. File-backed memory sync reads runbooks, known incidents, operational notes, release notes and postmortems with optional service/component/release metadata. Within a configured seed owner, source path is the stable identity: changed files update and re-embed one active item, while removed files are deactivated and excluded from search. Each complete corpus is published atomically as an owner-scoped generation, so a divergent owner cannot deactivate another owner's items. API and Worker can sync the same owner concurrently under a corpus database lock. Runtime resync is opt-in, single-flight and cancellation-aware; it persists only timestamps, generation and a sanitized error code by seed tenant and owner for the memory-sync health status, so the API can read the Worker-persisted synchronization snapshot across process boundaries; it is not a Worker liveness probe. The manual `CurrentReleases` map is the single per-service release marker: memory retrieval labels matching evidence as current, stale, unversioned or service-mismatched before it reaches the model. Report publication derives and verifies the stored documentation-fit status from those durable artifacts. The configured embedding model is used by default; the mock embedder is reserved for tests and explicit mock-only checks. The `memory` role is the only shipped role granted `memory_search`; the orchestrator never searches memory directly.
+Incident memory uses PostgreSQL through `incidentcompass.memory_items` and `incidentcompass.memory_chunks`. File-backed memory sync reads the supported kinds runbook, known incident, operational note, release note and postmortem with optional service/component/release metadata; the repository ships runbook and known-incident corpora only. Within a configured seed owner, source path is the stable identity: changed files update and re-embed one active item, while removed files are deactivated and excluded from search. Each complete corpus is published atomically as an owner-scoped generation, so a divergent owner cannot deactivate another owner's items. API and Worker can sync the same owner concurrently under a corpus database lock. Runtime resync is opt-in, single-flight and cancellation-aware; it persists only timestamps, generation and a sanitized error code by seed tenant and owner for the memory-sync health status, so the API can read the Worker-persisted synchronization snapshot across process boundaries; it is not a Worker liveness probe. The manual `CurrentReleases` map is the single per-service release marker: memory retrieval labels matching evidence as current, stale, unversioned or service-mismatched before it reaches the model. Report publication derives and verifies the stored documentation-fit status from those durable artifacts. The configured embedding model is used by default; the mock embedder is reserved for tests and explicit mock-only checks. The `memory` role is the only shipped role granted `memory_search`; the orchestrator never searches memory directly.
 
 `memory_search` embeds the worker query once through the tool's configured `EmbeddingRouteId`, then asks PostgreSQL for a bounded vector candidate set of `min(100, TopK * 4)`. Exact tenant, embedding provider, embedding model, embedding dimension and active-item filters apply before vector ordering and the candidate limit. Application-owned ranking applies lexical coverage and fixed metadata rules, then returns the configured final `TopK`. Current evidence for the fault service and its snapshotted `CurrentReleases` marker ranks before stale or wrong-service evidence. Component and evidence-kind boosts require exact normalized query aliases; neither is inferred from model output or accepted as a tool argument. Ties resolve by combined score, vector score and chunk UUID. A model/provider/dimension mismatch returns an honest empty result instead of falling back to fuzzy retrieval. Successful matches are written as attempt-level `RetrievedItem` artifacts with `domain_ref = memory_item:<id>`, and those artifacts commit in the same transaction as the `ToolResult` artifact and ledger event.
 ## Read-only source context

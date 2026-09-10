@@ -6,7 +6,7 @@ The backend decides what data and tools are available. The model may summarize, 
 
 ## Demo Auth
 
-The starter kit uses:
+IncidentCompass uses:
 
 - `IUserContext` in the application layer;
 - demo/fake authentication for local development;
@@ -79,17 +79,31 @@ the server-loaded job/configuration tenant context.
 ## Local Compose Credentials
 
 `docker-compose.yml` sets local-only PostgreSQL demo defaults through `${VAR:-default}` fallbacks:
-`POSTGRES_USER` (line 25) and `POSTGRES_PASSWORD` (line 26) default to `incidentcompass` and
-`incidentcompass_dev_password`; the healthcheck (line 33) and both the `api` and `worker` service
-connection strings (lines 46 and 71) reuse the same fallbacks. These values exist only so the
+`POSTGRES_USER` and `POSTGRES_PASSWORD` default to `incidentcompass` and
+`incidentcompass_dev_password`; the `postgres` healthcheck and the `api` and `worker`
+`ConnectionStrings__IncidentCompass` values reuse the same fallbacks. These values exist only so the
 one-command demo runs without an operator supplying anything; overriding them from an ignored `.env`
 file or shell variables replaces them without editing the compose file (see `docs/local-demo.md` and
 `docs/quickstart.md`).
 
-This repository has no production compose file: only `docker-compose.yml` (the demo stack) and
-`compose.mock.yml` (a deterministic-provider overlay for the demo stack) exist. A real deployment
-must supply its own configuration and secrets management; it must not deploy `docker-compose.yml` or
-its default credentials as-is.
+The repository ships four compose files, and only the first carries demo credentials:
+
+- `docker-compose.yml` is the local demo stack. It is the only file that supplies default database
+  credentials, and it must not be deployed as-is.
+- `compose.mock.yml` is a deterministic-provider overlay for that demo stack. It replaces the model
+  and embedding providers and nothing else.
+- `compose.evaluation.yml` is a local evaluation overlay for that demo stack. It closes the published
+  ports, mounts the evaluation triage configuration read-only and clears the Telegram and GitHub
+  credentials for the run.
+- `compose.production.yml` is the bounded single-host overlay described in
+  `docs/single-host-production.md`. It carries no demo credentials of its own: the database,
+  provider, API-key and source values it sets are required variables, so Compose refuses to start
+  when one is missing and the base file's demo defaults cannot take effect. Demo auth is forced off,
+  and the API and PostgreSQL ports bind to loopback. It is a reference deployment for one trusted
+  machine and one trusted operator, not a hardened multi-tenant production template.
+
+A real deployment must still supply its own configuration and secrets management. Neither
+`docker-compose.yml` nor its default credentials may be deployed as-is.
 
 ## Logging
 

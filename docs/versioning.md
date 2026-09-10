@@ -7,7 +7,7 @@ This project versions more than releases. Model-backed behavior depends on code,
 - Use SemVer.
 - Stay in `0.x` until extension points and public contracts stabilize.
 - Treat `v0.1.0` as the first public reference release.
-- Reserve `v1.0.0` for a future stable starter kit.
+- Reserve `v1.0.0` for a future stable public contract surface.
 
 ## Public Release Flow
 
@@ -99,7 +99,7 @@ and warns in the job summary, it just costs that one approval click per pull req
 ## Database
 
 - Keep schema changes in source control.
-- Live ledger/report/memory/action-approval tables and dormant pricing state use explicit raw SQL/init scripts and small Npgsql adapters while the persistence surface is still stabilizing.
+- Live ledger/report/memory/action-approval tables and pricing state use explicit raw SQL/init scripts and small Npgsql adapters while the persistence surface is still stabilizing.
 - Released migrations are append-only. `006-tool-audit.sql` remains byte-identical and creates an unused legacy table even though the retired standalone application stack no longer has an adapter.
 - New applied and failed migration records use one platform-independent SHA-256 checksum. The input is
   each script name plus its decoded SQL encoded as UTF-8 after removing one leading decoded BOM and

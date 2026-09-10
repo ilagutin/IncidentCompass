@@ -1,7 +1,7 @@
 using IncidentCompass.Api;
 using IncidentCompass.Application;
 using IncidentCompass.Infrastructure;
-using IncidentCompass.Infrastructure.Intake;
+using IncidentCompass.Infrastructure.Configuration;
 
 var builder = WebApplication.CreateBuilder(args);
 

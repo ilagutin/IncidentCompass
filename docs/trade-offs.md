@@ -103,15 +103,15 @@ providers and finer-grained authorization remain deferred.
 
 ## Domain Records with Application-Owned Behavior
 
-Domain types are intentionally simple records and enums in the starter-kit scope, but domain concepts live in the Domain layer so they can be reused across Application workflows without creating Application-to-Application coupling. Workflow behavior, validation policy and partial-failure handling stay in Application services so the public sample remains easy to inspect without DDD ceremony.
+Domain types are intentionally simple records and enums in this project's scope, but domain concepts live in the Domain layer so they can be reused across Application workflows without creating Application-to-Application coupling. Workflow behavior, validation policy and partial-failure handling stay in Application services so the public sample remains easy to inspect without DDD ceremony.
 
-## Starter Kit vs Framework
+## Reference Implementation vs Framework
 
-A starter kit is easier to build and understand. A framework requires stable APIs, compatibility guarantees and long-term support.
+A reference implementation is easier to build and understand. A framework requires stable APIs, compatibility guarantees and long-term support.
 
 ## Internal Dispatcher vs MediatR
 
-A lightweight internal dispatcher keeps the starter kit dependency-light. MediatR v12 can be familiar for many .NET developers, but newer MediatR versions may introduce licensing considerations. This project uses an internal dispatcher/pipeline and can document MediatR as an optional alternative later.
+A lightweight internal dispatcher keeps this project dependency-light. MediatR v12 can be familiar for many .NET developers, but newer MediatR versions may introduce licensing considerations. This project uses an internal dispatcher/pipeline and can document MediatR as an optional alternative later.
 
 The replacement boundary is the dispatcher engine, not the hosts or use-case contracts. A MediatR swap should replace `ApplicationDispatcher`, `RequestValidationBehavior`, `DispatchLoggingBehavior` and the dispatcher delegate shape with MediatR request handling and pipeline behaviors. The stable contracts are `IApplicationDispatcher`, the request marker interfaces and `IRequestHandler<TRequest, TResponse>` handlers. Hosts should continue depending on `IApplicationDispatcher` so API and Worker composition do not learn which dispatcher engine is active.
 
@@ -127,9 +127,9 @@ The MediatR decision remains separate. This project still uses its internal disp
 
 .NET 10 LTS is the preferred baseline for a new project started in 2026. Older .NET versions may be familiar to more teams, but they have shorter remaining support windows.
 
-## `v0.1.0` vs `v1.0.0`
+## `0.x` vs `v1.0.0`
 
-`v0.1.0` communicates that the project is useful but evolving. `v1.0.0` should wait until contracts, docs and extension points are stable.
+A `0.x` version communicates that the project is useful but evolving. `v1.0.0` should wait until contracts, docs and extension points are stable.
 
 ## Raw String Identifiers vs Strongly-Typed Value Objects
 

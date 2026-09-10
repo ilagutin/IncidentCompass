@@ -1,9 +1,9 @@
 # Single-Host Production Runbook
 
-This runbook is the supported v0.4 production boundary: one trusted machine, one trusted operator,
-one host-owned monitored checkout and one durable PostgreSQL database managed with Docker Compose.
-It is a bounded reference deployment. It is not a hostile multi-tenant service, an HA topology or a
-disaster-recovery site.
+This runbook describes the bounded single-host deployment this release exercises: one trusted machine,
+one trusted operator, one host-owned monitored checkout and one durable PostgreSQL database managed
+with Docker Compose. It is a bounded reference deployment. It is not a hostile multi-tenant service,
+an HA topology or a disaster-recovery site, and this project does not offer support commitments for it.
 
 ## Host prerequisites
 

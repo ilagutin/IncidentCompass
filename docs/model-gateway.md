@@ -15,13 +15,13 @@ public interface IAiModelClient
 
 Implemented adapters:
 
-- OpenAI-compatible client;
+- OpenAI-compatible client, including local OpenAI-compatible endpoints, which is the normal
+  local/demo runtime path;
 - mock/fake client for tests and explicit mock-only checks.
 
 Possible future adapters:
 
 - Azure OpenAI;
-- local OpenAI-compatible endpoints;
 - Anthropic;
 - Google Gemini.
 
@@ -115,12 +115,22 @@ already beyond `MaxAttempts`.
 
 ## Routing
 
-Routing is configuration-driven:
+Routing is configuration-driven, and the triage configuration file is the source of truth. Named
+routes under `Routes` in `config/incidentcompass.config.json` carry the kind, provider ID, model,
+temperature and output/context ceilings. The shipped routes are `analysis-chat`, `report-chat` and
+`memory-embed`. Roles, the orchestrator and the `memory_search` tool select a route by its ID, so a
+route is the only thing that decides which model a triage call uses.
 
-- default model;
-- strong model;
-- cheap model;
-- evaluation model.
+`ModelGateway:DefaultModel`, `StrongModel`, `CheapModel` and `EvaluationModel` are host gateway
+settings. They are declared on `ModelGatewayOptions` and required to be non-empty by
+`ModelGatewayOptionsValidator`, but no code selects a model through them: nothing reads them after
+validation. `Embeddings:DefaultModel` is dead in the same way. It is declared on `EmbeddingOptions`,
+required to be non-blank by `EmbeddingOptionsValidator`, published in both `appsettings.json` files
+and required by `compose.production.yml`, yet nothing reads it either: `MemorySearchTool` and
+`MemorySeedHostedService` both take the embedding model from the resolved `memory-embed` route. All
+five are validated configuration, not a routing tier, and they are recorded here so an operator is
+not misled into tuning them expecting a routing effect. Removing them is a separate change because
+it would alter published host configuration.
 
 ### Route Reasoning Preference
 

@@ -71,8 +71,9 @@ IncidentCompass.Application/
     Validation/
 ```
 
-`Core/`, `Governance/`, `Intake/`, `Investigation/`, `Memory/`, `Observability/`, `SourceContext/` and `Tickets/` are the current
-folders. `Governance/` contains the common worker-tool contract, validation primitives, triage
+`Core/`, `Governance/`, `Intake/`, `Investigation/`, `Memory/`, `Notifications/`, `Observability/`,
+`SourceContext/` and `Tickets/` are the current folders, and `ArchitectureTests` enforces exactly
+that list. `Governance/` contains the common worker-tool contract, validation primitives, triage
 ledger ports and post-report action approval contracts/use cases, including the deterministic approved
 action dispatcher. PostgreSQL action approval, provenance, claim, recovery and terminal-transition
 implementations stay under `Infrastructure/Governance/ActionApprovals/`.
@@ -111,6 +112,19 @@ Application requests run through the internal dispatcher pipeline before the han
 - `RequestValidationBehavior` runs all FluentValidation validators for the request type and throws `RequestValidationException` when rule failures exist.
 
 Add a new behavior only for cross-cutting workflow concerns that should apply consistently across many request types. Keep feature-specific policy in the feature folder instead of hiding it in a global behavior.
+
+Behavior boundaries:
+
+- A behavior is an application concern, not a replacement for HTTP middleware. HTTP-only concerns
+  stay in `IncidentCompass.Api`.
+- A behavior may open a persistence transaction, but the transaction itself is implemented by
+  Infrastructure.
+- Model-call telemetry stays on the Worker investigation path through durable `ModelCall` ledger
+  events rather than a global behavior.
+- The dispatcher is a small internal type. MediatR is not a required dependency; see
+  `docs/trade-offs.md` for the replacement seam if a team prefers it.
+- Out of scope for this pipeline: event sourcing, separate read/write databases and a dependency on
+  a commercial mediator package.
 
 ## Handler Shape
 

@@ -28,16 +28,30 @@ Before making non-trivial changes, read the relevant public docs:
 - Keep the solution a layered monolith (a single `Application` project with feature folders; layer
   boundaries are by convention + `ArchitectureTests`, not enforced module assemblies).
 - `Domain` must not depend on `Application`, `Infrastructure`, `Api`, `Worker`, provider SDKs or persistence libraries.
-- `Application` is a single project with populated feature folders: `Core/`, `Intake/`,
-  `Investigation/`, `Memory/` and `Governance/`.
+- `Application` is a single project with populated feature folders: `Core/`, `Governance/`,
+  `Intake/`, `Investigation/`, `Memory/`, `Notifications/`, `Observability/`, `SourceContext/` and
+  `Tickets/`. `ArchitectureTests` enforces exactly this list; adding a folder means changing both.
 - `Core/` holds the dispatcher, identity/correlation, model/embedding gateway abstractions and shared options.
 - `Intake/` holds source normalization, redaction, fingerprinting, fault grouping, triage-job creation and grounded intake artifacts.
+  `Intake/Configuration/` also holds the deserialized triage-configuration model for the whole system:
+  provider, route, role, tool, rule and orchestrator-budget settings. Every feature that needs triage
+  configuration reads it from there. That location is historical, not a claim that those settings are
+  intake-specific.
 - `Investigation/` holds Worker job orchestration, config rehydration, bounded model calls, delegation,
   worker-tool execution and grounded report publication contracts.
 - `Memory/` holds incident-memory contracts and the governed `memory_search` tool.
 - `Governance/` holds live triage-ledger contracts, worker-tool contracts and validation primitives.
   `ToolRuleEngine` is the single tool-policy decision path shared by immediate Worker reads and
   backend-owned post-report action proposals.
+- `Notifications/`, `SourceContext/` and `Tickets/` are top-level feature folders that own different
+  pieces: `Notifications/` holds route selection, the Worker-owned workflow and the non-secret
+  `telegram_notify` action descriptor, with no port interface and no worker tool; `SourceContext/`
+  holds the `ISourceContextLookup` port and the governed `source_lookup` worker tool, with no action
+  descriptor; `Tickets/` holds provider-neutral ports, the governed `ticket_search` worker tool and
+  the non-secret `ticket_create` action descriptor. They sit beside `Governance/` rather than inside
+  it: `Governance/Tools/` owns the shared tool contract and the single rule engine, not any
+  feature's own tool or descriptor.
+- `Observability/` holds the tenant-scoped model-cost rollup read model and its persistence port.
 - `Infrastructure` implements PostgreSQL persistence, configuration loading, model/embedding clients,
   incident memory and other Application ports.
 - Live model observability uses structured application logs plus durable `ModelCall` and `BudgetEvent`
@@ -45,7 +59,11 @@ Before making non-trivial changes, read the relevant public docs:
 - `Api` maps HTTP input/output, OpenAPI metadata and foreground user context only.
 - `Worker` runs the database-backed claim loop and governed investigation processing, composing only
   `Application` and `Infrastructure`.
-- Hosts compose `AddApplication` + `AddInfrastructure` (+ `AddApi`/`AddWorker`) rather than per-feature registration.
+- `Tester` is an HTTP-only demo and evaluation driver with no project references. It speaks to the API
+  as a black box, so it deliberately declares its own copies of Domain and Application concepts, such
+  as `EvaluationJobStatus` and `EvaluationModelCallMetadata`, instead of sharing types.
+- Hosts compose four registrations: `AddApplication` + `AddInfrastructure` + `AddPostgresMigrations`
+  (+ `AddApi`/`AddWorker`) rather than per-feature registration.
 - Provider-specific DTOs, HTTP details, SQL details and SDK concepts must not leak into Application or Domain contracts.
 
 ## Current Design Decisions

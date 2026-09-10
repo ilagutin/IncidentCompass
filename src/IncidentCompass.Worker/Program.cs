@@ -1,6 +1,6 @@
 using IncidentCompass.Application;
 using IncidentCompass.Infrastructure;
-using IncidentCompass.Infrastructure.Intake;
+using IncidentCompass.Infrastructure.Configuration;
 using IncidentCompass.Worker;
 
 var builder = Host.CreateApplicationBuilder(args);

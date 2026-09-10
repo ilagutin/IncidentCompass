@@ -129,7 +129,7 @@ Read [Architecture](docs/architecture.md), [Security model](docs/security-model.
 ## Documentation
 
 - [Quickstart](docs/quickstart.md), [Local demo](docs/local-demo.md) and [Integration configuration](docs/integrations.md)
-- [Architecture](docs/architecture.md) and [Application pipeline](docs/application-pipeline.md)
+- [Architecture](docs/architecture.md)
 - [Security model](docs/security-model.md) and [Security policy / vulnerability reporting](SECURITY.md)
 - [Model gateway](docs/model-gateway.md)
 - [Observability](docs/observability.md) and [Cost tracking](docs/cost-tracking.md)

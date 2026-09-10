@@ -116,10 +116,11 @@ When that one escalation can find a published report in the recurrence chain, in
 
 ## File-Backed Memory Sync
 
-Memory files under `samples/runbooks`, `samples/incidents`, `samples/operational-notes`,
-`samples/documents`, `samples/release-notes` and `samples/postmortems` are the source of truth. Optional
-frontmatter supports `kind`, `service`, `component`, `release` and `tags`. The body below the
-frontmatter is the content embedded and cited by reports.
+Memory files under the configured seed directory are the source of truth. This repository ships two
+corpora, `samples/runbooks` and `samples/incidents`. The loader also reads `operational-notes`,
+`documents`, `release-notes` and `postmortems` when an operator adds those directories; they are
+supported kinds, not shipped content. Optional frontmatter supports `kind`, `service`, `component`,
+`release` and `tags`. The body below the frontmatter is the content embedded and cited by reports.
 
 API and Worker may start together and sync the same corpus safely. A changed file updates one stable
 source record and re-embeds its body. A removed file is deactivated, so its old chunks stay available
