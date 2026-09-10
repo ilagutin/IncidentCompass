@@ -232,6 +232,50 @@ bodies and absolute host paths are not logged or persisted. Durable artifacts co
 repository-relative path, bounded excerpt, line range, release and `heuristic` mapping label, and the
 excerpt is redacted before it is stored like every other tool payload.
 
+## Source workspace boundary
+
+Beside the excerpt reader, the same monitored checkout can be copied into a disposable workspace so
+that a later change can be prepared against a fixed base. The copy is a filesystem primitive with no
+host wiring yet: nothing registers it, no tool exposes it and no model input reaches it.
+
+**What it reads.** Only the configured monitored root, and only for reading. The checkout is never
+opened for write, moved or renamed, and the production mount stays a read-only bind. The walk
+rechecks containment below the canonical root for every entry, against the same path boundary the
+source-lookup path uses rather than a second one written for it, and refuses the whole tree rather
+than skipping an entry when it meets a symlink, junction or any other reparse point on a file or a
+directory, a `.gitmodules` file at any depth, or a `.git` entry below the root's own. The root's own
+`.git` is skipped rather than copied, so a workspace holds working-tree content and no repository
+history. Submodule refusal is a marker heuristic, not git semantics: nothing here runs or links git,
+so a declared-but-absent submodule and a merely nested independent repository are refused alike.
+
+**What it writes.** One freshly named directory below a configured workspace root, and nothing
+outside it. A workspace root that is the monitored root or sits below it is refused before anything
+is created. File count, total bytes and tree depth are bounded, and exceeding any bound refuses the
+materialization and deletes the partial copy rather than returning a truncated tree: a truncated
+copy would carry an identity for a tree that exists nowhere. The directory is removed on every
+terminal path, refusal, filesystem error, cancellation and disposal alike. A killed process is the
+one case deletion cannot cover, which is why the workspace root is operator-configured and why
+prefixed leftovers below it are reapable.
+
+**What it executes.** Nothing. No process is started, no file in the copy is opened again after it
+is written, and the copy is inert bytes until some later caller reads it. The architecture test that
+fails the build when `System.Diagnostics.Process` appears in the Application project is unchanged
+and remains a forward guard.
+
+**What the identity proves.** Each workspace records a tree identity: a SHA-256 over the copied
+files, each contributing its repository-relative path and the SHA-256 of its exact bytes, ordered by
+path and length-framed under a versioned domain separator. File bytes are not normalized, so two
+checkouts of the same upstream commit under different line-ending settings are two different bases
+and carry two different identities. Equal identities mean the same paths with the same bytes under
+the same admission rules, which is what lets a later reader ask whether the base a change was
+prepared against still exists. It is not a commit id: nothing here reads git, so the identity says
+nothing about which commit, branch or upstream repository the tree came from, and it covers no file
+mode, ownership, timestamp or empty directory.
+
+**What is not logged.** Absolute host paths, workspace paths and file contents stay out of logs and
+durable state, exactly as they do for the excerpt reader. A refusal surfaces a code from a closed
+vocabulary and nothing else.
+
 ## Redaction And Pseudonymization
 
 Redaction runs at two boundaries, not one. Incoming signals are redacted during intake, before the
