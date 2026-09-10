@@ -276,6 +276,191 @@ mode, ownership, timestamp or empty directory.
 durable state, exactly as they do for the excerpt reader. A refusal surfaces a code from a closed
 vocabulary and nothing else.
 
+## Source patch boundary
+
+A unified diff can be parsed, validated and applied inside one of those workspaces. Like the
+workspace itself this is a primitive with no host wiring yet: nothing registers it, no tool exposes
+it, and no model output reaches it. It is written for the day one does, so it treats the diff as
+hostile input: a patch is model text, and the model that wrote it was shown incident data an
+attacker may influence.
+
+**Nothing is executed.** No process is started, no file in the workspace is opened again after it is
+written, and no command, script or hook in the tree is run. The architecture test that fails the
+build when `System.Diagnostics.Process` appears in the Application project is unchanged.
+
+**What is accepted.** A small subset of the unified-diff format: an optional `diff --git a/<path>
+b/<path>` line, an optional `index` line, an optional `new file mode 100644` or `deleted file mode
+100644`, a `--- a/<path>` or `--- /dev/null` line, a `+++ b/<path>` or `+++ /dev/null` line, and one
+or more `@@ -start,count +start,count @@` hunks whose bodies use `' '`, `'-'` and `'+'` origins and
+the `\ No newline at end of file` marker. That is the whole language. Both sides of a section must
+name the same path, so a section either modifies, creates or deletes exactly one file.
+
+**What is refused, and when.** Refusals fall into three groups, and each is refused as early as it
+can be, so a refusal never depends on more than it has to.
+
+Refused from the text alone, before any file is opened:
+
+- a patch that is blank, describes no file, or has a section with no hunks;
+- a patch larger than the raw budget below;
+- a patch holding an unpaired surrogate, which denotes no character and so is not text any file
+  could hold;
+- a path that leaves the workspace or means two different things on two platforms: `..` or `.` as a
+  segment, a leading `/`, a `//` UNC prefix, a rooted path or a drive letter, a backslash, a colon
+  (which is both a drive separator and an NTFS alternate data stream), an empty or trailing segment,
+  or a segment ending in a dot, which Windows strips when it opens the file;
+- a path holding anything outside printable ASCII, `U+0021` to `U+007E`. The reason paths are
+  checked at all is that a human approves a diff by reading it, so the path a reviewer reads must be
+  the path a filesystem opens. A NUL truncates the name for anything reaching a C string; control
+  characters and spaces hide or move what follows them; *format* characters, which `char.IsControl`
+  does not cover, are worse than invisible, since a bidirectional override reverses the segment a
+  reviewer sees while leaving the bytes that are opened untouched (the Trojan Source shape) and a
+  zero-width space or byte-order mark is a segment boundary nobody can see; and fullwidth forms are
+  homoglyphs of the separator, the escape and the drive separator. Refusing the whole range refuses
+  the next homoglyph too. The cost is a repository whose file names are not ASCII, which this cannot
+  patch, and that is a deliberate trade;
+- a path holding one of `* ? " < > |`, which Windows rejects in a file name, refused on every
+  platform for the same reason the device names are;
+- a path naming a Windows device (`con`, `nul`, `com1` and the rest), refused on every platform so
+  that a patch cannot be admitted on Linux and refused on Windows;
+- a path deeper than the tree walk admits. Depth is a property of the text, so it is refused from
+  the text rather than by the walk that recomputes the identity afterwards, which would mean writing
+  the file, refusing the tree it produced and rolling the whole attempt back;
+- a path with a `.git` or `.gitmodules` segment, so a patch cannot write repository metadata,
+  declare a submodule, or reach into a nested repository the workspace already refused to copy;
+- a path that looks like key material or a credential file: `.env` and its suffixed forms, `.netrc`,
+  `.npmrc`, `.pgpass`, `.git-credentials`, `id_rsa` and the other private-key names, anything under
+  `.ssh`, `.aws`, `.gnupg` or `.docker`, and the `.pem`, `.key`, `.pfx`, `.p12`, `.cer`, `.crt`,
+  `.der`, `.jks`, `.keystore`, `.ppk` and `.asc` extensions. The list is specific and short: it is
+  not a general secret detector and is not the reason a patch is safe;
+- a path whose extension the source-read boundary would not read back. The extension set and the
+  size bound are read from the same options the excerpt reader runs under rather than restated, so
+  lowering either in configuration also lowers what a patch may leave behind and no change is made
+  that the evidence path could not then quote;
+- a rename, a copy, a mode change, a create asking for an executable file (`100755`), a symbolic
+  link (`120000`) or a submodule gitlink (`160000`), each refused by name rather than skipped, since
+  a parser that ignored the header would read a rename as a plain write to the destination;
+- a binary patch, whether announced as `GIT binary patch` or as `Binary files ... differ`;
+- a hunk whose body holds a different number of lines than its header declares, whose origin
+  character is not one of the three, whose body line is empty rather than a single space, or whose
+  no-newline marker is misspelled, comes before any line it could attach to, or is followed by
+  another line on the side it closed;
+- a hunk header naming a base line beyond what an admissible file could hold. A file the patch may
+  touch is bounded, and a file of *n* bytes holds at most *n* lines, so a larger start describes a
+  file this would refuse to open. It is also what keeps every later sum of a start and a count
+  inside a 32-bit integer: an unbounded start makes `start + count` wrap negative, and a negative
+  offset walks off the front of a list rather than being caught by a bound written to catch walking
+  off the end;
+- two hunks of one file that cover the same base lines or run backwards, and a hunk header whose
+  result start contradicts what the hunks before it added or removed;
+- two sections naming the same path, compared case-insensitively on every platform. Their line
+  numbers would be ambiguous, since the second could address the base or the file the first
+  produced, and the format does not say which;
+- two sections where one path is a directory prefix of the other, compared the same way. Such a
+  patch asks for one name to be a file and a directory at once, which is coherent in one order and
+  destroys a file in the other, and the format does not say which order applies;
+- a patch changing more files, or a section carrying more hunks, than the bounds admit.
+
+Refused once the base can be read, still before anything is written:
+
+- a target reached through a symlink, junction or any other reparse point;
+- a path segment that differs from the name the workspace holds only in case. `File.Exists` answers
+  a different question on each platform, so it cannot be the whole of a lookup that has to mean one
+  thing: with `lib/a.cs` in the workspace, a section naming `lib/A.cs` modified the existing file on
+  Windows and was refused as missing on Linux, and a section creating it was refused as existing on
+  Windows and produced a second file on Linux. On Windows the record was wrong as well as divergent,
+  since the plan named the path the patch wrote while the identity walk afterwards reported the name
+  the disk held. The comparison is therefore made explicitly and in the same direction everywhere:
+  an entry matching the segment exactly is the segment, and an entry matching it only ignoring case
+  is a refusal wherever the worker runs. It is the same commitment the duplicate-path rule makes
+  about the patch, applied to the workspace;
+- a modification or a deletion of a file the workspace does not have. Treating a missing delete
+  target as already done would let a patch claim to have removed something it never saw;
+- a creation of a file the workspace already has. A create quotes no base line, so overwriting there
+  would be the one way a change could reach a file without passing the context check at all;
+- a target that is not decodable text, by the same NUL and strict-UTF-8 test the excerpt reader
+  applies;
+- a target larger, before or after the change, than the excerpt reader would open;
+- context or removed lines that do not match the base byte for byte at exactly the offset the header
+  named. There is no fuzz, no offset search and no whitespace tolerance: a patch that does not match
+  where it claims to match was generated against a different base;
+- a hunk that would change whether the file ends with a terminator without saying so, including a
+  patch that appends to a file that ends without one. A carriage return is part of a line's bytes, so
+  a patch generated against a checkout with one line ending does not apply to a checkout with the
+  other, which is the same rule the tree identity follows;
+- a no-newline marker on a hunk that stops short of the end of the file, on whichever side carries
+  it. The marker is a claim about a file's last byte, and a hunk that does not reach the last byte
+  is in no position to make one. Whether a hunk reaches the end is a fact about the base rather than
+  about the text, which is why this one refusal about the marker sits here and the rest sit above;
+- a deletion whose hunk did not quote the whole file.
+
+**What a body line may hold.** None of the path rules above apply to a body line. A body line may
+carry a bidirectional override, a zero-width space, a byte-order mark, or anything else the file it
+quotes may carry, and that is deliberate. Its whole job is to be the file's exact bytes, which is
+what the context check compares and what the tree identity is computed over; filtering it would make
+an ordinary file with a byte-order mark unpatchable. The two cases also differ in what goes wrong. A
+hostile path makes a reviewer approve a change to a file they did not see, which nothing downstream
+can recover from, so it is refused. A hostile body line makes a reviewer misread code whose bytes are
+exactly the bytes that land, which is a rendering problem and an obligation on the boundary that
+shows a diff to a human, a boundary that does not exist yet: **it must render format and
+bidirectional characters visibly.** Refusing them in the parser would also be theatre, since a patch
+can hide meaning in ways no parser can judge.
+
+**The raw budget.** The action-payload ceiling is 64 KiB of *canonical JSON*, not of patch text. The
+canonical writer escapes every non-ASCII character and several ASCII ones, `<` and `>` among them, to
+a six-byte `\uXXXX` form, so one raw byte can become six and no sequence does worse. Reserving 1 KiB
+for the fields that travel beside the patch, and two bytes for the quotes around it, leaves
+`(65536 - 1024 - 2) / 6 = 10751` raw UTF-8 bytes. A remediation patch is a small targeted change or
+it is refused, and a unit test carries a worst-case patch of exactly that size through the same
+canonical writer the approval contract uses to prove the arithmetic rather than assert it.
+
+**All or nothing.** Every decision that can be made against the base is made before the first byte is
+written, so a patch that fails on its fifth file is refused with the workspace untouched. Writing is
+then the only step that can still fail, for reasons no inspection predicts, and the first failure
+undoes the commit: it deletes what was created, removes the directories the commit made, and only
+then puts back what was replaced. The order is not incidental. A commit can delete `lib/A.cs` and
+then create `lib/A.cs/C.cs`, which makes that name a directory; restoring files first would write
+`lib/A.cs` onto a directory, fail, and then remove the now-empty directory, leaving nothing at all
+where a file used to be while the caller was told the patch was refused. The parser also refuses a
+patch whose paths nest like that, which is the better place to refuse it, but the rollback does not
+depend on that rule holding.
+
+**A rollback that failed says so.** Restoring is best effort, because a filesystem that refused a
+write may refuse the write that undoes it. Every step therefore checks what it left behind rather
+than assuming a caught exception meant nothing changed: a creation is undone when the path holds no
+file, a replacement when the file holds the bytes it held. When any step cannot get there the
+outcome is `source_patch_rollback_failed` rather than `source_patch_unavailable`, because "nothing
+was applied and the workspace is as it was" and "nothing was applied and the workspace is something
+else" are different things to tell a caller. On the second, the workspace must be discarded rather
+than read, identified or reused. A cancelled attempt reports neither, since a cancellation carries no
+outcome, so a caller that cancels must discard the workspace as well.
+
+**Discarding the workspace, and what that does not cover.** The workspace is disposable, so a caller
+that sees a refusal it did not expect can discard the whole directory, which is the guarantee that
+does not depend on the filesystem cooperating. Nothing is written outside the workspace, with two
+qualifications. The checks that establish that are made when the plan is built and the writes happen
+afterwards, so a workspace that something else is changing underneath is outside what they promise; a
+concurrent writer inside the workspace is outside the threat model rather than impossible. And the
+workspace root itself is never link-resolved: every segment below it is checked for reparse points,
+but if the root a host configured is reached through one, discarding the directory remains all a
+caller can do, and where those bytes physically live was decided by the host's configuration rather
+than here.
+
+**What the caller must check that this does not.** A hunk that consumes no base line quotes no base
+line, so it matches at its offset in *any* file: nothing in an insert-only patch binds it to the tree
+it was generated against, and the context check has nothing to compare. The base tree identity is the
+designed answer to that, and enforcing it is the caller's obligation, not the applier's. **A caller
+applying an approved patch must compare the identity of the workspace it is about to change against
+the identity the patch was approved for, and refuse when they differ.** Without that check, an
+approved diff can be applied to a tree its approver never saw.
+
+**What the result identity proves.** After a patch applies, the workspace is walked again and its
+tree identity recomputed from the bytes on disk, under the same admission rules the base identity
+used, rather than derived from what the applier believes it wrote. A record can therefore carry the
+base a change applied to and the result it produced, and both are statements about a tree that
+existed. What the identity does not prove is unchanged from the workspace boundary above: it is not a
+commit id, and it says nothing about whether the change is correct, builds or passes anything,
+because nothing here runs a test.
+
 ## Redaction And Pseudonymization
 
 Redaction runs at two boundaries, not one. Incoming signals are redacted during intake, before the
