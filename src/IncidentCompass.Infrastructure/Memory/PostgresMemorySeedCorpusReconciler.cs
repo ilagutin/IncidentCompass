@@ -36,6 +36,8 @@ internal static class PostgresMemorySeedCorpusReconciler
             }
 
             await DeactivateMissingAsync(connection, transaction, timestamp, corpus, cancellationToken);
+            await PostgresMemoryCorpusGenerationWriter.PublishAsync(
+                connection, transaction, timestamp, corpus, cancellationToken);
             await transaction.CommitAsync(cancellationToken);
         }
         catch
@@ -91,17 +93,21 @@ internal static class PostgresMemorySeedCorpusReconciler
         MemorySeedEntry entry,
         CancellationToken cancellationToken)
     {
-        if (await PostgresMemorySeedWriter.CurrentSeedMatchesAsync(
-            connection, transaction, corpus.Owner, entry.Item, cancellationToken))
+        // Chunks decide the path, not the content hash. A caller that supplied chunks has already
+        // embedded this seed under the corpus identity being published, and a rebuild supplies
+        // them for every file precisely because nothing about the files changed: what changed is
+        // the vector space, which no content comparison can see.
+        if (entry.Chunks.Count == 0)
         {
+            if (!await PostgresMemorySeedWriter.CurrentSeedMatchesAsync(
+                connection, transaction, corpus.Owner, entry.Item, cancellationToken))
+            {
+                throw new InvalidOperationException($"Memory seed '{entry.Item.Source}' changed during reconciliation.");
+            }
+
             await PostgresMemorySeedItemWriter.MarkCurrentAsync(
                 connection, transaction, corpus, entry.Item.Source, timestamp, cancellationToken);
             return;
-        }
-
-        if (entry.Chunks.Count == 0)
-        {
-            throw new InvalidOperationException($"Memory seed '{entry.Item.Source}' changed during reconciliation.");
         }
 
         var itemId = await PostgresMemorySeedItemWriter.FindSeedItemIdAsync(

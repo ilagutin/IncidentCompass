@@ -29,7 +29,8 @@ credential travels on an Application contract. See `docs/model-gateway.md`, "Pro
     and post-report evaluation and action approval contracts and use cases.
   - `Intake/`: source normalization, input limits, redaction, fingerprinting, fault grouping, triage-job creation, grounded intake artifacts for ingestion and raw signal payload compaction.
   - `Investigation/`: Worker job claim/runtime seams that rehydrate claimed jobs by config hash and hand them to the governed investigation processor, plus reaping of artifacts belonging to an attempt that is no longer a job's current attempt.
-  - `Memory/`: memory search contracts, seed records and the governed `memory_search` worker tool.
+  - `Memory/`: memory search contracts, seed records, corpus generation identity and state, and the
+    governed `memory_search` worker tool.
   - `Notifications/`: ordered notification routing and the non-secret Telegram tool descriptor.
     The Worker-owned workflow accepts report identity and a configured route id, not recipient or
     message text.
@@ -144,6 +145,10 @@ Intake, the ledger, reports and the action outbox are added by numbered migratio
 - `030-model-price-administration.sql` adds the rails around `ai_model_pricing`, the one table whose
   only writer is an operator at a prompt: required author, database-stamped change time, no
   overlapping intervals for one provider and model, and no deletes.
+- `031-memory-corpus-generations.sql` adds `memory_corpus_generations`, which records the embedding
+  route behind each published corpus and allows one current generation per tenant and seed owner. It
+  backfills only an owner whose active items already share one generation and one vector space,
+  because anything else is genuinely ambiguous and is reported rather than guessed at.
 
 ## Memory Worker
 
@@ -162,6 +167,21 @@ Runtime resync is opt-in, single-flight and cancellation-aware. It persists only
 generation and a sanitized error code by seed tenant and owner for the memory-sync health status, so
 the API can read the Worker-persisted synchronization snapshot across process boundaries. It is not
 a Worker liveness probe.
+
+Each generation records the embedding route it was built under in
+`incidentcompass.memory_corpus_generations`: the configured route id and provider id, the adapter
+name, the model and the vector width, plus item and chunk counts. The row is written inside the
+reconciliation transaction and a partial unique index allows one current generation per tenant and
+owner, so a generation becomes current only once every embedding and every row behind it exists.
+Retrieval filters candidates by embedding provider, model and dimensions, so a corpus built under a
+different route matches nothing; the recorded identity is what makes that a reported state instead
+of an empty result set. Provider id is compared as well as model, because every OpenAI-compatible
+provider reports one adapter name and a route moved to a second embedding server would otherwise be
+invisible. A route change is detected before any embedding call: an incremental pass publishes
+nothing, leaves the previous corpus current and retrievable, and reports
+`memory_embedding_route_changed`. Re-embedding the whole corpus is an operator action, run as
+`memory rebuild` on either host; `memory status` and `GET /api/v1/health/memory-corpus` report the
+same bounded route identity and counts.
 
 The manual `CurrentReleases` map is the single per-service release marker: memory retrieval labels
 matching evidence as current, stale, unversioned or service-mismatched before it reaches the model.

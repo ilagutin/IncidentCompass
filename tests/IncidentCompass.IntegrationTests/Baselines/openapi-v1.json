@@ -104,6 +104,27 @@
         }
       }
     },
+    "/api/v1/health/memory-corpus": {
+      "get": {
+        "tags": [
+          "v1"
+        ],
+        "summary": "Metadata-only memory corpus status: configured embedding route, the route that built the active corpus, and counts.",
+        "operationId": "GetMemoryCorpusStatus",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryCorpusSnapshot"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/users/me": {
       "get": {
         "tags": [
@@ -1819,6 +1840,123 @@
       },
       "JsonElement": {},
       "JsonNode": {},
+      "MemoryCorpusSnapshot": {
+        "required": [
+          "tenantId",
+          "owner",
+          "state",
+          "rebuildRequired",
+          "configuredRouteId",
+          "configuredProviderId",
+          "configuredModel",
+          "activeGeneration",
+          "activeRouteId",
+          "activeProviderId",
+          "activeEmbeddingProvider",
+          "activeEmbeddingModel",
+          "activeEmbeddingDimensions",
+          "activeItemCount",
+          "activeChunkCount",
+          "activeEmbeddingIdentityCount",
+          "publishedAtUtc"
+        ],
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "string"
+          },
+          "owner": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "rebuildRequired": {
+            "type": "boolean"
+          },
+          "configuredRouteId": {
+            "type": "string"
+          },
+          "configuredProviderId": {
+            "type": "string"
+          },
+          "configuredModel": {
+            "type": "string"
+          },
+          "activeGeneration": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "uuid"
+          },
+          "activeRouteId": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "activeProviderId": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "activeEmbeddingProvider": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "activeEmbeddingModel": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "activeEmbeddingDimensions": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "activeItemCount": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "activeChunkCount": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "activeEmbeddingIdentityCount": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "publishedAtUtc": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          }
+        },
+        "description": "The metadata-only view of one owner\u0027s memory corpus: what route it is configured to use, what\r\nroute actually built it, how much of it there is, and whether those agree."
+      },
       "MemorySeedSyncSnapshot": {
         "required": [
           "enabled",

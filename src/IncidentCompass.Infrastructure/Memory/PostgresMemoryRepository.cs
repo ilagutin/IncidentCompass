@@ -32,6 +32,15 @@ internal sealed class PostgresMemoryRepository(
             () => PostgresMemorySeedWriter.ReconcileAsync(
                 dataSourceProvider, timeProvider.GetUtcNow(), corpus, cancellationToken));
 
+    public Task<MemoryCorpusInventory> GetCorpusInventoryAsync(
+        string tenantId,
+        string owner,
+        CancellationToken cancellationToken) =>
+        PostgresOperation.ExecuteAsync(
+            "read memory corpus inventory",
+            () => PostgresMemoryCorpusInventoryReader.ReadAsync(
+                dataSourceProvider, tenantId, owner, cancellationToken));
+
     private async Task<IReadOnlyList<MemorySearchMatch>> SearchCoreAsync(
         MemorySearchRequest request,
         CancellationToken cancellationToken)

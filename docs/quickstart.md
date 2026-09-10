@@ -248,6 +248,34 @@ The default is startup-only synchronization. To apply file edits and removals wi
 `IncidentCompass__Memory__Seed__RuntimeResyncIntervalSeconds` value from 1 through 86400. The metadata-only
 status is available at `GET /api/v1/health/memory-sync`. The Worker persists this metadata by the configured memory seed tenant and owner, so the API reports the Worker-persisted synchronization snapshot rather than its own local singleton. It is not a Worker liveness probe. When hosts are configured separately, they must use the same memory seed tenant and owner; the standard Compose file supplies the shared values. Seeding is idempotent for the same owner/source/content hash/version.
 
+### Changing The Embedding Route
+
+A seeded corpus belongs to the embedding route that built it. `memory_search` filters candidates by
+the query embedding's provider, model and dimensions, so changing `INCIDENTCOMPASS_EMBEDDINGS_MODEL`,
+pointing `memory-embed` at a different provider entry, or switching the host between the mock and
+OpenAI-compatible embedding adapters leaves the existing corpus unreachable until it is re-embedded.
+
+Startup does not re-embed it for you. A pass that finds the configured route no longer matches the
+corpus publishes nothing, leaves every previously seeded item active and retrievable under the route
+that built it, and reports `memory_embedding_route_changed` on `GET /api/v1/health/memory-sync` with
+a degraded `memory_seed_sync` health check. `GET /api/v1/health/memory-corpus` shows the configured
+route beside the route the active corpus was built under, with item and chunk counts.
+
+Re-embedding is an explicit operator action on either host, and takes the same memory seed settings
+as seeding does:
+
+~~~powershell
+dotnet run --project src/IncidentCompass.Worker -- memory status
+dotnet run --project src/IncidentCompass.Worker -- memory rebuild
+~~~
+
+`memory status` exits 1 when a rebuild is needed and 0 otherwise. `memory rebuild` re-embeds every
+reviewed file under the configured route and publishes the result as one new generation: it becomes
+current only after every embedding and every database write has succeeded, so a provider failure or
+a cancelled run leaves the previous corpus current and searchable. A rebuild and a concurrent
+startup synchronization serialize on the same owner-scoped corpus lock, and a rebuild never touches
+another seed owner's corpus.
+
 Run the API:
 
 ~~~powershell

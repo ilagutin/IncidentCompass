@@ -1,6 +1,7 @@
 using IncidentCompass.Application;
 using IncidentCompass.Infrastructure;
 using IncidentCompass.Infrastructure.Configuration;
+using IncidentCompass.Infrastructure.Memory;
 
 namespace IncidentCompass.Worker;
 
@@ -25,6 +26,13 @@ internal static class WorkerHostEntryPoint
         if (validationExitCode.HasValue)
         {
             Environment.ExitCode = validationExitCode.Value;
+            return;
+        }
+
+        var memoryExitCode = await MemoryCorpusCommand.RunIfRequestedAsync(args, host.Services);
+        if (memoryExitCode.HasValue)
+        {
+            Environment.ExitCode = memoryExitCode.Value;
             return;
         }
 

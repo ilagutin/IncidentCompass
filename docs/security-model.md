@@ -26,8 +26,11 @@ sets `IncidentCompass:ApiKeyAuth:Enabled` to `false`, with an empty `Credentials
 environment-specific appsettings file turns it on. A deployment that wants the shared-key boundary
 must explicitly set `Enabled` to `true` and supply credentials through host configuration. When `Enabled` is true, a fallback authorization policy
 protects all current and future endpoints unless they are explicitly anonymous. The complete
-anonymous allowlist is `/health`, `/api/v1/health`, `/api/v1/health/memory-sync` and the
-Development-only OpenAPI document. Manual intake, incident-data reads, `users/me` and native OTLP
+anonymous allowlist is `/health`, `/api/v1/health`, `/api/v1/health/memory-sync`,
+`/api/v1/health/memory-corpus` and the Development-only OpenAPI document. The memory-corpus route
+carries the same class of content as the memory-sync route: configured route and provider
+identifiers, a model name, a vector width, counts and a generation id. It reaches no document text,
+no chunk text, no vector, no provider endpoint and no credential. Manual intake, incident-data reads, `users/me` and native OTLP
 trace/log ingestion all use the same boundary.
 
 Action approval routes use a dedicated operator policy. The complete

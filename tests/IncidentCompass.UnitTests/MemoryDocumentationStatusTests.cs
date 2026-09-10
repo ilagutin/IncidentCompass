@@ -176,5 +176,13 @@ public sealed class MemoryDocumentationStatusTests
         {
             throw new NotSupportedException();
         }
+
+        public Task<MemoryCorpusInventory> GetCorpusInventoryAsync(
+            string tenantId,
+            string owner,
+            CancellationToken cancellationToken)
+        {
+            throw new NotSupportedException();
+        }
     }
 }

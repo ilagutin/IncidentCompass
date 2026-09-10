@@ -248,5 +248,10 @@ public sealed class MemorySearchRerankerTests
         public Task ReconcileSeedCorpusAsync(
             MemorySeedCorpus corpus,
             CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<MemoryCorpusInventory> GetCorpusInventoryAsync(
+            string tenantId,
+            string owner,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 }

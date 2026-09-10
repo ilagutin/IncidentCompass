@@ -475,6 +475,11 @@ the stable database identity; a content change updates and re-embeds that item, 
 deactivated from retrieval. This keeps provenance simple and prevents an edited file from leaving a
 second stale live item. Runtime resync is opt-in and bounded; operators may enable it for reviewed file changes without adding a memory write API. The default remains startup-only synchronization.
 
+Whole-corpus re-embedding stays on the same side of that line. It is a console command on the
+existing hosts, `memory rebuild`, rather than an HTTP endpoint, because it is a host-wide
+maintenance action with no tenant-scoped caller behind it and a write API for it would need an
+administrative identity this system does not have.
+
 ## Documentation Fit Is Evidence Classification
 
 `CurrentReleases` is a manually maintained per-service marker in the snapshotted triage configuration.
@@ -486,7 +491,33 @@ model.
 
 ## Memory Embedding Model Changes Require Re-Embedding
 
-Memory retrieval filters by tenant, embedding provider, embedding model and embedding dimensions. This avoids mixing incompatible corpora, but it also means changing the embedding provider or model makes existing memory chunks silently unretrievable until they are re-embedded. Changing the configured embedding provider or model should be paired with a full memory re-seed or migration.
+Memory retrieval filters by tenant, embedding provider, embedding model and embedding dimensions.
+That avoids mixing incompatible corpora, and it also means changing the embedding provider or model
+makes an existing corpus unretrievable until it is re-embedded. Re-embedding is not automatic: every
+reviewed file has to go back through the provider, which is an operator's decision about cost and
+timing rather than something a restart should take on its own.
+
+What changed is that the corpus no longer goes quiet about it. Each published generation records the
+route that built it, a synchronization pass compares that against the configured route before it
+requests a single embedding, and a mismatch leaves the previous corpus current and reports
+`memory_embedding_route_changed` through the memory-sync health status and
+`GET /api/v1/health/memory-corpus`. `memory rebuild` on either host performs the re-embedding and
+publishes one new generation transactionally.
+
+Two limits are worth stating. The pre-check sees only what configuration declares, a provider
+identifier and a model name, so a provider that serves different weights under an unchanged model
+name is not detected until something is re-embedded and the returned vector shape is compared. And a
+corpus seeded before generations recorded a provider identifier is reported as `Unrecorded` rather
+than assigned one, because attributing it to the currently configured provider would assert
+something nobody observed; a rebuild records it.
+
+Generation identity is owner-scoped, and retrieval is tenant-scoped. One current generation per seed
+owner is a database invariant, and the reconciliation transaction refuses to publish a corpus that
+would leave its own owner holding two vector spaces. It does not arbitrate between owners: two seed
+owners in one tenant that use different providers with the same adapter name, model name and vector
+width would both be searched. The shipped configuration has one owner per tenant, and separating
+owners further would mean scoping retrieval by owner, which is a change to what a tenant's memory
+means rather than a fix to this check.
 
 ## Bounded Memory Reranking Instead of Database Full-Text Search
 

@@ -317,6 +317,8 @@ public sealed class MemorySearchTests(PostgresRepositoryFixture postgres)
                 "local",
                 "test",
                 Guid.NewGuid(),
+                new MemoryCorpusIdentity(
+                    "memory-embed", "local-oai", embedding.Provider, embedding.Model, embedding.Vector.Count),
                 new HashSet<string>(StringComparer.Ordinal) { "samples" },
                 [new MemorySeedEntry(item, [chunk])]),
             TestContext.Current.CancellationToken);

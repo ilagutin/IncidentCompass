@@ -101,6 +101,12 @@ for audit history but no longer participate in `memory_search`. Git history rema
 review path; there is no memory write API. Runtime resync is disabled by default; enable it only with a
 bounded interval when a long-running local corpus should follow reviewed file changes.
 
+Changing the embedding model or provider is the one case a file change cannot cover, because the
+files stay identical while the vector space moves. Synchronization notices and stops rather than
+publishing half a corpus: the previous one stays searchable and the memory-sync health status reports
+`memory_embedding_route_changed`. Run `memory rebuild` on either host to re-embed everything under
+the new route, and `memory status` to see the configured route beside the one that built the corpus.
+
 ## Model Configuration
 
 Default Docker Compose values point at a host-side OpenAI-compatible server:

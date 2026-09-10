@@ -257,6 +257,12 @@ public sealed class MemoryOnlyCompositionTests
         public Task ReconcileSeedCorpusAsync(
             MemorySeedCorpus corpus,
             CancellationToken cancellationToken) => Task.CompletedTask;
+
+        public Task<MemoryCorpusInventory> GetCorpusInventoryAsync(
+            string tenantId,
+            string owner,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(new MemoryCorpusInventory(null, [], 0, 0));
     }
 
 

@@ -79,7 +79,10 @@ action dispatcher. PostgreSQL action approval, provenance, claim, recovery and t
 implementations stay under `Infrastructure/Governance/ActionApprovals/`.
 The single live tool rule engine and the immediate/action capability contracts live under
 `Governance/Tools/`; investigation-only execution orchestration stays under `Investigation/Jobs/`.
-`Memory/` contains memory_search contracts, seed records and retrieval orchestration.
+`Memory/` contains memory_search contracts, seed records, retrieval orchestration and the corpus
+generation identity plus the pure evaluator that decides what a corpus is relative to the configured
+embedding route. Seed scanning, the synchronization pass, the operator `memory status` and
+`memory rebuild` commands and the PostgreSQL generation writer stay under `Infrastructure/Memory/`.
 Payload retention is split the same way the data is: `Intake/Retention/` owns compaction of raw
 signal payloads and `Investigation/Retention/` owns reaping of non-current-attempt artifacts, each a
 persistence port plus the bounded callable operation that turns the shared `RetentionOptions` window

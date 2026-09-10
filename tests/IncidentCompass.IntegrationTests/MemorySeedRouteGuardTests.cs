@@ -142,6 +142,11 @@ public sealed class MemorySeedRouteGuardTests(PostgresRepositoryFixture postgres
             MemorySeedCorpus corpus,
             CancellationToken cancellationToken) => Fail();
 
+        public Task<MemoryCorpusInventory> GetCorpusInventoryAsync(
+            string tenantId,
+            string owner,
+            CancellationToken cancellationToken) => Fail<MemoryCorpusInventory>();
+
         private Task Fail()
         {
             CallCount++;
