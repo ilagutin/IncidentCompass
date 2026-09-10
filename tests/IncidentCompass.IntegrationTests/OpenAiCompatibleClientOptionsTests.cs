@@ -174,6 +174,33 @@ public sealed class OpenAiCompatibleClientOptionsTests
         Assert.True(options.IsValid());
     }
 
+    [Fact]
+    public void EmbeddingClientOptions_DefaultsRetryDelayCeilingToFiveSeconds()
+    {
+        var options = new OpenAiCompatibleEmbeddingClientOptions();
+
+        Assert.Equal(5, options.MaxRetryDelaySeconds);
+    }
+
+    [Theory]
+    [InlineData(0, false)]
+    [InlineData(-1, false)]
+    [InlineData(3601, false)]
+    [InlineData(1, true)]
+    [InlineData(3600, true)]
+    public void EmbeddingClientOptions_ValidatesRetryDelayCeilingLikeGeneration(
+        int maxRetryDelaySeconds,
+        bool expected)
+    {
+        var options = new OpenAiCompatibleEmbeddingClientOptions
+        {
+            ApiKey = "test-api-key",
+            MaxRetryDelaySeconds = maxRetryDelaySeconds
+        };
+
+        Assert.Equal(expected, options.IsValid());
+    }
+
     [Theory]
     [InlineData("/v1/chat/completions", "https://api.openai.com/v1/chat/completions")]
     [InlineData("v1/chat/completions", "https://api.openai.com/v1/chat/completions")]

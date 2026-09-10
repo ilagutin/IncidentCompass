@@ -134,6 +134,7 @@ dotnet test --solution IncidentCompass.slnx
 dotnet format IncidentCompass.slnx --verify-no-changes --verbosity minimal
 powershell -ExecutionPolicy Bypass -File scripts\package-vulnerability-gate.ps1
 powershell -ExecutionPolicy Bypass -File scripts\code-organization-gate.ps1
+powershell -ExecutionPolicy Bypass -File scripts\internal-reference-gate.ps1
 ```
 
 After changing a package version in `Directory.Packages.props`, regenerate every lock file with

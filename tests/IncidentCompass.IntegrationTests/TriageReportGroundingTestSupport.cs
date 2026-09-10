@@ -91,7 +91,7 @@ internal static class TriageReportGroundingTestSupport
                 prefix + "-svc-" + unique,
                 "prod",
                 DateTimeOffset.UtcNow,
-                new TriageReportTesterAttributes("TimeoutException", prefix + " timeout " + unique, "/phase5")),
+                new TriageReportTesterAttributes("TimeoutException", prefix + " timeout " + unique, "/report-grounding")),
             TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<TriageReportIngestResponse>(TestContext.Current.CancellationToken);

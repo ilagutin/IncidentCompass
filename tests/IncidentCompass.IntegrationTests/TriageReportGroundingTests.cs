@@ -149,7 +149,7 @@ public sealed class TriageReportGroundingTests(PostgresRepositoryFixture postgre
             "quote-keep-svc-" + unique,
             "prod",
             DateTimeOffset.UtcNow,
-            new TriageReportTesterAttributes("TimeoutException", quote, "/phase5")));
+            new TriageReportTesterAttributes("TimeoutException", quote, "/report-grounding")));
         Assert.NotNull(ingested.JobId);
 
         await RunClaimedJobAsync(scope, ingested.JobId.Value, "worker-quote-keep", maxAttempts: 1);

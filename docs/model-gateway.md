@@ -43,14 +43,18 @@ Implemented adapters:
 
 Application use cases call `IEmbeddingClient` through the Application layer. The OpenAI-compatible provider is the normal local/demo runtime path and uses the configured embeddings endpoint, model, timeout and retry settings. The mock provider is for tests and explicit mock-only checks.
 
-Embedding requests retain their idempotent retry boundary: HTTP 408, 429 and every 5xx response,
-including 501/505, plus configured timeouts and transport failures are retried up to the embedding
-retry limit. Terminal embedding failures are then cause-classified. HTTP 429 and retryable 5xx
-responses other than 501/505 and positively safe pre-dispatch transport failures are `Unavailable`;
-HTTP 408 and an exhausted configured timeout are `GenerationTimeout`; HTTP 501/505 and
-configuration errors are `RejectedRequest`; other exhausted transport failures, including
-connection reset and response-ended failures, are `TransportFailure` with `transport_error`; and
-invalid JSON or an empty vector is `InvalidResponse`. Caller cancellation propagates unchanged.
+Embedding requests keep a wider idempotent retry boundary than chat generation, because an embedding
+request has no side effect: HTTP 408, 429 and every 5xx response except 501/505, plus configured
+timeouts and transport failures, are retried up to the embedding retry limit. HTTP 501 and 505 are
+not retried, on either path. They describe a request the endpoint will never accept, so replaying it
+only spends attempts and delay before the same terminal answer. The retry predicate and the terminal
+classification are derived from one rule, so a status classified as `RejectedRequest` is never also
+replayed. Terminal embedding failures are cause-classified. HTTP 429 and retryable 5xx responses and
+positively safe pre-dispatch transport failures are `Unavailable`; HTTP 408 and an exhausted
+configured timeout are `GenerationTimeout`; HTTP 501/505, other 4xx responses and configuration
+errors are `RejectedRequest`; other exhausted transport failures, including connection reset and
+response-ended failures, are `TransportFailure` with `transport_error`; and invalid JSON or an empty
+vector is `InvalidResponse`. Caller cancellation propagates unchanged.
 
 For both OpenAI-compatible adapters, `TimeoutSeconds` bounds one HTTP attempt. The adapter owns that
 deadline through its linked cancellation token, including configured values up to 3600 seconds. The
@@ -71,9 +75,11 @@ into that call through linked cancellation.
   response-ended failure, generic connection error or another HTTP response is not automatically
   replayed.
 - `Retry-After` delta and date values are honored for retryable responses up to
-  the chat-generation `MaxRetryDelaySeconds`. That ceiling defaults to 5 seconds, is configurable
-  from 1 through 3600 seconds and also caps the exponential fallback used when the header is absent
-  or no longer in the future. HTTP 501/505 responses are not retried for generation.
+  `MaxRetryDelaySeconds`. Chat generation and embeddings each carry their own ceiling under their own
+  configuration section. Both default to 5 seconds, are configurable from 1 through 3600 seconds and
+  also cap the exponential fallback used when the header is absent or no longer in the future.
+- HTTP 501/505 responses are not retried on either path, because both paths classify them as
+  `RejectedRequest`.
 - Token usage is captured when returned by the provider. Budget accounting uses provider usage when present and a compact backend estimate otherwise, recording the source in the ledger.
 - Provider errors are normalized into the application-owned failure kinds `Unavailable`,
   `RejectedRequest`, `GenerationTimeout`, `OutputLimitReached`, `AmbiguousInterruption`,

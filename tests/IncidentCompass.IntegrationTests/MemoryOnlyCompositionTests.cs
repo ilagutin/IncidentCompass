@@ -35,11 +35,11 @@ public sealed class MemoryOnlyCompositionTests
             serviceProvider.GetRequiredService<MemoryOnlyUserContext>());
         services.AddSingleton<IBackgroundUserContext>(serviceProvider =>
             serviceProvider.GetRequiredService<MemoryOnlyUserContext>());
-        // IngestSignalCommandValidator (Phase 1 intake) depends on ITriageConfigurationRepository,
+        // IngestSignalCommandValidator (intake) depends on ITriageConfigurationRepository,
         // another Infrastructure-provided port. Same reasoning as above: supply a trivial
         // in-memory stand-in instead of pulling in IncidentCompass.Infrastructure.
         services.AddSingleton<ITriageConfigurationRepository, InMemoryTriageConfigurationRepository>();
-        // FaultGroupingCoordinator/GroundedFactsAssembler/GetFaultQueryHandler (Phase 1 intake)
+        // FaultGroupingCoordinator/GroundedFactsAssembler/GetFaultQueryHandler (intake)
         // depend on these repository ports, all Infrastructure-provided. Same reasoning as above:
         // supply trivial in-memory stand-ins instead of pulling in IncidentCompass.Infrastructure.
         services.AddSingleton<ISignalRepository, InMemorySignalRepository>();

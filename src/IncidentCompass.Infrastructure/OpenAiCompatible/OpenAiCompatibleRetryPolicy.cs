@@ -1,36 +1,7 @@
-using System.Net;
-
 namespace IncidentCompass.Infrastructure.OpenAiCompatible;
 
 internal sealed class OpenAiCompatibleRetryPolicy
 {
-    public bool ShouldRetry(HttpStatusCode statusCode)
-    {
-        return OpenAiCompatibleFailureClassifier.IsRetryableGenerationStatus(statusCode);
-    }
-
-    public bool ShouldRetryEmbedding(HttpStatusCode statusCode)
-    {
-        var statusCodeValue = (int)statusCode;
-        return statusCode is HttpStatusCode.RequestTimeout or
-               HttpStatusCode.TooManyRequests ||
-               statusCodeValue >= 500;
-    }
-
-    public Task DelayBeforeRetryAsync(
-        int retryBaseDelayMilliseconds,
-        HttpResponseMessage? response,
-        int attempt,
-        CancellationToken cancellationToken)
-    {
-        return DelayBeforeRetryAsync(
-            retryBaseDelayMilliseconds,
-            maxRetryDelaySeconds: 5,
-            response,
-            attempt,
-            cancellationToken);
-    }
-
     public Task DelayBeforeRetryAsync(
         int retryBaseDelayMilliseconds,
         int maxRetryDelaySeconds,

@@ -5,6 +5,7 @@ using IncidentCompass.Application.Core.Errors;
 using IncidentCompass.Application.Core.Resilience;
 using IncidentCompass.Infrastructure.Configuration;
 using IncidentCompass.Infrastructure.Embeddings.OpenAi;
+using IncidentCompass.Infrastructure.OpenAiCompatible;
 using Microsoft.Extensions.Options;
 
 namespace IncidentCompass.UnitTests;
@@ -16,18 +17,38 @@ public sealed class OpenAiCompatibleEmbeddingFailureTests
     [InlineData(HttpStatusCode.RequestTimeout, true)]
     [InlineData(HttpStatusCode.TooManyRequests, true)]
     [InlineData(HttpStatusCode.InternalServerError, true)]
-    [InlineData(HttpStatusCode.NotImplemented, true)]
+    [InlineData(HttpStatusCode.NotImplemented, false)]
     [InlineData(HttpStatusCode.BadGateway, true)]
     [InlineData(HttpStatusCode.ServiceUnavailable, true)]
     [InlineData(HttpStatusCode.GatewayTimeout, true)]
-    [InlineData(HttpStatusCode.HttpVersionNotSupported, true)]
-    public void ShouldRetry_PreservesIdempotentEmbeddingStatusSet(
+    [InlineData(HttpStatusCode.HttpVersionNotSupported, false)]
+    public void ShouldRetry_KeepsIdempotentEmbeddingStatusSetMinusRejectedRequests(
         HttpStatusCode statusCode,
         bool expected)
     {
         var retryPolicy = new OpenAiEmbeddingRetryPolicy();
 
         Assert.Equal(expected, retryPolicy.ShouldRetry(statusCode));
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.BadRequest)]
+    [InlineData(HttpStatusCode.RequestTimeout)]
+    [InlineData(HttpStatusCode.TooManyRequests)]
+    [InlineData(HttpStatusCode.InternalServerError)]
+    [InlineData(HttpStatusCode.NotImplemented)]
+    [InlineData(HttpStatusCode.BadGateway)]
+    [InlineData(HttpStatusCode.ServiceUnavailable)]
+    [InlineData(HttpStatusCode.GatewayTimeout)]
+    [InlineData(HttpStatusCode.HttpVersionNotSupported)]
+    public void ShouldRetry_NeverRetriesAStatusClassifiedAsRejectedRequest(HttpStatusCode statusCode)
+    {
+        var retryPolicy = new OpenAiEmbeddingRetryPolicy();
+
+        var classification = OpenAiCompatibleFailureClassifier.ClassifyEmbedding(statusCode);
+        var isRejected = classification == ProviderFailureKind.RejectedRequest;
+
+        Assert.Equal(!isRejected, retryPolicy.ShouldRetry(statusCode));
     }
 
     [Theory]

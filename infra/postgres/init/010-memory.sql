@@ -1,4 +1,4 @@
--- Phase 4 memory schema: seeded runbooks, known incidents and operational notes.
+-- Incident memory schema: seeded runbooks, known incidents and operational notes.
 
 CREATE TABLE IF NOT EXISTS incidentcompass.memory_items (
     id uuid PRIMARY KEY,

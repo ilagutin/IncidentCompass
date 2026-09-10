@@ -149,6 +149,10 @@ jobs:
         shell: pwsh
         run: ./scripts/code-organization-gate.ps1
 
+      - name: Internal reference gate
+        shell: pwsh
+        run: ./scripts/internal-reference-gate.ps1
+
       - name: Vulnerability scan
         shell: pwsh
         run: ./scripts/package-vulnerability-gate.ps1

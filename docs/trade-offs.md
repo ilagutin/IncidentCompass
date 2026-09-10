@@ -204,10 +204,13 @@ future date, capped by the configurable `MaxRetryDelaySeconds`, and otherwise us
 exponential delay. It does not retry 501/505, a generation timeout, reset, response-ended failure,
 generic connection error or other server errors. Redirects are disabled.
 
-Embedding creation keeps its broader legacy retry set because that operation is treated as
-idempotent: HTTP 408, 429 and all 5xx responses, including 501/505, plus configured timeouts and
-transport failures are retried up to its own limit. Once that budget is exhausted, 429 and retryable
-5xx responses other than 501/505 and the positively safe pre-dispatch failures above are
+Embedding creation keeps a broader retry set than generation because that operation is treated as
+idempotent: HTTP 408, 429 and all 5xx responses except 501/505, plus configured timeouts and
+transport failures, are retried up to its own limit and its own configurable `MaxRetryDelaySeconds`.
+501/505 are the one exclusion, because a request the endpoint will never accept is not made
+acceptable by repeating it; the retry predicate and the terminal classification are derived from one
+rule so the two can no longer disagree. Once the budget is exhausted, 429 and retryable 5xx responses
+and the positively safe pre-dispatch failures above are
 `Unavailable`; 408 and a configured timeout are `GenerationTimeout`; 501/505 and configuration
 errors are `RejectedRequest`; other exhausted transport failures are `TransportFailure` with
 `transport_error`; and invalid JSON or an empty vector is `InvalidResponse`. Caller cancellation
@@ -357,8 +360,13 @@ and job locking; this preserves one evaluator while serializing preconditions an
 Capability registration prevents configuration from turning a read into an external action, and
 external actions never enter the investigation model surface. The earlier standalone executor and
 audit repository were removed instead of retaining a parallel policy interpretation. The released
-`infra/postgres/init/006-tool-audit.sql` migration stays byte-identical and its legacy table remains
-unused so fresh and upgraded databases preserve migration integrity.
+`infra/postgres/init/006-tool-audit.sql` migration keeps its unused legacy table rather than being
+dropped or rewritten, so fresh and upgraded databases agree on the migration catalog. Its leading
+comment was edited once before 1.0, when internal tracker identifiers and roadmap labels were removed
+from the comments of six scripts (`004`, `006`, `007`, `008`, `009`, `010`). All six belong to catalog
+migration version 1, which the ledger records under a single checksum, so that edit changed that one
+checksum on purpose, and it was safe only because no durable database existed yet.
+`docs/versioning.md` records why, and the freeze holds from 0.4.0 forward.
 
 ## Read-Only Cost Rollup Uses Operator-Maintained Pricing
 

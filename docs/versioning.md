@@ -100,19 +100,33 @@ and warns in the job summary, it just costs that one approval click per pull req
 
 - Keep schema changes in source control.
 - Live ledger/report/memory/action-approval tables and pricing state use explicit raw SQL/init scripts and small Npgsql adapters while the persistence surface is still stabilizing.
-- Released migrations are append-only. `006-tool-audit.sql` remains byte-identical and creates an unused legacy table even though the retired standalone application stack no longer has an adapter.
+- Released migrations are append-only: a shipped script is never renumbered, reordered or given new
+  statements. `006-tool-audit.sql` still creates an unused legacy table even though the retired
+  standalone application stack no longer has an adapter.
+- The migration scripts are frozen as of the 0.4.0 release, not as of first publication. Before 1.0,
+  six scripts (`004`, `006`, `007`, `008`, `009`, `010`) had internal tracker identifiers and roadmap
+  labels removed from their comments. All six belong to catalog migration version 1, which the ledger
+  records under a single checksum, and the checksum covers comment text, so that edit changed that
+  one checksum on purpose. It was safe to make exactly once, because there is no deployed database,
+  no installation and no upgrade path from a running system: the only databases that existed were
+  local demo volumes, recreated by the documented `docker compose down -v` step in
+  `docs/quickstart.md`. The freeze holds from that release forward; the startup checksum guard
+  described below is what enforces it.
 - New applied and failed migration records use one platform-independent SHA-256 checksum. The input is
   each script name plus its decoded SQL encoded as UTF-8 after removing one leading decoded BOM and
   normalizing CRLF or bare CR line endings to LF. Script names, ordering and every other SQL character
   remain checksum-significant.
-- During a v0.3 database upgrade, the migrator also recognizes the exact historical LF and CRLF
-  checksums for the matching released catalog version and name. An applied legacy row is accepted as-is:
-  it is not rewritten and its migration is not rerun. This compatibility is a closed list for released
-  migrations, not permission to accept arbitrary alternate hashes.
+- The migrator also recognizes the CRLF form of the frozen catalog text for the matching version and
+  name, so a ledger written on Windows is not rewritten and its migration is not rerun. This
+  compatibility is a closed two-entry list per migration, LF and CRLF of the same frozen text, not
+  permission to accept arbitrary alternate hashes.
 - Before an upgrade, back up the database and keep the released migration files unchanged. A checksum,
-  name or version mismatch outside the closed compatibility set stops startup with a diagnostic. Restore
-  the released files or migration ledger from a trusted backup instead of editing SQL or durable rows in
-  place.
+  name or version mismatch outside the closed compatibility set stops startup with a diagnostic. From
+  0.4.0 forward the fix is to restore the released files or the migration ledger from a trusted backup,
+  not to edit either in place. The one edit described above was taken deliberately before 1.0, when no
+  durable database existed to protect; a maintainer who wants to change a shipped script after 0.4.0
+  adds a new numbered migration instead, and a repository check
+  (`scripts/internal-reference-gate.ps1`) keeps the removed labels from coming back.
 - `023-action-approvals-outbox.sql` is catalog migration version 14. Approval contract version 1 is
   stored per action and hashes the complete immutable review tuple with domain separation and
   length-prefixed fields. A future tuple change requires a new contract version and an additive

@@ -1,4 +1,4 @@
--- Phase 1 (Ingestion + Intake) schema: signals, faults, triage jobs, config snapshots, artifacts.
+-- Ingestion and intake schema: signals, faults, triage jobs, config snapshots, artifacts.
 --
 -- `faults.trigger_signal_id` and `signals.fault_id` reference each other. Tables are created in an
 -- order that avoids the circularity: `faults` first (trigger_signal_id as a plain column), then
@@ -120,7 +120,7 @@ CREATE TABLE IF NOT EXISTS incidentcompass.triage_artifacts (
     id uuid PRIMARY KEY,
     job_id uuid NOT NULL REFERENCES incidentcompass.triage_jobs (id),
     -- NULL = job-level (intake artifacts: TriggerSignal/NeighborSet/PriorReport, valid across retries);
-    -- set = attempt-level (worker artifacts, written starting Phase 2). NULL is a deliberate sentinel,
+    -- set = attempt-level (worker artifacts, written by the investigation Worker). NULL is a deliberate sentinel,
     -- not "unknown" - do not make this column NOT NULL.
     attempt integer NULL,
     kind text NOT NULL CHECK (kind IN ('TriggerSignal', 'NeighborSet', 'PriorReport', 'RetrievedItem', 'ToolResult', 'WorkerOutput')),

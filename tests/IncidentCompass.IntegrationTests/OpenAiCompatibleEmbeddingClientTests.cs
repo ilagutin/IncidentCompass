@@ -43,12 +43,10 @@ public sealed class OpenAiCompatibleEmbeddingClientTests
     [InlineData(StatusCodes.Status408RequestTimeout)]
     [InlineData(StatusCodes.Status429TooManyRequests)]
     [InlineData(StatusCodes.Status500InternalServerError)]
-    [InlineData(StatusCodes.Status501NotImplemented)]
     [InlineData(StatusCodes.Status502BadGateway)]
     [InlineData(StatusCodes.Status503ServiceUnavailable)]
     [InlineData(StatusCodes.Status504GatewayTimeout)]
-    [InlineData(StatusCodes.Status505HttpVersionNotsupported)]
-    public async Task CreateEmbeddingAsync_RetriesIdempotentLegacyStatusSet(int statusCode)
+    public async Task CreateEmbeddingAsync_RetriesIdempotentProviderStatusSet(int statusCode)
     {
         await using var app = CreateFakeOpenAiCompatibleServer(async context =>
         {
@@ -78,6 +76,37 @@ public sealed class OpenAiCompatibleEmbeddingClientTests
 
         Assert.Equal(FakeEmbeddingVector, response.Vector);
         Assert.Equal(2, app.Services.GetRequiredService<AttemptCounter>().Value);
+    }
+
+    [Theory]
+    [InlineData(StatusCodes.Status501NotImplemented)]
+    [InlineData(StatusCodes.Status505HttpVersionNotsupported)]
+    public async Task CreateEmbeddingAsync_DoesNotRetryRejectedProviderStatus(int statusCode)
+    {
+        await using var app = CreateFakeOpenAiCompatibleServer(async context =>
+        {
+            var attempts = context.RequestServices.GetRequiredService<AttemptCounter>();
+            attempts.Value++;
+            context.Response.StatusCode = statusCode;
+            await context.Response.WriteAsJsonAsync(new { error = new { code = "provider-code" } });
+        });
+        await app.StartAsync();
+        using var provider = CreateEmbeddingServiceProvider(
+            GetServerAddress(app),
+            new Dictionary<string, string?>
+            {
+                ["IncidentCompass:Embeddings:OpenAiCompatible:MaxRetryAttempts"] = "3"
+            });
+        var embeddingClient = provider.GetRequiredService<IEmbeddingClient>();
+
+        var exception = await Assert.ThrowsAsync<EmbeddingClientException>(() =>
+            embeddingClient.CreateEmbeddingAsync(
+                new EmbeddingRequest("hello", "embedding-model", "embedding-rejected-status-test"),
+                TestContext.Current.CancellationToken));
+
+        Assert.Equal("provider_request_rejected", exception.ErrorCode);
+        Assert.Equal(ProviderFailureKind.RejectedRequest, exception.FailureKind);
+        Assert.Equal(1, app.Services.GetRequiredService<AttemptCounter>().Value);
     }
 
     [Theory]

@@ -498,7 +498,7 @@ public sealed class HostCompositionTests
         IReadOnlyDictionary<string, string?> values)
     {
         // These hosts exercise ModelGateway/Embeddings option validation only, but AddInfrastructure
-        // now also registers Phase 1 intake infrastructure, whose warmup hosted service needs a
+        // now also registers the intake infrastructure, whose warmup hosted service needs a
         // real triage config file to resolve at StartAsync -- point it at the repo's checked-in
         // config so these unrelated tests do not need to know about intake at all.
         var configurationOverrides = new Dictionary<string, string?>(values)

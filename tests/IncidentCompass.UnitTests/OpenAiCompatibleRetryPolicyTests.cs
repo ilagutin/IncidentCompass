@@ -28,13 +28,13 @@ public sealed class OpenAiCompatibleRetryPolicyTests
     [InlineData(HttpStatusCode.InternalServerError, false)]
     [InlineData(HttpStatusCode.NotImplemented, false)]
     [InlineData(HttpStatusCode.HttpVersionNotSupported, false)]
-    public void ShouldRetry_AllowsOnlyExplicitAvailabilityStatuses(
+    public void IsRetryableGenerationStatus_AllowsOnlyExplicitAvailabilityStatuses(
         HttpStatusCode statusCode,
         bool expected)
     {
-        var retryPolicy = new OpenAiCompatibleRetryPolicy();
-
-        Assert.Equal(expected, retryPolicy.ShouldRetry(statusCode));
+        Assert.Equal(
+            expected,
+            OpenAiCompatibleFailureClassifier.IsRetryableGenerationStatus(statusCode));
     }
 
     [Fact]

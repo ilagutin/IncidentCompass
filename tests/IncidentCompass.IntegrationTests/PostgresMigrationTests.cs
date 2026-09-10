@@ -143,10 +143,10 @@ public sealed class PostgresMigrationTests(PostgresRepositoryFixture fixture)
     public async Task FrozenPricingAndLedgerMigrationsMatchRecordedHashes()
     {
         Assert.Equal(
-            "056C3E515D5B88B09850805753881EB4749207885B5FFEE758965518121FBCB8",
+            "541980B5714E9FF5328BE12460C4ED1F3BFB6D242BEAE92773EA361564D03311",
             await Sha256WithCrlfNormalizedToLfAsync("004-observability-cost.sql"));
         Assert.Equal(
-            "B7BAC3F7D992CE19D1DC6FFB5F6B940FE49256693EDEA7910E0AC499971DFB4A",
+            "7120B3CEB408AFABB65625EC000E22C1F62F14D4770C7955C5C82C8AFE10FC3E",
             await Sha256WithCrlfNormalizedToLfAsync("008-triage-ledger.sql"));
     }
 

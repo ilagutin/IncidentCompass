@@ -35,25 +35,32 @@ internal static class OpenAiCompatibleFailureClassifier
         return statusCode is HttpStatusCode.TooManyRequests or HttpStatusCode.ServiceUnavailable;
     }
 
-    public static ProviderFailureKind ClassifyEmbedding(HttpStatusCode statusCode)
+    // Single source of truth for the wider idempotent embedding retry set. An embedding request has
+    // no side effect, so a timeout, a rate limit or a generic server fault may be replayed. HTTP 501
+    // and 505 are excluded because they describe a request the endpoint will never accept.
+    // ClassifyEmbedding below is derived from this predicate, so a status classified as
+    // RejectedRequest can never also be replayed.
+    public static bool IsRetryableEmbeddingStatus(HttpStatusCode statusCode)
     {
-        if (statusCode == HttpStatusCode.RequestTimeout)
+        if (statusCode is HttpStatusCode.NotImplemented or HttpStatusCode.HttpVersionNotSupported)
         {
-            return ProviderFailureKind.GenerationTimeout;
+            return false;
         }
 
-        if (statusCode is HttpStatusCode.NotImplemented or HttpStatusCode.HttpVersionNotSupported)
+        return statusCode is HttpStatusCode.RequestTimeout or HttpStatusCode.TooManyRequests ||
+               (int)statusCode >= 500;
+    }
+
+    public static ProviderFailureKind ClassifyEmbedding(HttpStatusCode statusCode)
+    {
+        if (!IsRetryableEmbeddingStatus(statusCode))
         {
             return ProviderFailureKind.RejectedRequest;
         }
 
-        var statusCodeValue = (int)statusCode;
-        if (statusCode == HttpStatusCode.TooManyRequests || statusCodeValue >= 500)
-        {
-            return ProviderFailureKind.Unavailable;
-        }
-
-        return ProviderFailureKind.RejectedRequest;
+        return statusCode == HttpStatusCode.RequestTimeout
+            ? ProviderFailureKind.GenerationTimeout
+            : ProviderFailureKind.Unavailable;
     }
 
     public static bool IsSafePreDispatchFailure(HttpRequestException exception)
