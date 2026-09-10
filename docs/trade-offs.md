@@ -427,3 +427,15 @@ The trade-off is intentionally narrow reconstruction. Failure, dry-run and outco
 no external-success projection, and the projection does not model arbitrary provider state or later
 out-of-band changes. Retention, reaping and cross-system reconciliation remain future work rather than
 being inferred from uncertain provider outcomes.
+
+## Two Compose Naming Styles Are Kept
+
+The root file is `docker-compose.yml` while its siblings are `compose.mock.yml`,
+`compose.production.yml` and `compose.evaluation.yml`. Both names are valid to Docker Compose, and
+the split is an accident of when each file was added rather than a distinction between them.
+
+Renaming the odd one out was considered and rejected. `docker-compose.yml` is a name Compose loads by
+default, so the quickstart, demo and runbook commands reach it two ways: the layered ones name it
+explicitly with `-f`, and the bare ones rely on the default. A rename would have to update both
+kinds of command across the documentation and the scripts, to buy consistency in a file listing and
+nothing at runtime. The inconsistency is cosmetic and stays.

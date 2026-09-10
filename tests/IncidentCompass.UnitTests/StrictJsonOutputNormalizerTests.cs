@@ -1,3 +1,4 @@
+using IncidentCompass.Application.Core.Text;
 using IncidentCompass.Application.Investigation.Jobs;
 
 namespace IncidentCompass.UnitTests;

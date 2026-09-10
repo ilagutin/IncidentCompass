@@ -506,7 +506,6 @@
         "type": "Project",
         "dependencies": {
           "IncidentCompass.Application": "[1.0.0, )",
-          "IncidentCompass.Domain": "[1.0.0, )",
           "Microsoft.Extensions.Configuration.Abstractions": "[10.0.11, )",
           "Microsoft.Extensions.DependencyInjection": "[10.0.11, )",
           "Microsoft.Extensions.DependencyInjection.Abstractions": "[10.0.11, )",

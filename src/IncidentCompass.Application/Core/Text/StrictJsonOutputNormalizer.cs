@@ -1,4 +1,4 @@
-namespace IncidentCompass.Application.Investigation.Jobs;
+namespace IncidentCompass.Application.Core.Text;
 
 /// <summary>
 /// Removes the one Markdown wrapper tolerated at the model boundary. The normalizer deliberately

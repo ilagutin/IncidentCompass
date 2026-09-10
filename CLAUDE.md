@@ -1,4 +1,4 @@
-# AGENTS.md
+# Agent Operating Contract
 
 Treat this file as the operating contract for future coding agents and human maintainers.
 

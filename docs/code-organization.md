@@ -161,6 +161,11 @@ Infrastructure exception types must not appear in `ApiExceptionHandler` switch c
 
 Rationale: the API exception handler depends only on Application and Domain exception contracts. Adding a new Infrastructure adapter must not require changes in the API layer.
 
+## Async Conventions
+
+- Do not call `ConfigureAwait(false)`. Both hosts are application hosts (ASP.NET Core and the generic host) with no synchronization context, and this solution ships no library that a caller could host differently, so the call changes nothing and only makes await sites read inconsistently.
+- Awaiting a task purely to observe it, rather than to use its result, needs a comment saying so. An abandoned faulted task surfaces later as a process-level `UnobservedTaskException`, which is not obvious from the empty `catch` alone.
+
 ## Workflow States and Error Mapping
 
 - Do not represent internal workflow states as scattered strings. Use enums or value objects in Domain/Application and convert to strings only at API or persistence boundaries.

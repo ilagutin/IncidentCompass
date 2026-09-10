@@ -2,7 +2,7 @@ using IncidentCompass.Application.Governance.ActionApprovals;
 
 namespace IncidentCompass.Worker;
 
-public sealed class WorkerActionPump(
+internal sealed class WorkerActionPump(
     IServiceScopeFactory serviceScopeFactory,
     ILogger<WorkerActionPump> logger)
 {

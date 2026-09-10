@@ -1,6 +1,6 @@
 using IncidentCompass.Worker;
 
-namespace IncidentCompass.IntegrationTests;
+namespace IncidentCompass.UnitTests;
 
 public sealed class WorkerPollDelayTests
 {

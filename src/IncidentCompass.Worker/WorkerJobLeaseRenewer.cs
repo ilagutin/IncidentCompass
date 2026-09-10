@@ -3,7 +3,7 @@ using IncidentCompass.Domain.Incidents;
 
 namespace IncidentCompass.Worker;
 
-public sealed class WorkerJobLeaseRenewer
+internal sealed class WorkerJobLeaseRenewer
 {
     private static readonly TimeSpan MinimumRenewalInterval = TimeSpan.FromMilliseconds(100);
 

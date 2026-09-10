@@ -49,6 +49,7 @@ public sealed partial class DocumentationPathReferenceTests
     [
         "AGENTS.md",
         "CLAUDE.md",
+        "CONTRIBUTING.md",
         "README.md",
         "SECURITY.md"
     ];

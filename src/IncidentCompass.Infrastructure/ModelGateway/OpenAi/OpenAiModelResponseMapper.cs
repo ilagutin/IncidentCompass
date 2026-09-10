@@ -1,6 +1,6 @@
 using System.Text.Json;
 using IncidentCompass.Application.Core.ModelClients;
-using IncidentCompass.Application.Investigation.Jobs;
+using IncidentCompass.Application.Core.Text;
 using IncidentCompass.Infrastructure.ModelGateway.OpenAi.Dtos;
 using IncidentCompass.Infrastructure.OpenAiCompatible;
 

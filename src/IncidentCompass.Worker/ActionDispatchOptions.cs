@@ -1,6 +1,6 @@
 namespace IncidentCompass.Worker;
 
-public sealed class ActionDispatchOptions
+internal sealed class ActionDispatchOptions
 {
     public const string SectionName = "IncidentCompass:ActionDispatch";
 

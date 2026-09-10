@@ -134,7 +134,7 @@ Read [Architecture](docs/architecture.md), [Security model](docs/security-model.
 - [Model gateway](docs/model-gateway.md)
 - [Observability](docs/observability.md) and [Cost tracking](docs/cost-tracking.md)
 - [Code organization](docs/code-organization.md) and [Trade-offs](docs/trade-offs.md)
-- [Versioning and release flow](docs/versioning.md)
+- [Versioning and release flow](docs/versioning.md) and [Contributing](CONTRIBUTING.md)
 - [Single-host production runbook](docs/single-host-production.md)
 - [Changelog](CHANGELOG.md)
 - Release notes: [0.3.0](docs/release-notes-v0.3.0.md), [0.2.0](docs/release-notes-v0.2.0.md),

@@ -5,6 +5,27 @@ namespace IncidentCompass.UnitTests;
 
 public sealed class ArchitectureTests
 {
+    private const string ApplicationNamespace = "IncidentCompass.Application";
+    private const string ApplicationCoreNamespace = ApplicationNamespace + ".Core";
+    private const string ApplicationCoreNamespacePrefix = ApplicationCoreNamespace + ".";
+
+    private static readonly char[] DeclarationSeparators = [' ', '\t'];
+
+    private static readonly string[] TypeDeclarationModifiers =
+    [
+        "public",
+        "internal",
+        "protected",
+        "private",
+        "file",
+        "new",
+        "sealed",
+        "abstract",
+        "static",
+        "partial",
+        "unsafe"
+    ];
+
     private static readonly HashSet<string> ExactReferenceProjects = new(StringComparer.OrdinalIgnoreCase)
     {
         "IncidentCompass.Domain",
@@ -127,11 +148,26 @@ public sealed class ArchitectureTests
     }
 
     [Fact]
+    public void SourceProjects_DoNotRedeclareDomainAlongsideApplication()
+    {
+        var failures = LoadSourceProjects().Values
+            .Where(project =>
+                project.ProjectReferences.Contains("IncidentCompass.Application", StringComparer.OrdinalIgnoreCase) &&
+                project.ProjectReferences.Contains("IncidentCompass.Domain", StringComparer.OrdinalIgnoreCase))
+            .Select(project =>
+                $"{project.Name} declares IncidentCompass.Domain, which already arrives through IncidentCompass.Application.")
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.Empty(failures);
+    }
+
+    [Fact]
     public void DomainProject_DoesNotDeclareApplicationPorts()
     {
         var domainDirectory = Path.Combine(RepositoryRootLocator.Find(), "src", "IncidentCompass.Domain");
         var filesWithInterfaces = EnumerateSourceFiles(domainDirectory)
-            .Where(filePath => File.ReadAllText(filePath).Contains("interface ", StringComparison.Ordinal))
+            .Where(filePath => File.ReadLines(filePath).Any(IsInterfaceDeclaration))
             .Select(filePath => Path.GetRelativePath(domainDirectory, filePath).Replace('\\', '/'))
             .Order(StringComparer.OrdinalIgnoreCase)
             .ToArray();
@@ -139,6 +175,53 @@ public sealed class ArchitectureTests
         Assert.Empty(filesWithInterfaces);
     }
 
+    /// <summary>
+    /// The OpenAI-compatible model and embedding adapters are the real provider integrations. They
+    /// bind to the gateway contracts in <c>IncidentCompass.Application.Core</c> and to nothing else
+    /// in Application: an adapter that reaches into a feature folder has reached past the port it
+    /// implements, and the primitive it wanted belongs in <c>Core</c> instead. The mock adapters are
+    /// deliberately outside this rule - they script the orchestrator's own tool catalog, which is
+    /// investigation behavior rather than provider behavior.
+    /// The scan is over every occurrence of the namespace root in the file text rather than over
+    /// plain <c>using</c> lines, so <c>using static</c>, a using alias and a fully qualified inline
+    /// reference with no <c>using</c> at all are all caught. <c>using static</c> is idiomatic here:
+    /// the mock script adapter next door already uses one.
+    /// </summary>
+    [Fact]
+    public void OpenAiProviderAdapters_BindOnlyToApplicationCoreContracts()
+    {
+        var repositoryRoot = RepositoryRootLocator.Find();
+        var infrastructureDirectory = Path.Combine(repositoryRoot, "src", "IncidentCompass.Infrastructure");
+        var adapterDirectories = new[]
+        {
+            Path.Combine(infrastructureDirectory, "ModelGateway", "OpenAi"),
+            Path.Combine(infrastructureDirectory, "Embeddings", "OpenAi")
+        };
+        var failures = new List<string>();
+
+        foreach (var adapterDirectory in adapterDirectories)
+        {
+            Assert.True(Directory.Exists(adapterDirectory), $"{adapterDirectory} does not exist.");
+            foreach (var sourcePath in EnumerateSourceFiles(adapterDirectory))
+            {
+                var relativePath = Path.GetRelativePath(repositoryRoot, sourcePath).Replace('\\', '/');
+                failures.AddRange(EnumerateApplicationReferences(File.ReadAllText(sourcePath))
+                    .Where(reference => !IsApplicationCoreReference(reference))
+                    .Distinct(StringComparer.Ordinal)
+                    .Order(StringComparer.Ordinal)
+                    .Select(reference =>
+                        $"{relativePath} references {reference}; the OpenAI-compatible adapters may reference only {ApplicationCoreNamespace}.*."));
+            }
+        }
+
+        Assert.Empty(failures);
+    }
+
+    // The markers below appear nowhere under `src/`, so this test passes by construction today. It
+    // is a forward guard rather than a report of a past failure: Application is a pure orchestration
+    // layer, and README lists MCP product surfaces as out of scope. Shelling out or taking an MCP
+    // SDK dependency from Application would move process I/O and a provider protocol to the wrong
+    // side of the port boundary, and this test fails the first change that tries it.
     [Fact]
     public void ApplicationProject_DoesNotReferenceExternalMcpSdkOrProcessIo()
     {
@@ -156,6 +239,7 @@ public sealed class ArchitectureTests
         {
             AddForbiddenMarkers(
                 failures,
+                "external MCP/process I/O",
                 Path.GetRelativePath(RepositoryRootLocator.Find(), projectPath),
                 File.ReadAllText(projectPath),
                 forbiddenMarkers);
@@ -165,6 +249,7 @@ public sealed class ArchitectureTests
         {
             AddForbiddenMarkers(
                 failures,
+                "external MCP/process I/O",
                 Path.GetRelativePath(RepositoryRootLocator.Find(), sourcePath),
                 File.ReadAllText(sourcePath),
                 forbiddenMarkers);
@@ -193,6 +278,7 @@ public sealed class ArchitectureTests
             {
                 AddForbiddenMarkers(
                     failures,
+                    "API authentication",
                     Path.GetRelativePath(RepositoryRootLocator.Find(), sourcePath),
                     File.ReadAllText(sourcePath),
                     forbiddenMarkers);
@@ -291,6 +377,7 @@ public sealed class ArchitectureTests
 
     private static void AddForbiddenMarkers(
         List<string> failures,
+        string category,
         string relativePath,
         string content,
         IReadOnlyCollection<string> markers)
@@ -299,9 +386,132 @@ public sealed class ArchitectureTests
         {
             if (content.Contains(marker, StringComparison.Ordinal))
             {
-                failures.Add($"{relativePath} contains forbidden external MCP/I/O marker {marker}.");
+                failures.Add($"{relativePath} contains forbidden {category} marker {marker}.");
             }
         }
+    }
+
+    /// <summary>
+    /// Yields every dotted path in the file text that starts at the <c>IncidentCompass.Application</c>
+    /// namespace root, whatever syntax introduced it: a plain <c>using</c>, a <c>using static</c>, the
+    /// right-hand side of a using alias, or a fully qualified reference written inline with no
+    /// <c>using</c> at all. A match must begin and end on an identifier boundary, so
+    /// <c>IncidentCompass.ApplicationHost</c> is not reported as the Application root.
+    /// </summary>
+    private static IEnumerable<string> EnumerateApplicationReferences(string content)
+    {
+        var index = content.IndexOf(ApplicationNamespace, StringComparison.Ordinal);
+        while (index >= 0)
+        {
+            var boundary = index + ApplicationNamespace.Length;
+            var end = boundary;
+            while (end < content.Length && IsQualifiedNameCharacter(content[end]))
+            {
+                end++;
+            }
+
+            var startsAtBoundary = index == 0 || !IsQualifiedNameCharacter(content[index - 1]);
+            var endsAtBoundary = boundary >= content.Length || !IsIdentifierCharacter(content[boundary]);
+            if (startsAtBoundary && endsAtBoundary)
+            {
+                yield return content[index..end].TrimEnd('.');
+            }
+
+            index = content.IndexOf(ApplicationNamespace, end, StringComparison.Ordinal);
+        }
+    }
+
+    private static bool IsApplicationCoreReference(string reference)
+    {
+        return reference.Equals(ApplicationCoreNamespace, StringComparison.Ordinal) ||
+            reference.StartsWith(ApplicationCoreNamespacePrefix, StringComparison.Ordinal);
+    }
+
+    private static bool IsQualifiedNameCharacter(char value)
+    {
+        return IsIdentifierCharacter(value) || value == '.';
+    }
+
+    private static bool IsIdentifierCharacter(char value)
+    {
+        return char.IsLetterOrDigit(value) || value == '_';
+    }
+
+    /// <summary>
+    /// True when the line opens an <c>interface</c> declaration: leading attribute lists, then
+    /// optional modifiers (including <c>new</c>), then the keyword, then either the declared name or
+    /// the end of the line. Matching the bare substring <c>"interface "</c> instead reported the
+    /// word wherever it appeared in a comment or a string, and missed three real declaration shapes:
+    /// a keyword followed by a tab, a name wrapped onto the next line, and a line that starts with
+    /// an attribute. Known gaps: an interface nested after an opening brace on the same line, and a
+    /// declaration whose leading attribute contains an unbalanced <c>]</c> inside a string literal.
+    /// </summary>
+    private static bool IsInterfaceDeclaration(string line)
+    {
+        var tokens = StripLeadingAttributes(line).Split(
+            DeclarationSeparators,
+            StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var index = 0;
+        while (index < tokens.Length && TypeDeclarationModifiers.Contains(tokens[index], StringComparer.Ordinal))
+        {
+            index++;
+        }
+
+        if (index >= tokens.Length || !tokens[index].Equals("interface", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        if (index + 1 >= tokens.Length)
+        {
+            // `public interface` with the declared name wrapped onto the next line.
+            return true;
+        }
+
+        var declaredName = tokens[index + 1];
+        return char.IsLetter(declaredName[0]) || declaredName[0] == '_';
+    }
+
+    /// <summary>
+    /// Removes any attribute lists that open the line, so <c>[Obsolete] public interface IFoo</c> is
+    /// tokenized from its first modifier. Brackets are matched by depth to keep a nested attribute
+    /// argument such as <c>[Foo(new[] { 1 })]</c> intact; an attribute that never closes on this
+    /// line yields no tokens at all rather than a partial declaration.
+    /// </summary>
+    private static string StripLeadingAttributes(string line)
+    {
+        var remainder = line.AsSpan().TrimStart();
+        while (remainder.Length > 0 && remainder[0] == '[')
+        {
+            var depth = 0;
+            var index = 0;
+            while (index < remainder.Length)
+            {
+                if (remainder[index] == '[')
+                {
+                    depth++;
+                }
+                else if (remainder[index] == ']')
+                {
+                    depth--;
+                    if (depth == 0)
+                    {
+                        break;
+                    }
+                }
+
+                index++;
+            }
+
+            if (index >= remainder.Length)
+            {
+                return string.Empty;
+            }
+
+            remainder = remainder[(index + 1)..].TrimStart();
+        }
+
+        return remainder.ToString();
     }
 
     private sealed record SourceProject(string Name, string Directory, string[] ProjectReferences);

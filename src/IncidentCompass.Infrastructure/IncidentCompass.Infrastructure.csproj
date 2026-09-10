@@ -1,8 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
+    <!-- Domain arrives transitively through Application, the same way it reaches Api and Worker.
+         Redeclaring it here would be the only place in the solution that names it twice. -->
     <ProjectReference Include="..\IncidentCompass.Application\IncidentCompass.Application.csproj" />
-    <ProjectReference Include="..\IncidentCompass.Domain\IncidentCompass.Domain.csproj" />
   </ItemGroup>
 
   <ItemGroup>

@@ -2,7 +2,7 @@ using Microsoft.Extensions.Options;
 
 namespace IncidentCompass.Worker;
 
-public sealed class WorkerOptionsValidator : IValidateOptions<WorkerOptions>
+internal sealed class WorkerOptionsValidator : IValidateOptions<WorkerOptions>
 {
     public ValidateOptionsResult Validate(string? name, WorkerOptions options)
     {

@@ -1,6 +1,6 @@
 namespace IncidentCompass.Worker;
 
-public static class WorkerPollDelay
+internal static class WorkerPollDelay
 {
     private const double JitterRatio = 0.2;
     private const int MaxErrorMultiplier = 4;

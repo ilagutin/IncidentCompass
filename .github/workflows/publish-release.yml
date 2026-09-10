@@ -126,38 +126,18 @@ jobs:
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
           echo "notes_file=${notes_file}" >> "${GITHUB_OUTPUT}"
 
-      - name: Detect NuGet lock files
-        id: nuget-locks
-        shell: bash
-        run: |
-          set -euo pipefail
-          if find . -name packages.lock.json -not -path "*/bin/*" -not -path "*/obj/*" | grep -q .; then
-            echo "found=true" >> "${GITHUB_OUTPUT}"
-          else
-            echo "found=false" >> "${GITHUB_OUTPUT}"
-          fi
-
-      - name: Setup .NET with NuGet cache
-        if: steps.nuget-locks.outputs.found == 'true'
+      # Locked restore is the only path. Directory.Build.props sets RestorePackagesWithLockFile,
+      # every project commits a packages.lock.json, and a missing or stale one must fail the
+      # release rather than silently resolve a different graph.
+      - name: Setup .NET
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: 10.0.x
           cache: true
           cache-dependency-path: '**/packages.lock.json'
 
-      - name: Setup .NET
-        if: steps.nuget-locks.outputs.found != 'true'
-        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
-        with:
-          dotnet-version: 10.0.x
-
-      - name: Restore locked dependencies
-        if: steps.nuget-locks.outputs.found == 'true'
+      - name: Restore
         run: dotnet restore IncidentCompass.slnx --locked-mode
-
-      - name: Restore dependencies
-        if: steps.nuget-locks.outputs.found != 'true'
-        run: dotnet restore IncidentCompass.slnx
 
       - name: Build
         run: dotnet build IncidentCompass.slnx --configuration Release --no-restore

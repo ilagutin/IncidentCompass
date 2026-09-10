@@ -5,7 +5,7 @@ using IncidentCompass.Domain.Incidents;
 
 namespace IncidentCompass.Worker;
 
-public sealed partial class WorkerJobPump(
+internal sealed partial class WorkerJobPump(
     IServiceScopeFactory serviceScopeFactory,
     WorkerJobLeaseRenewer leaseRenewer,
     ILogger<WorkerJobPump> logger,

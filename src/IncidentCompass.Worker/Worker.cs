@@ -4,7 +4,7 @@ using Microsoft.Extensions.Options;
 
 namespace IncidentCompass.Worker;
 
-public sealed partial class Worker(
+internal sealed partial class Worker(
     ILogger<Worker> logger,
     IServiceScopeFactory serviceScopeFactory,
     IOptions<WorkerOptions> options,

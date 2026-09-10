@@ -37,6 +37,12 @@ jobs:
         shell: pwsh
         run: ./scripts/package-vulnerability-gate.ps1
 
+      # The two CodeQL steps are the only actions in this repository that track a major tag instead
+      # of a full SHA, and that float is deliberate. A commit of github/codeql-action pins the CodeQL
+      # bundle it downloads, so a SHA pin would freeze the analysis engine and the query pack at the
+      # day it was taken and quietly stop finding anything newer. The action is published by GitHub
+      # from the same trust boundary that runs the workflow, so the pin buys correspondingly less
+      # here than it does for a third-party action.
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
         with:

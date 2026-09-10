@@ -39,6 +39,7 @@
     <ProjectReference Include="..\..\src\IncidentCompass.Domain\IncidentCompass.Domain.csproj" />
     <ProjectReference Include="..\..\src\IncidentCompass.Infrastructure\IncidentCompass.Infrastructure.csproj" />
     <ProjectReference Include="..\..\src\IncidentCompass.Tester\IncidentCompass.Tester.csproj" />
+    <ProjectReference Include="..\..\src\IncidentCompass.Worker\IncidentCompass.Worker.csproj" />
   </ItemGroup>
 
 </Project>

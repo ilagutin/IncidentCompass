@@ -157,6 +157,11 @@ public static class Setup
     /// exhaustiveness) is suppressed for it, while CS8509 (a declared <see cref="ProviderKind"/>
     /// member is not handled) stays on and is an error under TreatWarningsAsErrors, so adding a
     /// third provider kind breaks the build here instead of falling through at runtime.
+    /// The suppressed case cannot arise: the only value reaching the switch comes from
+    /// <c>ProviderKindParser.TryParse</c>, which returns <see langword="true"/> only for a declared
+    /// member, and an unparsed provider string has already thrown above. A discard arm would trade
+    /// that build-time failure for an <see cref="InvalidOperationException"/> raised while the
+    /// container resolves the client, which is a 500 in the Api and a failing Worker claim loop.
     /// </summary>
     private static IServiceCollection AddProviderSelectedClient<TClient, TOptions, TMock, TOpenAiCompatible>(
         this IServiceCollection services,

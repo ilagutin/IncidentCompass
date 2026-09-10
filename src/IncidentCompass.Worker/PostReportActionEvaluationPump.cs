@@ -3,7 +3,7 @@ using IncidentCompass.Application.Governance.PostReportActions;
 
 namespace IncidentCompass.Worker;
 
-public sealed class PostReportActionEvaluationPump(
+internal sealed class PostReportActionEvaluationPump(
     IServiceScopeFactory serviceScopeFactory,
     PostReportActionWorkflowCatalog catalog,
     PostReportActionEvaluationLeaseRenewer leaseRenewer,
