@@ -5,4 +5,6 @@ internal sealed record IngestionTriageJobSummary(
     string Status,
     int Attempt,
     string ConfigHash,
-    DateTimeOffset CreatedAtUtc);
+    DateTimeOffset CreatedAtUtc,
+    string? LastErrorCode,
+    DateTimeOffset? NextAttemptAtUtc);

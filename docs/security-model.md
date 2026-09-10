@@ -171,6 +171,17 @@ job, provider, model or logical route identifiers. Malformed ModelCall history a
 overlapping prices fail closed to unpriced and are never echoed to responses or logs. Pricing remains
 operator-maintained database configuration; this read surface grants no price, alert or quota authority.
 
+## Fault status read boundary
+
+`GET /api/v1/faults/{id}` reports why a triage job is waiting through two projected job columns:
+`lastErrorCode` and `nextAttemptAtUtc`. The code comes from a closed, application-owned vocabulary
+that the Worker decides before any durable write, so a provider name, a provider message, an HTTP
+status line, an endpoint or an upstream error code cannot reach it: an adapter keeps the raw upstream
+code in a separate `ProviderException.ProviderErrorCode` property that the failure classifier never
+reads. The sibling `last_error_message` column is not projected at all, because its ordinary form
+carries the raising exception's type name. See `docs/observability.md`, "Why a waiting job is
+waiting".
+
 ## Local source read boundary
 
 The source worker never receives a filesystem root, release selector or arbitrary read argument.

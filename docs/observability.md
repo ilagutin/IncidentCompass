@@ -154,15 +154,42 @@ text a provider or validator may have produced. The ordinary form is `"<error co
 name>."`, using the exact code already stored in the sibling `last_error_code` column. The immediate
 `worker_output_invalid` terminal outcome instead stores the fixed content-free message
 `worker_output_invalid: worker output remained invalid after bounded reprompts.`, with no exception
-type. Permanent budget/governance codes from `TriageNonRetryableFailureClassifier`,
-`provider_unavailable` and the generic `triage_job_attempt_failed`/`config_snapshot_unavailable`
-codes retain the ordinary classification and the existing `TextTruncator` bound. A row is therefore
-self-explanatory when read directly from the database, and a provider response body or model output
-cannot end up stored in this column.
+type. The delayed provider-outage state and the attempt-limit guard likewise store their own fixed
+sentences, `Triage delayed: provider unavailable.` and `triage_job_attempt_limit_exhausted: attempt
+guard.`. Permanent budget/governance codes from `TriageNonRetryableFailureClassifier` and the generic
+`triage_job_attempt_failed`/`config_snapshot_unavailable` codes retain the ordinary classification and
+the existing `TextTruncator` bound. A row is therefore self-explanatory when read directly from the
+database, and a provider response body or model output cannot end up stored in this column.
 
 The triage job attempt failure event (3101) and its disposition event (3102/3103/3104) are written
 before the durable attempt-failure write is attempted, so a failing durable write (3105) can never
 erase the trace of what originally failed.
+
+### Why a waiting job is waiting
+
+`GET /api/v1/faults/{id}` returns that classification to the caller so an operator does not have to
+read the ledger to learn why a job has not finished. Its `job` object carries two fields beyond the
+job identity:
+
+- `lastErrorCode` - the durable `last_error_code` value, or `null` when no attempt has failed. It is
+  the job's most recently recorded attempt outcome for every status, not a provider-outage special
+  case: a field populated for exactly one code would force a caller to switch on the code before
+  trusting the field, and would go silent on the dead-lettered jobs an operator most needs a reason
+  for. The vocabulary is closed and application-owned (`ProviderErrorCodes`,
+  `TriageNonRetryableFailureClassifier`, the two generic codes above).
+- `nextAttemptAtUtc` - the durable `next_attempt_at_utc` value, or `null` when no retry is scheduled.
+  Claiming a job and dead-lettering it both clear the column, so the field is populated only while
+  the job is actually waiting for a scheduled retry.
+
+`status` remains the authority on whether the job is finished: a provider outage reads as
+`RetryPending` + `provider_unavailable` + a future `nextAttemptAtUtc`, which is a delay with an
+until-when, not a terminal failure. The outage path also does not consume the attempt budget, so
+`attempt` does not advance while the provider is down.
+
+`last_error_message` is deliberately **not** projected. It is content-free by construction, but its
+ordinary form appends the raising exception's type name, and an internal exception type is not
+something a caller of the public fault endpoint has any reason to receive. The disclosure boundary
+therefore stops at the closed code vocabulary and a timestamp.
 
 ## ModelCall Ledger Events
 

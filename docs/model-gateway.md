@@ -89,7 +89,9 @@ into that call through linked cancellation.
   the configured consecutive-failure threshold, each Worker process pauses new claims for
   `IncidentCompass:ProviderResilience:BackpressureSeconds`; a successful model call clears that
   local pause. This is in-process backpressure, not cross-host coordination, and fallback routes
-  remain later scope.
+  remain later scope. The delayed state is visible to callers: `GET /api/v1/faults/{id}` returns the
+  job's `lastErrorCode` and `nextAttemptAtUtc` alongside its `RetryPending` status, without exposing
+  any provider-authored text (see `docs/observability.md`, "Why a waiting job is waiting").
 - Request/response objects carry correlation IDs.
 - OpenAI-compatible chat completions include one `Idempotency-Key` header per
   high-level model request and reuse it across retry attempts.

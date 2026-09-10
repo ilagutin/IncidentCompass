@@ -1902,7 +1902,9 @@
           "status",
           "attempt",
           "configHash",
-          "createdAtUtc"
+          "createdAtUtc",
+          "lastErrorCode",
+          "nextAttemptAtUtc"
         ],
         "type": "object",
         "properties": {
@@ -1927,8 +1929,22 @@
           "createdAtUtc": {
             "type": "string",
             "format": "date-time"
+          },
+          "lastErrorCode": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "nextAttemptAtUtc": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
           }
-        }
+        },
+        "description": "The caller-visible state of the fault\u0027s current triage job."
       },
       "TriageReportDetailsResponse": {
         "required": [
