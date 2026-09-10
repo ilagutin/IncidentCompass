@@ -364,6 +364,63 @@ internal static class PostgresMigrationDurableDataAssertions
         Assert.Contains("immutable", postgresException.MessageText, StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>
+    /// The price administration rails reach a database the same way whether the schema was built
+    /// from nothing or upgraded onto rows an earlier release wrote.
+    /// </summary>
+    public static async Task AssertModelPriceAdministrationAppliedAsync(string connectionString)
+    {
+        // The five prices the schema seeded name the schema. Rows an operator wrote before this
+        // version stay NULL rather than being given a borrowed author.
+        Assert.Equal(5, await PostgresMigrationTestSupport.CountSqlAsync(connectionString, """
+            SELECT count(*) FROM incidentcompass.ai_model_pricing
+            WHERE administered_by = 'schema:004-observability-cost.sql'
+              AND administered_at_utc IS NOT NULL;
+            """));
+
+        var deleted = await Record.ExceptionAsync(() => PostgresMigrationTestSupport.ExecuteAsync(
+            connectionString,
+            "DELETE FROM incidentcompass.ai_model_pricing WHERE provider = 'mock';"));
+        Assert.Contains(
+            "retired by setting effective_to_utc",
+            Assert.IsType<PostgresException>(deleted).MessageText,
+            StringComparison.Ordinal);
+
+        var unattributed = await Record.ExceptionAsync(() => PostgresMigrationTestSupport.ExecuteAsync(
+            connectionString,
+            """
+            INSERT INTO incidentcompass.ai_model_pricing (
+                id, provider, model, currency, input_token_price_per_million,
+                output_token_price_per_million, effective_from_utc)
+            VALUES (gen_random_uuid(), 'migration-check', 'migration-model', 'USD', 1, 2,
+                '2026-01-01T00:00:00Z');
+            """));
+        Assert.Contains(
+            "must name who changed it",
+            Assert.IsType<PostgresException>(unattributed).MessageText,
+            StringComparison.Ordinal);
+
+        await PostgresMigrationTestSupport.ExecuteAsync(connectionString, """
+            INSERT INTO incidentcompass.ai_model_pricing (
+                id, provider, model, currency, input_token_price_per_million,
+                output_token_price_per_million, effective_from_utc, administered_by)
+            VALUES (gen_random_uuid(), 'migration-check', 'migration-model', 'USD', 1, 2,
+                '2026-01-01T00:00:00Z', 'test:migration');
+            """);
+        var overlapping = await Record.ExceptionAsync(() => PostgresMigrationTestSupport.ExecuteAsync(
+            connectionString,
+            """
+            INSERT INTO incidentcompass.ai_model_pricing (
+                id, provider, model, currency, input_token_price_per_million,
+                output_token_price_per_million, effective_from_utc, administered_by)
+            VALUES (gen_random_uuid(), 'migration-check', 'migration-model', 'USD', 3, 4,
+                '2026-02-01T00:00:00Z', 'test:migration');
+            """));
+        Assert.Equal(
+            "ex_ai_model_pricing_no_overlap",
+            Assert.IsType<PostgresException>(overlapping).ConstraintName);
+    }
+
     public static async Task<MigrationCostRollupHistory> SeedCostRollupHistoryAsync(
         string connectionString,
         string suffix)

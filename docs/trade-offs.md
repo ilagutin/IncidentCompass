@@ -56,6 +56,8 @@ Governance and external actions
 
 - [One Live Tool Policy Path](#one-live-tool-policy-path)
 - [Read-Only Cost Rollup Uses Operator-Maintained Pricing](#read-only-cost-rollup-uses-operator-maintained-pricing)
+- [Hand-Edited Prices Are Constrained, Not Replaced By An API](#hand-edited-prices-are-constrained-not-replaced-by-an-api)
+- [Cost Alerting Belongs To The Operator's Own Tooling](#cost-alerting-belongs-to-the-operators-own-tooling)
 - [Durable Evaluation Queue Is Not A Second Action Outbox](#durable-evaluation-queue-is-not-a-second-action-outbox)
 - [At-Most-Once Action Dispatch Prefers Visible Uncertainty](#at-most-once-action-dispatch-prefers-visible-uncertainty)
 - [Compact External Projection, Not General Reconstruction](#compact-external-projection-not-general-reconstruction)
@@ -565,6 +567,42 @@ configuration. The API cannot add or reload prices, convert currencies, emit ale
 A call is priced only with exactly one case-sensitive interval match; missing, overlapping or tied
 history remains unpriced. These limits are preferable to granting a new mutation or notification
 authority before the read model is proven.
+
+## Hand-Edited Prices Are Constrained, Not Replaced By An API
+
+Prices are host-global and every API identity in this system is tenant-scoped, so a price endpoint
+would need a cross-tenant admin identity that does not exist here and that nothing else needs. The
+choice was therefore between leaving the table unguarded and constraining the hand-edit, not between
+a prompt and an API.
+
+Schema version 21 constrains it: a write must name an author in `administered_by`, the change time is
+stamped by the database rather than accepted from the statement, an interval that overlaps an
+existing one for the same provider and model is refused, and `DELETE` is refused in favour of setting
+`effective_to_utc`.
+
+The costs are real and are accepted. The author is unverified free text, because a column asserting
+an authenticated identity where none exists would be worse than an honest label. Attribution is
+last-writer-only rather than a change history, so two successive corrections leave only the second
+one's name; the runbook works around that by prescribing interval closure over in-place editing, and
+a full audit table was judged more machinery than the problem warrants. In-place correction still
+rewrites what an already-closed hour costs, which is deliberate - the alternative is being unable to
+fix a wrong price at all - and the runbook says so plainly. An upgrade over a database that already
+holds overlapping intervals fails and names the conflicting pairs rather than closing one, because
+choosing between two prices is the arbitration the read path deliberately refuses.
+
+## Cost Alerting Belongs To The Operator's Own Tooling
+
+A threshold evaluator over the cost rollup is not built, and the reasons are structural rather than
+schedule-driven: the producer of a breach is a background pass with no tenant while every rollup read
+is tenant-scoped, there is no cross-tenant operator principal to address an alert to, an
+acknowledgement would gate nothing and so would devalue the approval vocabulary it borrowed, and the
+one delivery path in the repository requires an origin report by foreign key that a threshold breach
+does not have. The full reasoning is in `docs/cost-tracking.md`.
+
+The cost is that this system raises no alarm about its own spend. That is the right side of the
+boundary: an alerting rule over the existing authenticated cost endpoint keeps its own thresholds,
+history, routing, deduplication and silencing, which an in-process evaluator here would do worse, and
+this project is already a consumer of an observability pipeline rather than an observability backend.
 
 ## Durable Evaluation Queue Is Not A Second Action Outbox
 

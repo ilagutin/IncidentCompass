@@ -154,6 +154,137 @@ clamped, as an out-of-range retention window does.
 A failed pass is a warning in the Worker log, not an outage. The two operations are independent, so
 one failing still lets the other run, and the failed one is retried on the next pass after a backoff.
 
+## Model prices
+
+`incidentcompass.ai_model_pricing` is the only table an operator is expected to write by hand. There
+is no price API and no configuration key that writes one: prices are host-global while every API
+identity is tenant-scoped, so a price endpoint would need an admin identity this system does not
+have. `docs/cost-tracking.md` explains why the table is shaped the way it is; this section is the
+procedure.
+
+Two things are true of every edit here and decide the whole procedure:
+
+- The hourly cost rollup reads this table on every request and recomputes spend from ledger rows. An
+  edit therefore takes effect with no restart, and it changes the answer given for windows that
+  already closed.
+- There is no stored spend figure to contradict. The only thing an edit can contradict is a figure
+  someone already read and acted on, which is why every statement below names who is making the
+  change.
+
+Connect with `psql` inside the running database container, using the `POSTGRES_USER` and
+`POSTGRES_DB` values from `.env.production`:
+
+```powershell
+docker @compose exec postgres psql --username <postgres-user> --dbname <postgres-db>
+```
+
+**Add a price.** `administered_by` is required and is free text: put something that identifies you
+in the operator's own terms. A write without it is refused.
+
+```sql
+INSERT INTO incidentcompass.ai_model_pricing (
+    id, provider, model, currency,
+    input_token_price_per_million, output_token_price_per_million,
+    effective_from_utc, effective_to_utc, administered_by, administration_note)
+VALUES (
+    gen_random_uuid(), 'openai-main', 'gpt-4.1-mini', 'USD',
+    0.40, 1.60,
+    '2026-09-01T00:00:00Z', NULL, 'ops:alice', 'Published list price, September rate card.');
+```
+
+`provider` is matched against the call's **configured provider ID** - the entry in the triage
+configuration's `Providers` table - not the adapter name, and the match is case-sensitive for both
+provider and model. A price that never matches anything is silently harmless: calls simply read as
+unpriced.
+
+Effect on figures already reported: calls in hours from `effective_from_utc` onwards start being
+priced, so a window that previously reported unpriced calls now reports spend for them. Hours before
+that instant are untouched.
+
+**Change a price going forward.** Close the current interval and open a new one. Do this rather than
+editing the price in place: it keeps each row's own author, and it leaves history alone.
+
+```sql
+BEGIN;
+UPDATE incidentcompass.ai_model_pricing
+SET effective_to_utc = '2026-10-01T00:00:00Z', administered_by = 'ops:alice'
+WHERE provider = 'openai-main' AND model = 'gpt-4.1-mini' AND effective_to_utc IS NULL;
+
+INSERT INTO incidentcompass.ai_model_pricing (
+    id, provider, model, currency,
+    input_token_price_per_million, output_token_price_per_million,
+    effective_from_utc, effective_to_utc, administered_by, administration_note)
+VALUES (
+    gen_random_uuid(), 'openai-main', 'gpt-4.1-mini', 'USD',
+    0.35, 1.40,
+    '2026-10-01T00:00:00Z', NULL, 'ops:alice', 'October rate card.');
+COMMIT;
+```
+
+Intervals are half-open: the old one covers up to but not including the boundary instant and the new
+one starts at it, so the two do not overlap. The database refuses two intervals covering one instant
+for the same provider and model, with `ex_ai_model_pricing_no_overlap`. If that happens, one of the
+two dates is wrong - fix the date rather than deleting a row.
+
+Effect on figures already reported: none. Every hour before the boundary keeps the price it was
+reported with.
+
+**Correct a price that was always wrong.** This is the one operation that rewrites history, so it is
+the one that most wants a note.
+
+```sql
+UPDATE incidentcompass.ai_model_pricing
+SET output_token_price_per_million = 1.20,
+    administered_by = 'ops:alice',
+    administration_note = 'Transcribed from the wrong column of the rate card on 2026-09-01.'
+WHERE provider = 'openai-main' AND model = 'gpt-4.1-mini'
+  AND effective_from_utc = '2026-09-01T00:00:00Z';
+```
+
+Effect on figures already reported: every hour this interval covers is recomputed at the new rate the
+next time anyone reads the rollup. A spend figure someone recorded before the correction will not
+match one read after it. Tell whoever holds the earlier figure; the database records only who made
+the change and when, not who was told.
+
+**Retire a price.** Set the end of its interval. Do not delete the row - the database refuses
+`DELETE` on this table, because a deleted price silently turns priced hours into unpriced ones and
+leaves nothing behind to explain the drop.
+
+```sql
+UPDATE incidentcompass.ai_model_pricing
+SET effective_to_utc = '2026-11-01T00:00:00Z',
+    administered_by = 'ops:alice',
+    administration_note = 'Model withdrawn by the provider.'
+WHERE provider = 'openai-main' AND model = 'gpt-4.1-mini' AND effective_to_utc IS NULL;
+```
+
+Effect on figures already reported: none before the end instant. From it onwards, calls to that
+model read as unpriced and appear in `unpricedCallCount` rather than in spend.
+
+**Check what is in the table**, including who last touched each row:
+
+```sql
+SELECT provider, model, currency,
+       input_token_price_per_million, output_token_price_per_million,
+       effective_from_utc, effective_to_utc,
+       administered_by, administered_at_utc, administration_note
+FROM incidentcompass.ai_model_pricing
+ORDER BY provider, model, effective_from_utc;
+```
+
+`administered_at_utc` is stamped by the database and cannot be set by the statement.
+`administered_by` and `administration_note` record only the most recent change to a row, which is the
+other reason to prefer closing an interval over editing one.
+
+**Upgrading a database that already holds overlapping prices.** The migration that adds these rails
+refuses to apply and names the conflicting provider/model pairs. It will not choose an interval to
+close on the operator's behalf. Close or correct one interval of each named pair by hand and rerun
+the upgrade; those rows were already ambiguous and therefore already unpriced, so closing them
+changes no figure the rollup ever reported.
+
+Rows written before the upgrade keep no author, which is honest: nothing recorded one. The prices
+seeded with the schema are the exception and name the schema.
+
 ## Backup
 
 Create and protect an explicit absolute host directory, then run:

@@ -140,6 +140,14 @@ price in force at the call timestamp rather than the current one, and a historic
 reproducible after a price change. Rows are operator-maintained database configuration; see
 [Cost tracking](cost-tracking.md) for the read model built on them.
 
+Reproducible does not mean frozen. Spend is recomputed from the price table on every read, so
+correcting a price in place changes what an already-closed window reports. Catalog migration version
+21 (`030-model-price-administration.sql`) is what keeps that honest rather than preventing it: a
+write must name its author, the change time is stamped by the database, two intervals cannot cover
+one instant for a provider and model, and a price is retired by setting `effective_to_utc` rather
+than deleted. `docs/single-host-production.md` gives the procedure and states the effect of each
+operation on figures already reported.
+
 ## Tool Calls
 
 Tool-call reproducibility on the live governed path comes from the triage ledger, not from a

@@ -141,6 +141,9 @@ Intake, the ledger, reports and the action outbox are added by numbered migratio
   confirmed Telegram and GitHub terminal results without changing the released 023/024 migrations.
   It also replaces the action approval lifecycle trigger function in place, keeping the transition
   set 023 defined, so the guard running today is the one this migration installed.
+- `030-model-price-administration.sql` adds the rails around `ai_model_pricing`, the one table whose
+  only writer is an operator at a prompt: required author, database-stamped change time, no
+  overlapping intervals for one provider and model, and no deletes.
 
 ## Memory Worker
 

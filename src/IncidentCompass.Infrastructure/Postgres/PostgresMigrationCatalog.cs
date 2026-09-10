@@ -33,7 +33,8 @@ internal static class PostgresMigrationCatalog
         new(18, "v0.4-artifact-redaction-marker", ["027-artifact-redaction-marker.sql"]),
         new(19, "v0.4-signal-payload-and-artifact-retention",
             ["028-signal-payload-and-artifact-retention.sql"]),
-        new(20, "v0.4-report-model-provenance", ["029-report-model-provenance.sql"])
+        new(20, "v0.4-report-model-provenance", ["029-report-model-provenance.sql"]),
+        new(21, "v0.4-model-price-administration", ["030-model-price-administration.sql"])
     ];
 
     private static PostgresSchemaMigration Released(

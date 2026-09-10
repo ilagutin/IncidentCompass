@@ -149,9 +149,10 @@ public sealed class CostRollupEndpointTests(PostgresRepositoryFixture postgres)
         await ActionApprovalTestSupport.ExecuteAsync(connectionString, """
             INSERT INTO incidentcompass.ai_model_pricing (
                 id, provider, model, currency, input_token_price_per_million,
-                output_token_price_per_million, effective_from_utc, effective_to_utc)
+                output_token_price_per_million, effective_from_utc, effective_to_utc,
+                administered_by)
             VALUES (@id, 'private-provider', 'private-model', 'USD', 1, 2,
-                '2026-08-03T00:00:00Z', '2026-08-04T00:00:00Z');
+                '2026-08-03T00:00:00Z', '2026-08-04T00:00:00Z', 'test:cost-rollup-endpoint');
             """, ("id", Guid.NewGuid()));
 
     private static Task SeedCallAsync(

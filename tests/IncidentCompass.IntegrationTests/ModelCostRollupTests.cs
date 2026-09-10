@@ -350,6 +350,30 @@ public sealed class ModelCostRollupTests(PostgresRepositoryFixture postgres)
         await InsertPriceAsync(connectionString, "alpha", "Model-A", "USD", 2m, 3m, DateTimeOffset.Parse("2026-08-01T01:00:00Z", CultureInfo.InvariantCulture), WindowEnd);
         await InsertPriceAsync(connectionString, "beta", "Model-B", "EUR", 4m, 6m, WindowStart, WindowEnd);
         await InsertPriceAsync(connectionString, "CaseProvider", "CaseModel", "USD", 1m, 1m, WindowStart, WindowEnd);
+        await SeedAmbiguousPricesAsync(connectionString);
+    }
+
+    /// <summary>
+    /// The two shapes of pricing ambiguity the reader has to fail closed on: a partial overlap and
+    /// two identical intervals.
+    /// </summary>
+    /// <remarks>
+    /// Since schema version 21 the database refuses to write either shape, so this reproduces the
+    /// state on purpose by dropping that constraint in this test's own database and leaving it
+    /// dropped. The constraint stops an operator creating ambiguity by hand; it does not reach a
+    /// database restored from a dump taken before version 21, or one whose constraint was removed
+    /// by hand, and rows like these can still arrive at the reader from there. The reader must
+    /// still refuse to arbitrate between two prices rather than pick one, which is what the
+    /// assertions in the matrix test check.
+    /// </remarks>
+    private static async Task SeedAmbiguousPricesAsync(string connectionString)
+    {
+        await ActionApprovalTestSupport.ExecuteAsync(
+            connectionString,
+            """
+            ALTER TABLE incidentcompass.ai_model_pricing
+                DROP CONSTRAINT ex_ai_model_pricing_no_overlap;
+            """);
         await InsertPriceAsync(connectionString, "overlap", "Model-O", "USD", 1m, 1m, WindowStart, WindowEnd);
         await InsertPriceAsync(connectionString, "overlap", "Model-O", "USD", 2m, 2m, DateTimeOffset.Parse("2026-08-01T01:00:00Z", CultureInfo.InvariantCulture), DateTimeOffset.Parse("2026-08-01T02:00:00Z", CultureInfo.InvariantCulture));
         await InsertPriceAsync(connectionString, "tie", "Model-T", "USD", 1m, 1m, WindowStart, WindowEnd);
@@ -368,8 +392,10 @@ public sealed class ModelCostRollupTests(PostgresRepositoryFixture postgres)
         ActionApprovalTestSupport.ExecuteAsync(connectionString, """
             INSERT INTO incidentcompass.ai_model_pricing (
                 id, provider, model, currency, input_token_price_per_million,
-                output_token_price_per_million, effective_from_utc, effective_to_utc)
-            VALUES (@id, @provider, @model, @currency, @input, @output, @from, @to);
+                output_token_price_per_million, effective_from_utc, effective_to_utc,
+                administered_by)
+            VALUES (@id, @provider, @model, @currency, @input, @output, @from, @to,
+                'test:cost-rollup');
             """, ("id", Guid.NewGuid()), ("provider", provider), ("model", model), ("currency", currency),
             ("input", inputPrice), ("output", outputPrice), ("from", fromUtc), ("to", toUtc));
 

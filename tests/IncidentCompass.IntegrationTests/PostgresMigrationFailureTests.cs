@@ -32,7 +32,7 @@ public sealed class PostgresMigrationFailureTests(PostgresRepositoryFixture fixt
         await RunMigrationsAsync(database.ConnectionString);
 
         Assert.Equal(
-            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20],
+            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21],
             await ReadAppliedVersionsAsync(database.ConnectionString));
         Assert.True(await HasRequiredV02IndexesAndColumnsAsync(database.ConnectionString));
         await AssertPreProjectionActionPreservedAsync(database.ConnectionString, actionId);
@@ -61,7 +61,7 @@ public sealed class PostgresMigrationFailureTests(PostgresRepositoryFixture fixt
         await RunMigrationsAsync(database.ConnectionString);
 
         Assert.Equal(
-            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20],
+            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21],
             await ReadAppliedVersionsAsync(database.ConnectionString));
         Assert.True(await HasRequiredV02IndexesAndColumnsAsync(database.ConnectionString));
         await AssertPreProjectionActionPreservedAsync(database.ConnectionString, actionId);
@@ -89,10 +89,72 @@ public sealed class PostgresMigrationFailureTests(PostgresRepositoryFixture fixt
         await RunMigrationsAsync(database.ConnectionString);
 
         Assert.Equal(
-            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20],
+            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21],
             await ReadAppliedVersionsAsync(database.ConnectionString));
         Assert.True(await HasRequiredV02IndexesAndColumnsAsync(database.ConnectionString));
         await AssertCostRollupHistoryPreservedAsync(database.ConnectionString, costHistory);
+    }
+
+    /// <summary>
+    /// Version 21 will not close an ambiguity it did not create. A database that already holds two
+    /// prices covering one instant is told which pair is wrong and left alone until an operator
+    /// decides which interval to close; picking one here would be exactly the arbitration the read
+    /// path refuses to perform.
+    /// </summary>
+    [DockerAvailableFact]
+    public async Task Version21RefusesToUpgradeOverAmbiguousPricesAndNamesThem()
+    {
+        await using var database = await MigrationDatabase.CreateAsync(fixture);
+        using (var failing = CreateServiceProvider(
+                   database.ConnectionString, new FailingMigrationInjector(21)))
+        {
+            await Assert.ThrowsAsync<InvalidOperationException>(() => failing
+                .GetRequiredService<PostgresMigrationRunner>()
+                .MigrateAsync(TestContext.Current.CancellationToken));
+        }
+
+        await ExecuteAsync(database.ConnectionString, """
+            INSERT INTO incidentcompass.ai_model_pricing (
+                id, provider, model, currency, input_token_price_per_million,
+                output_token_price_per_million, effective_from_utc, effective_to_utc)
+            VALUES
+                (gen_random_uuid(), 'stale-provider', 'stale-model', 'USD', 1, 2,
+                 '2026-01-01T00:00:00Z', '2026-03-01T00:00:00Z'),
+                (gen_random_uuid(), 'stale-provider', 'stale-model', 'USD', 3, 4,
+                 '2026-02-01T00:00:00Z', NULL);
+            """);
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => RunMigrationsAsync(database.ConnectionString));
+
+        Assert.Contains("migration 21", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(
+            "overlapping effective intervals",
+            exception.InnerException!.Message,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "stale-provider/stale-model",
+            exception.InnerException.Message,
+            StringComparison.Ordinal);
+        Assert.Equal(
+            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20],
+            await ReadAppliedVersionsAsync(database.ConnectionString));
+        Assert.Equal(2, await CountSqlAsync(database.ConnectionString, """
+            SELECT count(*) FROM incidentcompass.ai_model_pricing WHERE provider = 'stale-provider';
+            """));
+
+        // Closing one interval by hand is the whole remedy, and it changes no reported figure:
+        // both rows were already ambiguous, so both were already unpriced.
+        await ExecuteAsync(database.ConnectionString, """
+            UPDATE incidentcompass.ai_model_pricing
+            SET effective_to_utc = '2026-02-01T00:00:00Z'
+            WHERE provider = 'stale-provider' AND effective_from_utc = '2026-01-01T00:00:00Z';
+            """);
+        await RunMigrationsAsync(database.ConnectionString);
+
+        Assert.Equal(
+            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21],
+            await ReadAppliedVersionsAsync(database.ConnectionString));
     }
 
     [DockerAvailableFact]

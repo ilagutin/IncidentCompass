@@ -107,10 +107,55 @@ unpriced rather than as zero-cost.
 - input token price;
 - output token price;
 - embedding token price where applicable;
-- effective dates.
+- effective dates;
+- who last changed the row, when, and optionally why.
 
 Rows are operator-maintained database configuration in this reference implementation. There is no
-public price administration or reload API, and currencies are never converted or combined.
+public price administration or reload API, and currencies are never converted or combined. The
+rollup re-reads the table on every request, so an edit takes effect immediately, with no restart and
+no reload step.
+
+### Editing A Price Is Editing History
+
+The table has no tenant column: a price is host-global, while every API identity here is
+tenant-scoped. That is why there is no price endpoint. Adding one would need a cross-tenant admin
+identity that this codebase does not have, and there is no admin or role concept anywhere in `src/`
+to build it from. So the writer is an operator at a `psql` prompt.
+
+An edit made today changes the answer the rollup gives for a window that closed last month, because
+spend is recomputed from ledger rows and the current price table every time it is asked for. There
+is no stored spend figure to be inconsistent with; there is only the figure someone already read and
+wrote down. Schema version 21 constrains the hand-edit accordingly.
+
+**A change names an author and a moment.** `administered_by` is operator-asserted free text and a
+write without it is refused. It is deliberately not called an actor or a principal: nothing
+authenticates it, and a column claiming an authenticated identity would be worth less than an honest
+label. `administered_at_utc` is the opposite - the database stamps it on every insert and update and
+discards whatever the statement supplied, so the timestamp cannot be quietly backdated.
+`administration_note` is optional and is where the reason for a correction belongs. These columns
+record the latest change, not a history of changes: a second correction overwrites the first one's
+attribution, which is why the procedure below prefers closing an interval to editing one. Rows
+written before version 21 keep NULL, because their author is not something this schema can name. The
+five prices seeded by the schema are backfilled to name the schema, because theirs is.
+
+**Two prices cannot cover one instant.** An exclusion constraint refuses an interval that overlaps
+an existing one for the same provider and model. The rollup already treats that ambiguity as
+unpriced and still does, which is the right behaviour at read time and remains the fallback for a
+database restored from a dump taken before version 21. But silently dropping the spend is a poor way
+to learn about a mistyped date: the operator who made it sees only a number that is too low. The
+constraint moves the failure to the moment of the mistake. Intervals are half-open, so an interval
+ending exactly where the next begins does not overlap, which is the normal shape of a price change.
+
+**A price cannot be deleted.** The database refuses `DELETE`, the way it refuses changes to
+published reports and action approvals. A deleted price is the one edit whose damage cannot be seen
+afterwards: the row is gone, the hours it priced quietly become unpriced, and a figure already
+reported to someone drops with nothing left to explain why. Retirement has a non-destructive form -
+set `effective_to_utc` - which stops the price applying after that instant and leaves every hour
+before it priced exactly as it was reported. Updates stay allowed, because correcting a genuinely
+wrong price is legitimate and now leaves a name, a time and a reason behind it.
+
+`docs/single-host-production.md` has the statements for adding, correcting and retiring a price, and
+says what each does to figures already reported.
 
 ## Quotas
 
@@ -120,3 +165,43 @@ not: the per-attempt orchestrator budget bounds one investigation's tokens, work
 and the API rate limiter bounds requests per authenticated key. Neither tracks spend, and neither
 accumulates across investigations or across a billing period. A real quota would need its own
 governed policy and its own enforcement point rather than a threshold read off this rollup.
+
+## Cost Alerts Are Not Built
+
+Durable cost alerts - a background evaluator that compares this rollup against a threshold and
+delivers a notification someone acknowledges - are deliberately not implemented. Three of the
+concepts such a feature needs have no coherent definition in this system, and the fourth is better
+served outside it.
+
+**Nobody owns the alert.** The evaluator would be a background pass, and the background identity
+here has no tenant at all. Prices are host-global while every read of this rollup is tenant-scoped,
+so a threshold crossed against host-wide prices is not a fact about any one tenant, and delivering
+it to a tenant would alert that tenant about numbers it cannot see for itself. The obvious fix is to
+address the alert to an operator instead, but there is no cross-tenant operator principal to address
+it to: the action operator identity in this system is derived from a tenant-scoped API key, and any
+valid key is the minimal operator for its own tenant and nothing wider.
+
+**Acknowledgement would mean nothing.** The acknowledgement this system already has is load-bearing
+because it gates something: an action approval decides whether a dispatch happens, and until someone
+decides, nothing is sent. Acknowledging a cost alert would gate no dispatch, suppress no effect and
+release no budget. It would be a read receipt wearing the vocabulary of a governance decision, and
+reusing that vocabulary for something with no consequence attached devalues it where it does have
+one.
+
+**Delivery would cost more than the feature.** The one delivery path in this repository runs through
+the action approval outbox, and `action_approvals.origin_report_id` is `NOT NULL` with a foreign key
+to a published report. A threshold breach has no report: it is an aggregate over a window, not a
+conclusion about an incident. Making it fit would mean relaxing that column on the most
+trigger-guarded table in the schema, which weakens the provenance requirement for every action that
+already flows through it - a real loss of action policy in exchange for a notification.
+
+**And an operator's own alerting does this better.** `GET /api/v1/observability/cost-rollups` is a
+plain authenticated read. An alerting rule in whatever the operator already runs can poll it, keep
+its own thresholds and history, route to whoever should be woken, and deduplicate and silence the
+way that tool already knows how to - none of which an in-process evaluator here would do as well.
+This project describes itself as a consumer of an observability pipeline rather than an
+observability backend, and cost alerting is exactly the responsibility that framing puts on the
+other side of the boundary.
+
+What this leaves out on purpose: threshold configuration, an alert evaluator, an acknowledgement
+lifecycle, spend quotas, a usage dashboard and cost exports.
