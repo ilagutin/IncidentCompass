@@ -220,6 +220,37 @@ The ledger does not store rendered prompts, full provider responses, document te
 
 `ModelCall` rows and token-accounting `BudgetEvent` rows are mirrored by bounded application log events 3201-3204 and 3211-3212 above, while reprompt `BudgetEvent` rows are mirrored by events 3401 and 3402, so live model observability is readable from logs and auditable from the ledger.
 
+### Report Model Provenance
+
+A published report says which models produced it. One investigation is many model calls - one or
+more orchestrator turns, one turn per delegated role plus that role's own tool and correction turns,
+and any reprompt turns - and a role names its own route, so a single attempt can be answered by
+several routes, providers and models. There is therefore no single "the model that wrote this
+report", and `triage_reports.model_provenance` holds a list rather than a name.
+
+Each element is one distinct combination of call kind, role, route, provider and model that answered
+during the publishing attempt, with how many calls it answered, in the order each combination first
+answered. Two models used for the same role are two elements, so the claim stays true if a later
+change lets one role run on more than one route. The element shape is the public
+`TriageReportModelParticipant` record and reaches API callers as `modelProvenance` on
+`GET /api/v1/triage-reports/{id}` and `GET /api/v1/faults/{faultId}/triage-report`.
+
+The value is derived inside the publish transaction from that attempt's own `ModelCall` ledger rows,
+which record what actually answered rather than what the route asked for. It is a projection of the
+ledger with one producer rather than a second accumulator kept in step by hand, and no part of it
+comes from model output: a `publish_report` body that asserts its own provenance is ignored. Only
+successful calls are counted, because a failed call produced nothing the report is built on and its
+accounting belongs to the attempt that failed.
+
+It is stored on the report as well as in the ledger because a report row is immutable and never
+deleted while ledger rows carry no such guarantee, and a report that could stop being able to name
+its own models is not a durable claim. The `ReportPublished` ledger row is deliberately not given a
+second copy: it already points at the report through `payload_ref`.
+
+`model_provenance` is `null` for a report published before provenance was recorded. Reports are
+immutable, so those rows cannot be backfilled, and `null` is deliberately not the same claim as the
+empty list, which means provenance was derived and the attempt recorded no model call.
+
 ## Hourly Cost Rollups
 
 `GET /api/v1/observability/cost-rollups` reads these durable `ModelCall` rows for the authenticated

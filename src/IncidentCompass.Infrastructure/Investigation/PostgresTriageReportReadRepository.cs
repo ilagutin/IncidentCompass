@@ -101,7 +101,22 @@ internal sealed class PostgresTriageReportReadRepository(PostgresDataSourceProvi
             reader.GetString(5), reader.GetString(6), reader.IsDBNull(7) ? null : reader.GetBoolean(7),
             reader.IsDBNull(8) ? string.Empty : reader.GetString(8), reader.GetFieldValue<string[]>(9),
             reader.GetString(10), reader.GetDateTimeOffset(11), reader.IsDBNull(12) ? null : reader.GetGuid(12),
-            supersededByReportId, supersededByReportId is null, []);
+            supersededByReportId, supersededByReportId is null, [],
+            ReadModelProvenance(reader, 14));
+    }
+
+    /// <summary>
+    /// Reads the stored model provenance, keeping a NULL column NULL. A report published before
+    /// provenance was recorded is immutable and cannot be backfilled, so it says nothing here
+    /// rather than claiming an empty list of models.
+    /// </summary>
+    private static IReadOnlyList<TriageReportModelParticipant>? ReadModelProvenance(
+        NpgsqlDataReader reader,
+        int ordinal)
+    {
+        return reader.IsDBNull(ordinal)
+            ? null
+            : JsonSerializer.Deserialize<IReadOnlyList<TriageReportModelParticipant>>(reader.GetString(ordinal));
     }
 
     private static async Task<IReadOnlyList<TriageReportEvidenceResponse>> LoadEvidenceAsync(
@@ -136,7 +151,7 @@ internal sealed class PostgresTriageReportReadRepository(PostgresDataSourceProvi
     private const string ReportSelect = """
         SELECT r.id, r.fault_id, r.status, r.summary, r.classification, r.confidence, r.documentation_fit,
                r.is_mass_issue, r.recommended_next_action, r.limitations, r.config_hash, r.created_at_utc,
-               r.supersedes_report_id, successor.id
+               r.supersedes_report_id, successor.id, r.model_provenance::text
         FROM incidentcompass.triage_reports r
         JOIN incidentcompass.faults fault ON fault.id = r.fault_id
         LEFT JOIN LATERAL (

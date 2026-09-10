@@ -32,7 +32,8 @@ internal static class PostgresMigrationCatalog
         Released(17, "v0.3-model-cost-rollup-index", ["026-model-cost-rollup-index.sql"]),
         new(18, "v0.4-artifact-redaction-marker", ["027-artifact-redaction-marker.sql"]),
         new(19, "v0.4-signal-payload-and-artifact-retention",
-            ["028-signal-payload-and-artifact-retention.sql"])
+            ["028-signal-payload-and-artifact-retention.sql"]),
+        new(20, "v0.4-report-model-provenance", ["029-report-model-provenance.sql"])
     ];
 
     private static PostgresSchemaMigration Released(

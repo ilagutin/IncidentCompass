@@ -2034,6 +2034,15 @@
             "items": {
               "$ref": "#/components/schemas/TriageReportEvidenceResponse"
             }
+          },
+          "modelProvenance": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/TriageReportModelParticipant"
+            }
           }
         }
       },
@@ -2191,6 +2200,52 @@
             ]
           }
         }
+      },
+      "TriageReportModelParticipant": {
+        "required": [
+          "callKind",
+          "role",
+          "routeId",
+          "provider",
+          "model",
+          "callCount"
+        ],
+        "type": "object",
+        "properties": {
+          "callKind": {
+            "type": "string",
+            "description": "The model-call kind that this model answered: \u0060orchestrator\u0060 or \u0060worker\u0060."
+          },
+          "role": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "The worker role that this model answered for, or \u0060null\u0060 for orchestrator calls."
+          },
+          "routeId": {
+            "type": "string",
+            "description": "The configured route whose call this model answered."
+          },
+          "provider": {
+            "type": "string",
+            "description": "The adapter identifier that reported the answer."
+          },
+          "model": {
+            "type": "string",
+            "description": "The provider model name that reported the answer."
+          },
+          "callCount": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "description": "How many calls in the attempt this exact combination answered.",
+            "format": "int32"
+          }
+        },
+        "description": "One distinct model that answered during the job attempt that produced a published report."
       }
     },
     "securitySchemes": {

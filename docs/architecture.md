@@ -126,6 +126,8 @@ Intake, the ledger, reports and the action outbox are added by numbered migratio
 - `008-triage-ledger.sql` provides append-only DB-ordered triage events.
 - `009-triage-reports-minimal.sql` defines grounded `triage_reports` plus `triage_evidence`
   persistence.
+- `029-report-model-provenance.sql` adds the report's own list of the models that answered the
+  attempt that published it, derived from that attempt's `ModelCall` ledger rows.
 - `023-action-approvals-outbox.sql` adds immutable post-report approval tuples, closed provenance,
   `ProposedAction` and `ActionResult` artifacts and constrained action lifecycle events.
 - `024-post-report-action-intents.sql` adds the durable evaluation queue that can create those
@@ -269,6 +271,12 @@ state, labels, assignees, close/reopen and repository mutation remain outside th
 ## Grounded Reports
 
 `publish_report` is a backend-grounded closeout instead of a model-authored row write. The model supplies report fields and evidence `referenceId` values, but the backend validates the report shape, rejects non-citable or out-of-attempt references, derives `is_mass_issue` from the job-level `NeighborSet`, derives evidence kind from artifact state and `memory_items.kind`, and persists `triage_reports`, `triage_evidence`, job/fault terminal state and `ReportPublished` in one transaction. `WorkerOutput` artifacts are never citable. `GET /api/v1/triage-reports/{id}` returns the report and grounded evidence, including the cited artifact payload.
+
+The same transaction derives `model_provenance` from that attempt's `ModelCall` ledger rows, so a
+report names every distinct call kind, role, route, provider and model that answered it rather than
+one model name that would hide a worker role running on a different route. It is backend-derived
+from what actually answered and cannot be asserted by `publish_report`. See
+`docs/observability.md`, "Report Model Provenance".
 
 ## Report Lifecycle
 

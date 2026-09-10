@@ -450,6 +450,12 @@ accepts only citable artifacts from the same job/current attempt, never `WorkerO
 evidence kind and `is_mass_issue` itself, and marks prior reports as untrusted hypotheses in the
 artifact payload.
 
+The report's own account of which models produced it is derived the same way. `model_provenance` is
+read inside the publish transaction from that attempt's `ModelCall` ledger rows, which record what
+actually answered rather than what the route asked for, so a `publish_report` body that asserts its
+own provenance changes nothing about what is stored. See `docs/observability.md`, "Report Model
+Provenance".
+
 The durable post-report evaluation queue is backend-owned. Report publication selects only startup-
 registered workflows whose exact tool id, workflow version, category and logical target match the
 external-action registry, then commits their intents atomically with the report. Canonical workflow
