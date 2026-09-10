@@ -14,5 +14,6 @@ public sealed record FaultLedgerEventResponse(
     int? TokensDelta,
     int? WorkersDelta,
     string? PayloadRef,
+    string PayloadState,
     string ConfigHash,
     DateTimeOffset CreatedAtUtc);

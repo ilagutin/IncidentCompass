@@ -625,8 +625,8 @@ public sealed class InvestigationModelCallerTests
             string scope,
             CancellationToken cancellationToken) => Task.FromResult(false);
 
-        public Task<IReadOnlyList<TriageLedgerEntry>> ReadByFaultIdAsync(Guid faultId, string tenantId, CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<TriageLedgerEntry>>([]);
+        public Task<IReadOnlyList<FaultLedgerEntry>> ReadByFaultIdAsync(Guid faultId, string tenantId, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<FaultLedgerEntry>>([]);
     }
 
     private sealed class RecordingLedgerWriter : ITriageLedgerWriter

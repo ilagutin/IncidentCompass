@@ -25,21 +25,28 @@ public sealed class GetFaultLedgerQueryHandler(
             cancellationToken);
         return new FaultLedgerResponse(
             fault.Id,
-            entries.Select(static entry => new FaultLedgerEventResponse(
-                entry.Id,
-                entry.JobId,
-                entry.Attempt,
-                entry.EventType.ToString(),
-                entry.Role,
-                entry.ToolName,
-                entry.Decision?.ToString(),
-                entry.Rationale,
-                entry.DecisionReason,
-                entry.ToolStatus?.ToString(),
-                entry.TokensDelta,
-                entry.WorkersDelta,
-                entry.PayloadRef,
-                entry.ConfigHash,
-                entry.CreatedAtUtc)).ToArray());
+            entries.Select(ToEvent).ToArray());
+    }
+
+    private static FaultLedgerEventResponse ToEvent(FaultLedgerEntry item)
+    {
+        var entry = item.Entry;
+        return new FaultLedgerEventResponse(
+            entry.Id,
+            entry.JobId,
+            entry.Attempt,
+            entry.EventType.ToString(),
+            entry.Role,
+            entry.ToolName,
+            entry.Decision?.ToString(),
+            entry.Rationale,
+            entry.DecisionReason,
+            entry.ToolStatus?.ToString(),
+            entry.TokensDelta,
+            entry.WorkersDelta,
+            entry.PayloadRef,
+            item.PayloadState.ToString(),
+            entry.ConfigHash,
+            entry.CreatedAtUtc);
     }
 }

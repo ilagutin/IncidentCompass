@@ -587,7 +587,7 @@
         "tags": [
           "action-approvals"
         ],
-        "summary": "List tenant-scoped action approvals with paired external-resource filtering.",
+        "summary": "List tenant-scoped action approvals by paired external resource or by fault.",
         "operationId": "ListActionApprovals",
         "parameters": [
           {
@@ -628,6 +628,14 @@
             "in": "query",
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "faultId",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
             }
           }
         ],
@@ -1054,6 +1062,7 @@
           "status",
           "approvalContractVersion",
           "originReportId",
+          "faultId",
           "toolId",
           "category",
           "mode",
@@ -1090,6 +1099,10 @@
             "format": "int32"
           },
           "originReportId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "faultId": {
             "type": "string",
             "format": "uuid"
           },
@@ -1532,6 +1545,7 @@
           "tokensDelta",
           "workersDelta",
           "payloadRef",
+          "payloadState",
           "configHash",
           "createdAtUtc"
         ],
@@ -1619,6 +1633,9 @@
               "null",
               "string"
             ]
+          },
+          "payloadState": {
+            "type": "string"
           },
           "configHash": {
             "type": "string"

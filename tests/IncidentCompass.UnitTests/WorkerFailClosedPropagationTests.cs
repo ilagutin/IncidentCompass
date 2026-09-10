@@ -379,9 +379,9 @@ public sealed class WorkerFailClosedPropagationTests
             TriageJob job, string toolName, string scope, CancellationToken cancellationToken) =>
             Task.FromResult(true);
 
-        public Task<IReadOnlyList<TriageLedgerEntry>> ReadByFaultIdAsync(
+        public Task<IReadOnlyList<FaultLedgerEntry>> ReadByFaultIdAsync(
             Guid faultId, string tenantId, CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<TriageLedgerEntry>>([]);
+            Task.FromResult<IReadOnlyList<FaultLedgerEntry>>([]);
     }
 
     private sealed class RecordingLedgerWriter : ITriageLedgerWriter

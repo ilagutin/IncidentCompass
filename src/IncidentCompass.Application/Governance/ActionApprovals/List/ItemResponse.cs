@@ -5,6 +5,7 @@ public sealed record ActionApprovalListItemResponse(
     string Status,
     int ApprovalContractVersion,
     Guid OriginReportId,
+    Guid FaultId,
     string ToolId,
     string Category,
     string Mode,

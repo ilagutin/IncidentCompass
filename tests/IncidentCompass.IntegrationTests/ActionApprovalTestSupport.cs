@@ -4,7 +4,9 @@ using IncidentCompass.Application;
 using IncidentCompass.Application.Governance.ActionApprovals;
 using IncidentCompass.Application.Governance.ActionApprovals.Testing;
 using IncidentCompass.Application.Investigation.Reports;
+using IncidentCompass.Application.Tickets;
 using IncidentCompass.Domain.Incidents;
+using IncidentCompass.Domain.Incidents.Actions;
 using IncidentCompass.Infrastructure;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -245,6 +247,46 @@ internal static class ActionApprovalTestSupport
             ("payload_ref", "artifact:" + artifactId),
             ("config_hash", origin.ConfigHash));
         return artifactId;
+    }
+
+    /// <summary>
+    /// Drives one governed action all the way to <c>executed</c> with a GitHub issue audit
+    /// projection on it, which is the only state in which those four columns are ever populated.
+    /// Callers that want a projection to exist have to go through the real dispatch path to get one,
+    /// because the lifecycle trigger installed by 025 rejects setting them any other way.
+    /// </summary>
+    public static async Task<Guid> CompleteGitHubIssueAsync(
+        string connectionString,
+        ActionApprovalOriginFixture origin,
+        string issueNumber,
+        string proposalKey,
+        string dispatchOwner)
+    {
+        using var services = CreateServices(connectionString);
+        var proposal = Proposal(origin, proposalKey, automaticallyApproved: true) with
+        {
+            LogicalTargetId = TicketCreateTool.LogicalTargetId
+        };
+        var action = (await services.GetRequiredService<IActionProposalRepository>().CreateAsync(
+            proposal,
+            TestContext.Current.CancellationToken)).Action;
+        var dispatch = services.GetRequiredService<IActionDispatchRepository>();
+        var claim = await dispatch.TryClaimAsync(
+            action.Id, dispatchOwner, TimeSpan.FromMinutes(1), TestContext.Current.CancellationToken)
+            ?? throw new InvalidOperationException("The approved action could not be claimed.");
+        var completed = await dispatch.CompleteAsync(
+            new ActionTerminalRequest(
+                action.Id,
+                claim.Fence,
+                ActionApprovalState.Executed,
+                Encoding.UTF8.GetBytes($"{{\"issueNumber\":\"{issueNumber}\",\"provider\":\"github\"}}"),
+                "GitHub accepted the issue.",
+                null,
+                ExternalActionAuditProjection.GitHubIssueCreated(issueNumber)),
+            TestContext.Current.CancellationToken);
+        return completed
+            ? action.Id
+            : throw new InvalidOperationException("The claimed action could not be completed.");
     }
 
     public static async Task<long> CountAsync(

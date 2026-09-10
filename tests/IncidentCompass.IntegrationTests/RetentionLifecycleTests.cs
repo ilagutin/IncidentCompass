@@ -202,14 +202,26 @@ public sealed class RetentionLifecycleTests(PostgresRepositoryFixture postgres)
     }
 
     /// <summary>
-    /// The audit ledger keeps a compact reference to a payload it does not own: <c>payload_ref</c> is
-    /// plain text with no foreign key, written as <c>artifact:{id}</c>, and the reader never joins the
-    /// artifacts table. So reconstruction already tolerates a reaped payload, and this is the
-    /// regression that keeps it that way - a reader that started joining the artifacts table would
-    /// silently drop ledger entries once retention had run.
+    /// The two halves of surviving retention, which are not the same property.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The first half is that reconstruction does not break. The ledger keeps a compact reference to
+    /// a payload it does not own - <c>payload_ref</c> is plain text with no foreign key, written as
+    /// <c>artifact:{id}</c> - and the payload state is resolved as a scalar expression rather than a
+    /// join, so every event still comes back after its payload is gone. A reader that turned that
+    /// expression into a join would silently drop entries once retention had run.
+    /// </para>
+    /// <para>
+    /// The second half is that the timeline says so. Not crashing is not the same as being honest:
+    /// before this, a reaped reference and a live one rendered as the identical string and a reader
+    /// could not tell which it was holding. The <c>Retained</c> assertion before the reap is what
+    /// makes the <c>Reaped</c> assertion after it mean anything - without it the test would pass
+    /// against a reader that answered <c>Reaped</c> for everything.
+    /// </para>
+    /// </remarks>
     [DockerAvailableFact]
-    public async Task LedgerStillReconstructsAfterItsReferencedPayloadIsReaped()
+    public async Task ReapedLedgerPayloadIsReconstructedAndReportedAsReaped()
     {
         await using var database = await ActionApprovalDatabase.CreateAsync(postgres);
         var connectionString = database.ConnectionString;
@@ -226,17 +238,101 @@ public sealed class RetentionLifecycleTests(PostgresRepositoryFixture postgres)
             ("job_id", origin.JobId),
             ("artifact_id", artifactId));
         using var services = ActionApprovalTestSupport.CreateServices(connectionString);
+        var ledger = services.GetRequiredService<ITriageLedgerReader>();
 
+        var before = await ledger.ReadByFaultIdAsync(
+            origin.FaultId, origin.TenantId, TestContext.Current.CancellationToken);
         var reaped = await services.GetRequiredService<IAttemptArtifactRetentionRepository>()
             .ReapAsync(RecentCutoff(), maxRows: 100, TestContext.Current.CancellationToken);
-        var entries = await services.GetRequiredService<ITriageLedgerReader>()
-            .ReadByFaultIdAsync(origin.FaultId, origin.TenantId, TestContext.Current.CancellationToken);
+        var after = await ledger.ReadByFaultIdAsync(
+            origin.FaultId, origin.TenantId, TestContext.Current.CancellationToken);
 
         Assert.Equal(1, reaped);
         Assert.False(await ArtifactExistsAsync(connectionString, artifactId));
-        var toolResult = Assert.Single(entries, entry => entry.ToolName == "ticket_search");
-        Assert.Equal("artifact:" + artifactId, toolResult.PayloadRef);
-        Assert.Contains(entries, entry => entry.ToolName == "publish_report");
+        Assert.Equal(
+            before.Select(static item => item.Entry.Id),
+            after.Select(static item => item.Entry.Id));
+        Assert.Equal(
+            TriageLedgerPayloadState.Retained,
+            Assert.Single(before, item => item.Entry.ToolName == "ticket_search").PayloadState);
+        var toolResult = Assert.Single(after, item => item.Entry.ToolName == "ticket_search");
+        Assert.Equal("artifact:" + artifactId, toolResult.Entry.PayloadRef);
+        Assert.Equal(TriageLedgerPayloadState.Reaped, toolResult.PayloadState);
+
+        // A published report is not an attempt artifact, and 018-report-lifecycle.sql rejects DELETE
+        // on `triage_reports` outright, so the reap can never take one. The timeline says that
+        // rather than leaving the reader to infer it from a prefix.
+        var published = Assert.Single(after, item => item.Entry.ToolName == "publish_report");
+        Assert.StartsWith("report:", published.Entry.PayloadRef);
+        Assert.Equal(TriageLedgerPayloadState.NotReapable, published.PayloadState);
+    }
+
+    /// <summary>
+    /// The compact external-action audit projection has to survive retention, and the honest way to
+    /// show that is not to observe that today's cutoffs happen to spare it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Both operations run here with a cutoff in the future, so nothing in this database is
+    /// protected by being too young to be eligible. The reap still takes only the stale tool-result
+    /// artifact: the two artifact kinds that are an audit record of a governed action are excluded
+    /// by kind, and the proposal artifact is a foreign key of the approval besides.
+    /// </para>
+    /// <para>
+    /// The last two assertions are the load-bearing ones. Equal projection columns before and after
+    /// would only say that today's predicates do not reach the row. What says retention
+    /// <em>cannot</em> reach it is that <c>action_approvals</c> refuses DELETE outright and refuses
+    /// any UPDATE of those four columns outside the single approved-to-executed transition that sets
+    /// them, so a future retention predicate that did try would abort rather than succeed quietly.
+    /// </para>
+    /// </remarks>
+    [DockerAvailableFact]
+    public async Task RetentionCannotMutateTheExternalActionAuditProjection()
+    {
+        await using var database = await ActionApprovalDatabase.CreateAsync(postgres);
+        var connectionString = database.ConnectionString;
+        var origin = await ActionApprovalTestSupport.SeedOriginAsync(connectionString);
+        var actionId = await ActionApprovalTestSupport.CompleteGitHubIssueAsync(
+            connectionString, origin, "42", "retention-projection", "retention-projection-worker");
+        var staleArtifactId = await ActionApprovalTestSupport.SeedTicketSearchResultAsync(
+            connectionString, origin);
+        await ExecuteAsync(
+            connectionString,
+            "UPDATE incidentcompass.triage_jobs SET attempt = 2 WHERE id = @job_id;",
+            ("job_id", origin.JobId));
+        using var services = ActionApprovalTestSupport.CreateServices(connectionString);
+        var projectionBefore = await ReadProjectionAsync(connectionString, actionId);
+
+        var reaped = await services.GetRequiredService<IAttemptArtifactRetentionRepository>()
+            .ReapAsync(FutureCutoff(), maxRows: 1000, TestContext.Current.CancellationToken);
+        var compacted = await services.GetRequiredService<ISignalPayloadCompactionRepository>()
+            .CompactAsync(FutureCutoff(), maxRows: 1000, TestContext.Current.CancellationToken);
+        var projectionAfter = await ReadProjectionAsync(connectionString, actionId);
+
+        Assert.Equal(1, reaped);
+        Assert.Equal(1, compacted);
+        Assert.False(await ArtifactExistsAsync(connectionString, staleArtifactId));
+        Assert.Equal("github_issue|42|absent|open", projectionBefore);
+        Assert.Equal(projectionBefore, projectionAfter);
+        Assert.Equal(1, await CountSurvivingActionResultAsync(connectionString, actionId));
+        Assert.Equal(1, await CountResolvableProposalArtifactAsync(connectionString, actionId));
+
+        var delete = await Assert.ThrowsAsync<PostgresException>(() => ExecuteAsync(
+            connectionString,
+            "DELETE FROM incidentcompass.action_approvals WHERE id = @id;",
+            ("id", actionId)));
+        var update = await Assert.ThrowsAsync<PostgresException>(() => ExecuteAsync(
+            connectionString,
+            "UPDATE incidentcompass.action_approvals SET external_resource_id = '99' WHERE id = @id;",
+            ("id", actionId)));
+
+        Assert.Equal(
+            "action approvals are append-only lifecycle records",
+            delete.MessageText);
+        Assert.Equal(
+            "external action audit projection may be set only during successful terminal transition",
+            update.MessageText);
+        Assert.Equal(projectionBefore, await ReadProjectionAsync(connectionString, actionId));
     }
 
     /// <summary>
@@ -509,6 +605,42 @@ public sealed class RetentionLifecycleTests(PostgresRepositoryFixture postgres)
     }
 
     private static DateTimeOffset RecentCutoff() => DateTimeOffset.UtcNow.AddDays(-1);
+
+    // A cutoff nothing in a freshly created test database can be younger than, so a row that
+    // survives a run survives on an exclusion rather than on its age.
+    private static DateTimeOffset FutureCutoff() => DateTimeOffset.UtcNow.AddDays(1);
+
+    private static async Task<string> ReadProjectionAsync(string connectionString, Guid actionId) =>
+        (string)(await ActionApprovalTestSupport.ScalarAsync(
+            connectionString,
+            """
+            SELECT concat_ws('|', external_resource_kind, external_resource_id,
+                             external_before_state, external_after_state)
+            FROM incidentcompass.action_approvals
+            WHERE id = @id;
+            """,
+            ("id", actionId)))!;
+
+    private static Task<long> CountSurvivingActionResultAsync(string connectionString, Guid actionId) =>
+        ActionApprovalTestSupport.CountAsync(
+            connectionString,
+            """
+            SELECT count(*)
+            FROM incidentcompass.triage_artifacts
+            WHERE kind = 'ActionResult' AND domain_ref = @ref;
+            """,
+            ("ref", "action:" + actionId));
+
+    private static Task<long> CountResolvableProposalArtifactAsync(string connectionString, Guid actionId) =>
+        ActionApprovalTestSupport.CountAsync(
+            connectionString,
+            """
+            SELECT count(*)
+            FROM incidentcompass.action_approvals approval
+            JOIN incidentcompass.triage_artifacts artifact ON artifact.id = approval.proposal_artifact_id
+            WHERE approval.id = @id;
+            """,
+            ("id", actionId));
 
     private static Task<long> CountArtifactsAsync(string connectionString) =>
         ActionApprovalTestSupport.CountAsync(

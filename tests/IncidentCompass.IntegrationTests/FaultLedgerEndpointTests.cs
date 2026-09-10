@@ -43,6 +43,7 @@ public sealed class FaultLedgerEndpointTests(PostgresRepositoryFixture postgres)
             decision: "Allowed",
             rationale: "role grant and rate cap allow the call",
             payloadRef: null);
+        var artifactId = await InsertArtifactAsync(connectionString, ingested);
         await InsertLedgerEventAsync(
             connectionString,
             ingested,
@@ -51,7 +52,7 @@ public sealed class FaultLedgerEndpointTests(PostgresRepositoryFixture postgres)
             toolName: "memory_search",
             decision: null,
             rationale: "memory search returned no matches",
-            payloadRef: "artifact:result",
+            payloadRef: "artifact:" + artifactId,
             toolStatus: "Succeeded");
 
         var response = await client.GetAsync($"/api/v1/faults/{ingested.FaultId}/ledger", TestContext.Current.CancellationToken);
@@ -65,8 +66,16 @@ public sealed class FaultLedgerEndpointTests(PostgresRepositoryFixture postgres)
         Assert.Equal("memory_search", body.Events[1].ToolName);
         Assert.Equal("Allowed", body.Events[1].Decision);
         Assert.Equal("memory search returned no matches", body.Events[2].Rationale);
-        Assert.Equal("artifact:result", body.Events[2].PayloadRef);
+        Assert.Equal("artifact:" + artifactId, body.Events[2].PayloadRef);
         Assert.Equal(ingested.ConfigHash, body.Events[2].ConfigHash);
+
+        // The wire contract for the payload state. `Reaped` is exercised end to end against a real
+        // retention run in RetentionLifecycleTests; what this covers is that the field reaches an
+        // API caller at all, and that a live payload and an event with no payload are distinguished
+        // rather than both rendering as "there is something over there".
+        Assert.Equal("NotReapable", body.Events[0].PayloadState);
+        Assert.Equal("None", body.Events[1].PayloadState);
+        Assert.Equal("Retained", body.Events[2].PayloadState);
     }
 
     private static async Task<IngestSignalResponseDto> PostIngestAsync(HttpClient client)
@@ -126,6 +135,26 @@ public sealed class FaultLedgerEndpointTests(PostgresRepositoryFixture postgres)
         await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
     }
 
+    private static async Task<Guid> InsertArtifactAsync(
+        string connectionString,
+        IngestSignalResponseDto ingested)
+    {
+        var artifactId = Guid.NewGuid();
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand("""
+            INSERT INTO incidentcompass.triage_artifacts (
+                id, job_id, attempt, kind, domain_ref, redacted_payload, content_hash, created_at_utc)
+            VALUES (@id, @job_id, 1, 'ToolResult', 'tool:memory_search',
+                    '{"summary":"redacted tool output"}'::jsonb, @content_hash, now());
+            """, connection);
+        command.Parameters.AddWithValue("id", artifactId);
+        command.Parameters.AddWithValue("job_id", ingested.JobId!.Value);
+        command.Parameters.AddWithValue("content_hash", "ledger-endpoint-" + artifactId.ToString("N"));
+        await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        return artifactId;
+    }
+
     private sealed record TesterAttributesDto(string ErrorType, string ErrorMessage, string HttpRoute);
 
     private sealed record TesterEnvelopeDto(
@@ -157,5 +186,6 @@ public sealed class FaultLedgerEndpointTests(PostgresRepositoryFixture postgres)
         string? Decision,
         string? Rationale,
         string? PayloadRef,
+        string PayloadState,
         string ConfigHash);
 }

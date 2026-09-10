@@ -31,7 +31,8 @@ public sealed class ListActionApprovalsQueryHandler(
                 cursor?.ActionId,
                 limit + 1,
                 request.ExternalResourceKind,
-                request.ExternalResourceId),
+                request.ExternalResourceId,
+                request.FaultId),
             identity.TenantId,
             cancellationToken);
         var page = rows.Take(limit).ToArray();

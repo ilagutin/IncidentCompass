@@ -101,7 +101,7 @@ public sealed class SourceToolSurfaceTests
             string scope,
             CancellationToken cancellationToken) => throw new NotSupportedException();
 
-        public Task<IReadOnlyList<TriageLedgerEntry>> ReadByFaultIdAsync(
+        public Task<IReadOnlyList<FaultLedgerEntry>> ReadByFaultIdAsync(
             Guid faultId,
             string tenantId,
             CancellationToken cancellationToken) => throw new NotSupportedException();

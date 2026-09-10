@@ -35,7 +35,9 @@ internal static class PostgresMigrationCatalog
             ["028-signal-payload-and-artifact-retention.sql"]),
         new(20, "v0.4-report-model-provenance", ["029-report-model-provenance.sql"]),
         new(21, "v0.4-model-price-administration", ["030-model-price-administration.sql"]),
-        new(22, "v0.4-memory-corpus-generations", ["031-memory-corpus-generations.sql"])
+        new(22, "v0.4-memory-corpus-generations", ["031-memory-corpus-generations.sql"]),
+        new(23, "v0.4-action-approval-fault-correlation",
+            ["032-action-approval-fault-correlation.sql"])
     ];
 
     private static PostgresSchemaMigration Released(

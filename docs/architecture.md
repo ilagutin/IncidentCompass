@@ -149,6 +149,10 @@ Intake, the ledger, reports and the action outbox are added by numbered migratio
   route behind each published corpus and allows one current generation per tenant and seed owner. It
   backfills only an owner whose active items already share one generation and one vector space,
   because anything else is genuinely ambiguous and is reported rather than guessed at.
+- `032-action-approval-fault-correlation.sql` indexes the fault direction of the same compact
+  external-action projection 025 indexed by resource: `(tenant_id, fault_id, created_at_utc DESC,
+  id DESC)`. It adds no column and no constraint, so it changes what a correlation query costs and
+  nothing about what is stored.
 
 ## Memory Worker
 

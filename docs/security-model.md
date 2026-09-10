@@ -443,10 +443,24 @@ immutable by trigger: `trg_triage_reports_immutable` rejects UPDATE and DELETE u
 report retention is not unimplemented, it is refused by the schema. The triage ledger is the audit
 trail these operations are meant to leave intact, so nothing removes ledger entries either.
 
-The ledger already survives a reaped payload and is meant to keep doing so. It stores a compact
-reference, `payload_ref`, as plain text in the shape `artifact:{id}` with no foreign key, and the
-ledger reader never joins the artifacts table. Reconstruction therefore shows the same audit sequence
-before and after retention has run, with the reference still readable and the payload behind it gone.
+The ledger survives a reaped payload and says so. It stores a compact reference, `payload_ref`, as
+plain text in the shape `artifact:{id}` with no foreign key, and the ledger reader resolves that
+reference as a scalar expression rather than a join, so reconstruction shows the same audit sequence
+before and after retention has run. Each event also carries a `payloadState` answered at read time -
+`Retained`, `Reaped`, `NotReapable` or `None` - because surviving retention and being honest about it
+are different properties: without that field a reaped reference and a live one render as the same
+string and a reader cannot tell which it is holding. See `docs/observability.md`, "Reading a timeline
+after retention", for what backs each value.
+
+**Retention cannot mutate the compact external-action audit projection.** The four
+`external_resource_*` columns on `action_approvals` are the durable record of what a governed action
+did outside the system, and neither retention operation can reach them. Compaction writes only to
+`signals`; the reap deletes only from `triage_artifacts`, excludes the `ProposedAction` and
+`ActionResult` kinds by name, and cannot cascade into an approval because `proposal_artifact_id` is a
+plain foreign key with no `ON DELETE` action. Underneath that, the table refuses the mutation
+outright: `trg_action_approvals_no_delete` rejects every DELETE, and the lifecycle trigger rejects
+any UPDATE of those four columns outside the single approved-to-executed transition that first sets
+them. So the guarantee does not depend on the current retention predicates staying as they are.
 
 ## Tools
 

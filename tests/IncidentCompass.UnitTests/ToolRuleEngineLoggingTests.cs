@@ -73,8 +73,8 @@ public sealed class ToolRuleEngineLoggingTests
             TriageJob job, CancellationToken cancellationToken) =>
             Task.FromResult(new TriageBudgetLedgerUsage(0, 0));
 
-        public Task<IReadOnlyList<TriageLedgerEntry>> ReadByFaultIdAsync(
+        public Task<IReadOnlyList<FaultLedgerEntry>> ReadByFaultIdAsync(
             Guid faultId, string tenantId, CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<TriageLedgerEntry>>([]);
+            Task.FromResult<IReadOnlyList<FaultLedgerEntry>>([]);
     }
 }

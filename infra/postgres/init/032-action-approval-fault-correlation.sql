@@ -1,0 +1,25 @@
+-- Index for the fault direction of external-action correlation.
+--
+-- 025-external-action-audit-projection.sql indexed one direction: given an exact external resource
+-- kind and id, find the governed actions that produced it. This indexes the inverse: given an
+-- incident, find every external resource its actions touched. Both are tenant-scoped reads of the
+-- same compact projection columns on `action_approvals`, and neither reads `result_payload`.
+--
+-- The column order matches the predicate the query actually builds in
+-- `PostgresActionApprovalQueries.ListAsync`: equality on `tenant_id` and `fault_id`, then the
+-- keyset pagination and ordering on `(created_at_utc DESC, id DESC)`. The existing
+-- `ix_action_approvals_tenant_created` leads with `tenant_id` too and would serve the query, but
+-- only by walking one whole tenant's approvals newest first and discarding every row belonging to
+-- another fault, so an old incident costs a scan of everything the tenant has done since.
+--
+-- Unlike `ix_signals_compaction_candidates` in 028, this index ships on the shape of the predicate
+-- rather than on a measured plan over a large corpus: no such corpus was built for it. What is
+-- verified is that the planner chooses it for the query as written, which
+-- `ExternalActionAuditEndpointTests` asserts from `EXPLAIN`. That is a weaker claim than 028 makes
+-- and is written down here rather than left to be assumed.
+--
+-- There is no partial predicate. A fault correlation is asked about actions in any state, including
+-- ones that were rejected or expired and so never reached an external system at all, and "we
+-- proposed this and did not do it" is part of the answer.
+CREATE INDEX IF NOT EXISTS ix_action_approvals_tenant_fault
+    ON incidentcompass.action_approvals (tenant_id, fault_id, created_at_utc DESC, id DESC);

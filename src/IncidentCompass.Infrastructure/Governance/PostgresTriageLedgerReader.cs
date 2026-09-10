@@ -106,21 +106,49 @@ internal sealed class PostgresTriageLedgerReader(PostgresDataSourceProvider data
 
 
 
-    public Task<IReadOnlyList<TriageLedgerEntry>> ReadByFaultIdAsync(
+    public Task<IReadOnlyList<FaultLedgerEntry>> ReadByFaultIdAsync(
         Guid faultId,
         string tenantId,
         CancellationToken cancellationToken) =>
         PostgresOperation.ExecuteAsync(
             "read tenant-scoped fault ledger",
             () => ReadByFaultIdCoreAsync(faultId, tenantId, cancellationToken));
-    private async Task<IReadOnlyList<TriageLedgerEntry>> ReadByFaultIdCoreAsync(Guid faultId, string tenantId, CancellationToken cancellationToken)
+
+    // The payload-state CASE resolves each event's reference against `triage_artifacts` without ever
+    // constraining which ledger rows come back. It is a scalar expression over the row, not a join
+    // condition, so a reaped payload still yields its event - which is the behaviour the whole
+    // reconstruction requirement rests on, and turning this into a join would quietly undo it.
+    //
+    // The regex guard is what makes the `::uuid` cast safe rather than a way to reject rows. Only
+    // `PostgresTriageToolResultCommitter` writes an `artifact:` reference and it always writes a
+    // GUID, but `payload_ref` is unconstrained text, so a row that does not carry a parseable
+    // artifact id must be answered rather than raise. `NotReapable` is the honest answer for it:
+    // retention removes attempt artifacts, and this reference does not name one. PostgreSQL only
+    // hoists constant subexpressions out of a CASE branch, and both the cast and the EXISTS depend
+    // on the row, so the guard really does run first.
+    private const string PayloadStateExpression = """
+        CASE
+            WHEN ledger.payload_ref IS NULL THEN 'None'
+            WHEN ledger.payload_ref !~ '^artifact:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+                THEN 'NotReapable'
+            WHEN EXISTS (
+                SELECT 1
+                FROM incidentcompass.triage_artifacts artifact
+                WHERE artifact.id = substring(ledger.payload_ref FROM 10)::uuid) THEN 'Retained'
+            ELSE 'Reaped'
+        END
+        """;
+
+    private async Task<IReadOnlyList<FaultLedgerEntry>> ReadByFaultIdCoreAsync(Guid faultId, string tenantId, CancellationToken cancellationToken)
     {
         await using var connection = await dataSourceProvider.OpenConnectionAsync(cancellationToken);
         await using var command = new NpgsqlCommand(
             """
             SELECT ledger.id, ledger.fault_id, ledger.job_id, ledger.attempt, ledger.event_type, ledger.role, ledger.tool_name, ledger.rationale,
                    ledger.decision, ledger.decision_reason, ledger.payload_ref, ledger.config_hash, ledger.created_at_utc,
-                   ledger.tool_status, ledger.tokens_delta, ledger.workers_delta
+                   ledger.tool_status, ledger.tokens_delta, ledger.workers_delta,
+            """ + PayloadStateExpression + """
+
             FROM incidentcompass.triage_ledger ledger
             JOIN incidentcompass.faults fault ON fault.id = ledger.fault_id
             WHERE ledger.fault_id = @fault_id
@@ -131,27 +159,29 @@ internal sealed class PostgresTriageLedgerReader(PostgresDataSourceProvider data
         command.AddParameter("fault_id", faultId);
         command.AddParameter("tenant_id", tenantId);
 
-        var entries = new List<TriageLedgerEntry>();
+        var entries = new List<FaultLedgerEntry>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
-            entries.Add(new TriageLedgerEntry(
-                reader.GetInt64(0),
-                reader.GetGuid(1),
-                reader.GetGuid(2),
-                reader.GetInt32(3),
-                Enum.Parse<TriageLedgerEventType>(reader.GetString(4)),
-                reader.IsDBNull(5) ? null : reader.GetString(5),
-                reader.IsDBNull(6) ? null : reader.GetString(6),
-                reader.IsDBNull(7) ? null : reader.GetString(7),
-                reader.IsDBNull(8) ? null : Enum.Parse<TriageLedgerDecision>(reader.GetString(8)),
-                reader.IsDBNull(9) ? null : reader.GetString(9),
-                reader.IsDBNull(10) ? null : reader.GetString(10),
-                reader.GetString(11),
-                reader.GetDateTimeOffset(12),
-                reader.IsDBNull(13) ? null : Enum.Parse<TriageLedgerToolStatus>(reader.GetString(13)),
-                reader.IsDBNull(14) ? null : reader.GetInt32(14),
-                reader.IsDBNull(15) ? null : reader.GetInt32(15)));
+            entries.Add(new FaultLedgerEntry(
+                new TriageLedgerEntry(
+                    reader.GetInt64(0),
+                    reader.GetGuid(1),
+                    reader.GetGuid(2),
+                    reader.GetInt32(3),
+                    Enum.Parse<TriageLedgerEventType>(reader.GetString(4)),
+                    reader.IsDBNull(5) ? null : reader.GetString(5),
+                    reader.IsDBNull(6) ? null : reader.GetString(6),
+                    reader.IsDBNull(7) ? null : reader.GetString(7),
+                    reader.IsDBNull(8) ? null : Enum.Parse<TriageLedgerDecision>(reader.GetString(8)),
+                    reader.IsDBNull(9) ? null : reader.GetString(9),
+                    reader.IsDBNull(10) ? null : reader.GetString(10),
+                    reader.GetString(11),
+                    reader.GetDateTimeOffset(12),
+                    reader.IsDBNull(13) ? null : Enum.Parse<TriageLedgerToolStatus>(reader.GetString(13)),
+                    reader.IsDBNull(14) ? null : reader.GetInt32(14),
+                    reader.IsDBNull(15) ? null : reader.GetInt32(15)),
+                Enum.Parse<TriageLedgerPayloadState>(reader.GetString(16))));
         }
 
         return entries;

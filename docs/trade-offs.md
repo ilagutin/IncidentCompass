@@ -258,6 +258,18 @@ no counter, so "how much has been reclaimed" is a database question, not an API 
 deliberate: the ledger is the audit trail of what the agent decided, and a maintenance pass that
 emptied 500 payloads is not one of those decisions.
 
+That is also why a timeline learns about a reaped payload at read time rather than from a stored
+marker. Making the fault ledger honest about a missing payload could have been done by appending a
+`PayloadReaped` event, and that was rejected: it would put maintenance into the record of what the
+agent decided and would duplicate a fact the artifacts table already holds. The `payloadState` on
+each event is resolved when the timeline is read, so two reads of the same immutable row can differ
+once retention has run in between - which is correct, because what changed is the payload, not the
+event. The cost is one indexed existence check per event with a payload reference, over a row set
+already bounded by one fault. Compaction is the one place where a stored marker was the right answer
+instead, for the reason `infra/postgres/init/028-signal-payload-and-artifact-retention.sql` gives: an
+emptied signal payload and one that arrived empty are the same bytes, so absence there proves
+nothing. A deleted artifact row is not ambiguous in that way.
+
 ## Simple Access Control vs Enterprise RBAC
 
 The current implementation can enable a minimal host-managed API-key boundary. Each accepted key maps
@@ -689,7 +701,25 @@ no external-success projection, and the projection does not model arbitrary prov
 out-of-band changes. Cross-system reconciliation remains future work rather than being inferred from
 uncertain provider outcomes. Payload retention deliberately leaves both halves alone: the projection
 lives on the action row, and `ActionResult` artifacts are excluded from reaping by kind because they
-are the audit record of an external effect rather than working evidence.
+are the audit record of an external effect rather than working evidence. That is not only a matter of
+current predicates - the approvals table refuses DELETE outright and refuses any UPDATE of the
+projection columns outside the transition that first sets them, so a future retention predicate that
+tried to reach the projection would abort rather than succeed quietly.
+
+The projection is now readable in two directions rather than one: by exact resource pair, and by
+fault. A general correlation capability was considered and not built. Widening the resource lookup to
+prefixes or fuzzy matching would turn an exact audit question into a guess over identifiers this
+system does not own, and a query surface that composed arbitrary predicates across the ledger, the
+artifacts and the approvals would be a reporting engine whose cost and blast radius nobody here has
+measured. What shipped instead is one specific bounded second lookup - the inverse of the one that
+already existed - plus `faultId` on the list item so the two compose into a pivot. Two directions
+over a closed vocabulary is a claim that can be tested; "correlation" in general is not.
+
+Its index is worth naming as a weaker claim than its neighbours make.
+`ix_action_approvals_tenant_fault` ships on the shape of the predicate rather than on a measured plan
+over a large corpus, unlike the retention indexes in
+`infra/postgres/init/028-signal-payload-and-artifact-retention.sql`, whose comments carry real
+`EXPLAIN` numbers. What is verified is only that the planner chooses it for the query as written.
 
 ## Two Compose Naming Styles Are Kept
 

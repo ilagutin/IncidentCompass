@@ -284,6 +284,61 @@ second copy: it already points at the report through `payload_ref`.
 immutable, so those rows cannot be backfilled, and `null` is deliberately not the same claim as the
 empty list, which means provenance was derived and the attempt recorded no model call.
 
+## Reading A Timeline After Retention
+
+`GET /api/v1/faults/{id}/ledger` reconstructs a fault's whole appended event timeline, and it keeps
+working after attempt-artifact retention has removed payloads those events reference. The ledger
+stores only a compact `payload_ref` with no foreign key, and the reader resolves it as a scalar
+expression rather than a join, so no event is ever dropped because the payload behind it is gone.
+
+Not crashing is the smaller half. Each event also carries `payloadState`, answered at read time:
+
+| Value | What it says | What backs it |
+| --- | --- | --- |
+| `None` | The event references no payload. | `payload_ref` is `NULL`. |
+| `Retained` | The referenced attempt artifact is still stored and can still be read. | The artifact row exists at read time. |
+| `Reaped` | The referenced attempt artifact is gone, and retention is what removed it. | See below. |
+| `NotReapable` | The reference does not name an attempt artifact, so retention cannot remove what it points at. | `report:` and `action:` references name append-only records whose delete triggers reject removal outright; a `model-call:` reference is a correlation key with no stored payload. |
+
+`Reaped` is the one value that claims more than the row in front of it shows, so it is worth being
+explicit about what makes it true. An `artifact:` reference is only ever written by
+`PostgresTriageToolResultCommitter`, which inserts the artifact row and the ledger row in one
+transaction, so such a reference never named a row that did not exist; and the reap in
+`PostgresAttemptArtifactRetentionRepository` is the only statement in the system that deletes from
+`triage_artifacts`. Both halves are properties of the writers rather than database constraints. A
+future second deleter would weaken this value back to meaning "absent", which is why it is recorded
+here rather than left to be assumed.
+
+This field is why the timeline is honest rather than merely intact: before it, a reference whose
+payload had been reaped and one whose payload was still there rendered as the same string, and a
+reader had no way to tell which it was holding.
+
+## Correlating An Incident With External Resources
+
+`GET /api/v1/action-approvals` reads the compact external-action audit projection in two directions,
+both tenant-scoped by the authenticated caller's tenant and both paged by the same cursor:
+
+- `?externalResourceKind=github_issue&externalResourceId=42` - the exact pair lookup: which governed
+  actions produced this external resource. The pair must be exact and well formed; a partial or
+  unrecognized pair is rejected rather than widened.
+- `?faultId={id}` - the inverse: which external resources this incident's governed actions touched,
+  including actions that were rejected or expired and so never reached an external system, because
+  "we proposed this and did not do it" is part of the answer.
+
+Each item carries `faultId`, which is what makes a pivot possible: an operator holding a GitHub issue
+number reaches the incident through the first query and the rest of that incident's external
+footprint through the second.
+
+Neither direction renders a raw provider payload. `result_payload` holds the provider's own response
+body and is never projected into either response; what a caller sees is the bounded
+`resultSummary` plus the four projection columns (`externalResourceKind`, `externalResourceId`,
+`externalBeforeState`, `externalAfterState`), whose vocabulary is closed by check constraint.
+
+The fault predicate carries no tenant term of its own. It composes with the tenant predicate that
+already scopes every shape of this query, so a fault id belonging to another tenant returns output
+byte-identical to a fault id that does not exist at all, and cannot be used to learn that another
+tenant's fault is real.
+
 ## Hourly Cost Rollups
 
 `GET /api/v1/observability/cost-rollups` reads these durable `ModelCall` rows for the authenticated
@@ -399,8 +454,11 @@ record because the behavior behind them is not implemented; each needs its recor
 feature rather than reconstructed from logs afterwards:
 
 - quota exceeded;
-- additional external-action before/after correlation beyond the existing action lifecycle events;
 - cost alert delivery and quota enforcement built on independently governed policy.
+
+External-action correlation is no longer on that list: the resource and fault directions described in
+"Correlating An Incident With External Resources" both read the existing projection and lifecycle
+events, and neither needed a new audit record.
 
 ## OTLP Ingress
 
