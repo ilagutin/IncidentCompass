@@ -29,7 +29,8 @@ internal static class PostgresMigrationCatalog
         Released(14, "v0.3-action-approvals-outbox", ["023-action-approvals-outbox.sql"]),
         Released(15, "v0.3-post-report-action-intents", ["024-post-report-action-intents.sql"]),
         Released(16, "v0.3-external-action-audit-projection", ["025-external-action-audit-projection.sql"]),
-        Released(17, "v0.3-model-cost-rollup-index", ["026-model-cost-rollup-index.sql"])
+        Released(17, "v0.3-model-cost-rollup-index", ["026-model-cost-rollup-index.sql"]),
+        new(18, "v0.4-artifact-redaction-marker", ["027-artifact-redaction-marker.sql"])
     ];
 
     private static PostgresSchemaMigration Released(

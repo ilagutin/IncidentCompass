@@ -34,8 +34,8 @@ public sealed class PostgresMigrationTests(PostgresRepositoryFixture fixture)
         Assert.Equal(
             await ReadSchemaSignatureAsync(fresh.ConnectionString),
             await ReadSchemaSignatureAsync(upgraded.ConnectionString));
-        Assert.Equal([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17], await ReadAppliedVersionsAsync(fresh.ConnectionString));
-        Assert.Equal([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17], await ReadAppliedVersionsAsync(upgraded.ConnectionString));
+        Assert.Equal([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18], await ReadAppliedVersionsAsync(fresh.ConnectionString));
+        Assert.Equal([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18], await ReadAppliedVersionsAsync(upgraded.ConnectionString));
         Assert.True(await HasRequiredV02IndexesAndColumnsAsync(fresh.ConnectionString));
         Assert.True(await HasRequiredV02IndexesAndColumnsAsync(upgraded.ConnectionString));
         Assert.Equal(
@@ -75,7 +75,7 @@ public sealed class PostgresMigrationTests(PostgresRepositoryFixture fixture)
         var secondRun = await ReadMigrationRecordsAsync(database.ConnectionString);
 
         Assert.Equal(firstRun, secondRun);
-        Assert.Equal([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17], secondRun.Select(record => record.Version));
+        Assert.Equal([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18], secondRun.Select(record => record.Version));
         Assert.All(secondRun, record => Assert.Equal("Applied", record.Status));
     }
 
@@ -103,7 +103,16 @@ public sealed class PostgresMigrationTests(PostgresRepositoryFixture fixture)
         await using var database = await MigrationDatabase.CreateAsync(fixture);
         await RunMigrationsAsync(database.ConnectionString);
 
-        foreach (var migration in PostgresMigrationCatalog.All)
+        // Only a migration that already shipped can have a durable row written by an older
+        // release, so the released flag on the catalog entry - not a version number - decides
+        // which rows a legacy CRLF ledger contains. Deriving the set keeps the HasValue
+        // assertion strict for every released migration as the catalog grows.
+        var releasedMigrations = PostgresMigrationCatalog.All
+            .Where(migration => migration.AcceptsReleasedLegacyChecksums)
+            .ToArray();
+        Assert.NotEmpty(releasedMigrations);
+
+        foreach (var migration in releasedMigrations)
         {
             var policy = await PostgresMigrationChecksumPolicy.CreateAsync(
                 migration,

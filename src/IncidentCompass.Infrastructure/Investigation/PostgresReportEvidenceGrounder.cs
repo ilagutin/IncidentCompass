@@ -97,10 +97,7 @@ internal sealed class PostgresReportEvidenceGrounder
 
     private static Guid ParseArtifactId(string referenceId)
     {
-        var normalized = referenceId.StartsWith("artifact:", StringComparison.Ordinal)
-            ? referenceId["artifact:".Length..]
-            : referenceId;
-        if (Guid.TryParse(normalized, out var artifactId))
+        if (ReportEvidenceArtifactReference.TryParse(referenceId, out var artifactId))
         {
             return artifactId;
         }

@@ -178,22 +178,29 @@ internal static class TriageReportGroundingTestSupport
         return artifactId;
     }
 
+    // The redactionApplied argument is what the redaction boundary would have recorded for this row:
+    // null keeps the row silent, which is what an artifact written before the column existed looks
+    // like, and is deliberately not the same claim as false.
     public static async Task<Guid> InsertSourceArtifactAsync(
         string connectionString,
         Guid jobId,
         int attempt,
-        string release)
+        string release,
+        bool? redactionApplied = null)
     {
         var artifactId = Guid.NewGuid();
         await ExecuteAsync(connectionString, """
             INSERT INTO incidentcompass.triage_artifacts (
-                id, job_id, attempt, kind, domain_ref, redacted_payload, content_hash, created_at_utc)
+                id, job_id, attempt, kind, domain_ref, redacted_payload, content_hash, created_at_utc,
+                redaction_applied)
             VALUES (
-                @id, @job_id, @attempt, 'RetrievedItem', @domain_ref, @payload::jsonb, @content_hash, now());
+                @id, @job_id, @attempt, 'RetrievedItem', @domain_ref, @payload::jsonb, @content_hash, now(),
+                @redaction_applied);
             """,
             ("id", artifactId),
             ("job_id", jobId),
             ("attempt", attempt),
+            ("redaction_applied", (object?)redactionApplied ?? DBNull.Value),
             ("domain_ref", $"source:{release}:src/Checkout.cs"),
             ("payload", JsonSerializer.Serialize(new
             {

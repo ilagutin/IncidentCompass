@@ -110,9 +110,51 @@ A real deployment must still supply its own configuration and secrets management
 
 ## Logging
 
-- Full rendered prompt logging is disabled by default.
-- Metadata logging is allowed: request ID, user ID, model, tokens, cost, status.
-- If full prompt logging is ever enabled, it must require opt-in, redaction, encryption, retention policy and restricted access.
+Full rendered prompt logging is disabled, and there is no switch behind that: no setting in this
+repository enables it, and none is planned. A reader looking for the option to turn it on will not
+find one, because the position is not implemented by an option.
+
+Part of it is implemented by absence, and that part is enforced. Four directories are kept free of
+every output sink - the port contracts in `src/IncidentCompass.Application/Core/ModelClients` and
+`src/IncidentCompass.Application/Core/Embeddings`, and their adapters, provider DTOs and mock
+clients in `src/IncidentCompass.Infrastructure/ModelGateway` and
+`src/IncidentCompass.Infrastructure/Embeddings`. This is where a fully rendered request is handed to
+a provider and where a raw response body is read back, so it is the place where a stray debug line
+would be most likely to carry the whole of either. `OpenAiCompatibleModelClient` takes no `ILogger`;
+neither does any file beside it, and none of them writes to the console, to a trace listener or to a
+file either.
+
+`tests/IncidentCompass.UnitTests/ModelGatewayLoggingGuardTests.cs` asserts that absence over those
+four directories. Injecting a logger into any of them, or leaving a `Console.WriteLine` behind while
+debugging a provider response, fails the test suite instead of passing quietly. The test is
+deliberately about sinks rather than about what a particular log call would have written: a
+placeholder name in a message template cannot tell a reviewer, or a matcher, whether the argument
+behind it carries provider text. The cost of that strictness is that a genuinely safe number cannot
+be logged from inside those files either, which is the intended answer rather than an oversight -
+model-call metadata is recorded from the accounting path outside this boundary, where the values
+being written are backend-derived.
+
+Be precise about the scope of that. Those four directories are not the whole of the code that
+handles prompt text or provider bodies, and the guard does not claim they are. The prompt is
+assembled in `src/IncidentCompass.Application/Investigation/Jobs` -
+`TriageInvestigationPromptBuilder` builds the payload lines and `InvestigationModelCaller`
+constructs the request from them - and that folder does log, from `InvestigationModelCaller`. A raw
+provider error body is parsed in `src/IncidentCompass.Infrastructure/OpenAiCompatible`, by
+`OpenAiCompatibleErrorMapper.TryReadError`, which the guard does not scan. In all of that
+surrounding code the rule that only metadata is logged holds today by reading it: the log calls
+there are `LoggerMessage`-generated templates over job ids, attempt numbers, role and route names,
+tool names, bounded reason codes, exception type names and durations, never over a message list, a
+payload or a response body. That is
+convention plus code review, not a structural impossibility, and it is not something a text scan can
+be widened to prove - a file that legitimately logs metadata and a file that logs a prompt look the
+same to a matcher. Treat a change in that folder as a change that needs the reviewer to check what
+is being logged, not as one the guard will catch.
+
+The rest of the logging rules:
+
+- Metadata logging is allowed: request ID, user ID, model, tokens, cost, status. It is written
+  outside the four guarded directories above, by `InvestigationModelCaller` and the triage ledger,
+  from backend-derived values rather than from provider text (see `docs/observability.md`).
 - Tool execution is controlled by backend policy. The model may propose tool calls, but it cannot execute tools directly and never receives infrastructure credentials.
 - The API error boundary never echoes an exception's own message to a client. `NotFoundException`,
   `ConflictException`, `ForbiddenRequestException` and `ValidationException` map to a `ProblemDetails`
@@ -203,6 +245,50 @@ place does it, on the same governed path every immediate tool call takes:
 Both surfaces have to be covered together: the same connector text reaches the model once as this
 turn's tool message and again through the stored artifact, which the orchestrator reads back into
 later prompts. Redacting only the row would leave the immediate turn unprotected.
+
+### Saying so in the report
+
+A published report states when the evidence behind it carried a value redaction removed, so a reader
+of the conclusion knows part of the input was withheld from the model too. The sentence is the
+backend's, appended at publication the same way read-only context outcomes are, and it is owned in
+both directions: appended when the backend derived the marker, and dropped from the model's own
+limitations when it did not.
+
+What that owns is the exact reserved wording, not the idea. The removal is an ordinal string
+comparison, so a model-authored paraphrase - a different case, an extra clause - is not the reserved
+sentence and is left standing as one of the model's own limitations. That is deliberate. The
+direction that matters needs no matching at all: when the backend derives the marker it appends the
+sentence, so nothing the model writes can suppress a real withholding. A looser match would only
+remove near-copies claiming a withholding that did not happen, and it would pay for that by deleting
+report text on a fuzzy comparison, which is the one direction that can destroy a genuine limitation
+a human needed to read. So the guarantee is: the reserved sentence appears exactly when the backend
+derived the marker. A sentence that merely reads like it is model text, and carries no more standing
+than the rest of the model's limitations.
+
+Where the answer comes from matters more than the sentence. The stored payload cannot answer it: a
+value the redactor replaced and connector text that already spelled out `[REDACTED]` are the same
+bytes, so a marker derived by searching payload text for that literal would be one the author of a
+ticket or a source file could raise at will. The answer is recorded instead by the tool redaction
+boundary, in `triage_artifacts.redaction_applied`, from a comparison against the pre-redaction
+document at the one moment the two are distinguishable. Publication reads that column for the
+artifacts the report cites.
+
+Both citable artifact kinds the boundary produces record it: the per-item `RetrievedItem` artifacts a
+tool hands back as drafts, and the `ToolResult` artifact built from the same call's redacted output.
+That pairing is the point. They carry the same redacted text and ground equally well, so if only one
+of them recorded an outcome the model would choose whether the limitation appeared by choosing which
+of the two to cite.
+
+For the same reason the read is not capped. Every parsed citation is looked up, because the model
+authors and orders its own evidence array: an answer covering only part of that array is one the
+model can steer, and truncation can only ever steer it towards saying nothing was withheld.
+
+Its scope is exactly what that boundary can see. `true` means the redactor changed the payload,
+`false` means it ran and changed nothing, and NULL means no boundary recorded an outcome for the
+row - which is what intake-written artifacts carry, because they are assembled from a signal intake
+had already redacted before the artifact existed, and what the post-report action artifacts carry,
+because no redaction pass runs on their backend-derived payloads. Only `true` contributes, so the
+marker's absence says no cited artifact is known to have been redacted, not that nothing was.
 
 Redaction operates on the parsed JSON document, rewriting values and rebuilding objects and arrays
 node by node. A redacted payload is therefore still valid JSON with the same keys. Value kinds

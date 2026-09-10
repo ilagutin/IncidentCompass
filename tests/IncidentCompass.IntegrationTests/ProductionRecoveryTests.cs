@@ -246,7 +246,14 @@ public sealed class ProductionRecoveryTests
     {
         await using var connection = new NpgsqlConnection(connectionString);
         await connection.OpenAsync(TestContext.Current.CancellationToken);
-        foreach (var migration in PostgresMigrationCatalog.All)
+        // A v0.3-era ledger can only carry legacy CRLF checksums for migrations that shipped in a
+        // release. Unreleased catalog entries have no legacy form to convert, so the released flag
+        // on the catalog entry decides which rows are rewritten instead of a version number.
+        var releasedMigrations = PostgresMigrationCatalog.All
+            .Where(migration => migration.AcceptsReleasedLegacyChecksums)
+            .ToArray();
+        Assert.NotEmpty(releasedMigrations);
+        foreach (var migration in releasedMigrations)
         {
             var policy = await PostgresMigrationChecksumPolicy.CreateAsync(
                 migration, TestContext.Current.CancellationToken);

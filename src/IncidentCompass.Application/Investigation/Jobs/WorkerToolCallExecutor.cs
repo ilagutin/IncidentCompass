@@ -117,7 +117,7 @@ internal sealed partial class WorkerToolCallExecutor(
                 job, configuration, roleName, toolCall.Name, redactedOutput, execution.Artifacts, cancellationToken);
             telemetry?.RecordToolCall(RuntimeTelemetryOutcome.Succeeded);
             LogWorkerToolExecuted(logger, job.Id, job.Attempt, roleName, toolCall.Name);
-            return redactedOutput.GetRawText();
+            return redactedOutput.Output.GetRawText();
         }
 
         // The failure path reaches the same two surfaces the success path does - this turn's tool
@@ -175,7 +175,7 @@ internal sealed partial class WorkerToolCallExecutor(
         TriageConfiguration configuration,
         string roleName,
         string toolName,
-        JsonElement redactedOutput,
+        RedactedToolOutput redactedOutput,
         IReadOnlyCollection<ToolArtifactDraft>? drafts,
         CancellationToken cancellationToken)
     {
@@ -183,15 +183,16 @@ internal sealed partial class WorkerToolCallExecutor(
         var artifacts = (drafts ?? [])
             .Select(draft => RedactedToolArtifactFactory.Create(job, draft, configuration.Redaction, createdAtUtc))
             .ToArray();
-        var canonicalPayload = CanonicalJsonSerializer.Canonicalize(JsonNode.Parse(redactedOutput.GetRawText())!);
+        var canonicalPayload = CanonicalJsonSerializer.Canonicalize(JsonNode.Parse(redactedOutput.Output.GetRawText())!);
         await toolResultCommitter.CommitSucceededAsync(
             new TriageToolResultCommitRequest(
                 job,
                 roleName,
                 toolName,
-                redactedOutput,
+                redactedOutput.Output,
                 CanonicalJsonSerializer.ComputeSha256Hex(canonicalPayload),
                 "Tool completed successfully.",
+                redactedOutput.RedactionApplied,
                 artifacts),
             cancellationToken);
     }

@@ -23,6 +23,20 @@ namespace IncidentCompass.Application.Governance.Tools;
 /// </summary>
 internal static class RedactedToolArtifactFactory
 {
+    /// <summary>
+    /// Redacts a draft and records, in <see cref="TriageArtifact.RedactionApplied" />, whether the
+    /// pass actually removed anything.
+    /// <para>
+    /// This is the only moment at which that question can be answered honestly. Afterwards only the
+    /// redacted document survives, and a value the redactor replaced is byte-identical to connector
+    /// text that already contained the literal <c>[REDACTED]</c>, so a marker derived later by
+    /// reading the stored payload would be one that the author of a ticket or a source file could
+    /// raise at will. Comparing against the pre-redaction document has neither failure: text that
+    /// already held the literal survives the pass unchanged and is correctly reported as untouched,
+    /// and a value the redactor really did remove cannot be made to look untouched, because the
+    /// comparison is against the input rather than against a pattern in the output.
+    /// </para>
+    /// </summary>
     public static TriageArtifact Create(
         TriageJob job,
         ToolArtifactDraft draft,
@@ -39,20 +53,39 @@ internal static class RedactedToolArtifactFactory
             draft.DomainRef,
             CanonicalJsonSerializer.ToElement(redacted),
             CanonicalJsonSerializer.ComputeSha256Hex(canonical),
-            createdAtUtc);
+            createdAtUtc)
+        {
+            RedactionApplied = !JsonNode.DeepEquals(draft.Payload, redacted)
+        };
     }
 
     /// <summary>
     /// Redacts the model-visible tool output. The same connector text reaches the model twice: once
     /// as this turn's tool message and again through the stored <c>ToolResult</c> artifact, so both
     /// have to be the redacted form or the immediate turn would leak what the durable row hides.
+    /// <para>
+    /// The outcome is returned beside the document for the same reason
+    /// <see cref="Create" /> records one: the <c>ToolResult</c> artifact the committer builds from
+    /// this output is citable evidence, so the report marker has to be able to speak for it, and
+    /// this is the last point at which the pre-redaction document still exists to compare against.
+    /// A <c>ToolResult</c> row left silent would let the model choose whether the marker appears, by
+    /// citing the tool result instead of the per-item artifact holding the same redacted text.
+    /// </para>
     /// </summary>
-    public static JsonElement RedactOutput(JsonElement output, RedactionSettings redaction)
+    public static RedactedToolOutput RedactOutput(JsonElement output, RedactionSettings redaction)
     {
         var parsed = JsonNode.Parse(output.GetRawText());
-        return parsed is null
-            ? output.Clone()
-            : CanonicalJsonSerializer.ToElement(SecretRedactor.RedactJsonNode(parsed, redaction));
+        if (parsed is null)
+        {
+            // A JSON null output has no values to rewrite, so the pass is a no-op rather than an
+            // unrecorded outcome: false is the honest answer, not a guess.
+            return new RedactedToolOutput(output.Clone(), false);
+        }
+
+        var redacted = SecretRedactor.RedactJsonNode(parsed, redaction);
+        return new RedactedToolOutput(
+            CanonicalJsonSerializer.ToElement(redacted),
+            !JsonNode.DeepEquals(parsed, redacted));
     }
 
     /// <summary>

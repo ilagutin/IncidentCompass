@@ -7,6 +7,7 @@ using IncidentCompass.Application.Intake.Configuration;
 using IncidentCompass.Application.Investigation.Jobs;
 using IncidentCompass.Application.Investigation.Reports;
 using IncidentCompass.Application.Investigation.Reports.Context;
+using IncidentCompass.Application.Investigation.Reports.Redaction;
 using IncidentCompass.Domain.Incidents;
 using IncidentCompass.Domain.Incidents.Statuses;
 using Microsoft.Extensions.Logging;
@@ -265,7 +266,10 @@ public sealed class GovernedTriageInvestigationProcessorTests
             new StaticInvestigationContextRepository(),
             modelCaller,
             delegateExecutor,
-            new TriageReportPublisher(reports, new EmptyContextOutcomeRepository()),
+            new TriageReportPublisher(
+                reports,
+                new EmptyContextOutcomeRepository(),
+                new EmptyCitedEvidenceRedactionRepository()),
             appender,
             timeProvider,
             logger);
@@ -418,6 +422,16 @@ public sealed class GovernedTriageInvestigationProcessorTests
         public Task<IReadOnlyList<ReadOnlyContextOutcome>> ReadCurrentAttemptAsync(
             Guid jobId, int attempt, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<ReadOnlyContextOutcome>>([]);
+    }
+
+    private sealed class EmptyCitedEvidenceRedactionRepository : ICitedEvidenceRedactionRepository
+    {
+        public Task<IReadOnlyList<CitedEvidenceRedaction>> ReadCitedAsync(
+            Guid jobId,
+            int attempt,
+            IReadOnlyCollection<string> referenceIds,
+            CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<CitedEvidenceRedaction>>([]);
     }
 
     private sealed class RecordingArtifactRepository : ITriageArtifactRepository

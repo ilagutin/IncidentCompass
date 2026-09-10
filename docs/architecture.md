@@ -216,6 +216,16 @@ Successful matches use the existing attempt-level `RetrievedItem` persistence an
 tool output, artifacts or reports. The shared durable outcome policy adds canonical no-match or
 connector-unavailable limitations before publication even if the model omits them.
 
+Publication adds one more backend-derived limitation on the same path. Every artifact whose payload
+passed through the tool redaction boundary records whether redaction actually removed anything -
+both the per-item artifacts a tool hands back as drafts and the `ToolResult` artifact built from the
+same tool's redacted output, since both are citable evidence and a silent one would let the model
+decide whether the limitation appears. A report that cites such an artifact states that some of its
+evidence was withheld from the model. The statement is derived from that recorded outcome rather
+than from the stored payload, because a redacted value is indistinguishable from connector text that
+already contained the placeholder. Artifacts written outside that boundary record nothing, which is
+a distinct value from "nothing was removed". See `docs/security-model.md`.
+
 ## Governed ticket create
 
 `ticket_create` is a backend-owned post-report action and never appears in a role or investigation

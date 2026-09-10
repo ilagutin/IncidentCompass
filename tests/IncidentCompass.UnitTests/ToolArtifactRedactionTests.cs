@@ -79,6 +79,45 @@ public sealed class ToolArtifactRedactionTests
             CanonicalJsonSerializer.ComputeSha256Hex(
                 CanonicalJsonSerializer.Canonicalize(JsonNode.Parse(stored)!)),
             artifact.ContentHash);
+        Assert.True(artifact.RedactionApplied);
+    }
+
+    /// <summary>
+    /// Nothing credential-shaped means nothing removed, and the row has to say so. A report built on
+    /// this excerpt must not tell its reader that part of the evidence was withheld.
+    /// </summary>
+    [Fact]
+    public void Create_RecordsThatNothingWasRedacted_WhenTheExcerptHoldsNoSecret()
+    {
+        var draft = new ToolArtifactDraft(
+            ArtifactKind.RetrievedItem,
+            "source:2026.09.01:src/Checkout.cs",
+            SourcePayload(OrdinarySourceExcerpt));
+
+        var artifact = RedactedToolArtifactFactory.Create(Job(), draft, Redaction(), Now);
+
+        Assert.False(artifact.RedactionApplied);
+    }
+
+    /// <summary>
+    /// The spoofing case. Connector text is attacker-controlled, and after redaction a value the
+    /// redactor replaced is byte-identical to source text that already spelled out the placeholder.
+    /// Anyone deriving the marker by searching the stored payload for that literal would report this
+    /// artifact as redacted; the recorded outcome is taken against the pre-redaction document
+    /// instead, so text that survived the pass untouched is reported as untouched however it reads.
+    /// </summary>
+    [Fact]
+    public void Create_RecordsThatNothingWasRedacted_WhenSourceTextAlreadySpellsOutThePlaceholder()
+    {
+        var draft = new ToolArtifactDraft(
+            ArtifactKind.RetrievedItem,
+            "source:2026.09.01:src/Checkout.cs",
+            SourcePayload("// audit note: the previous maintainer wrote [REDACTED] here on purpose."));
+
+        var artifact = RedactedToolArtifactFactory.Create(Job(), draft, Redaction(), Now);
+
+        Assert.Contains("[REDACTED]", artifact.RedactedPayload.GetRawText(), StringComparison.Ordinal);
+        Assert.False(artifact.RedactionApplied);
     }
 
     /// <summary>
@@ -256,10 +295,55 @@ public sealed class ToolArtifactRedactionTests
 
         var redacted = RedactedToolArtifactFactory.RedactOutput(output, Redaction());
 
-        var text = redacted.GetRawText();
-        Assert.True(redacted.GetProperty("matched").GetBoolean());
+        var text = redacted.Output.GetRawText();
+        Assert.True(redacted.Output.GetProperty("matched").GetBoolean());
+        Assert.True(redacted.RedactionApplied);
         Assert.DoesNotContain(ReporterEmail, text, StringComparison.Ordinal);
         Assert.DoesNotContain(AwsAccessKey, text, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The tool output becomes the durable <c>ToolResult</c> artifact, which is citable evidence, so
+    /// this outcome has to be as trustworthy as the per-item one. Nothing credential-shaped in, and
+    /// nothing claimed: a report built only on this tool result must not tell its reader that part
+    /// of the evidence was withheld.
+    /// </summary>
+    [Fact]
+    public void RedactOutput_RecordsThatNothingWasRedacted_WhenTheOutputHoldsNoSecret()
+    {
+        var output = CanonicalJsonSerializer.ToElement(new JsonObject
+        {
+            ["matched"] = true,
+            ["items"] = new JsonArray(new JsonObject { ["quote"] = OrdinarySourceExcerpt })
+        });
+
+        var redacted = RedactedToolArtifactFactory.RedactOutput(output, Redaction());
+
+        Assert.False(redacted.RedactionApplied);
+    }
+
+    /// <summary>
+    /// The spoofing case for the tool message, matching the one on the per-item artifact. Connector
+    /// text that already spells out the placeholder survives the pass unchanged, and the recorded
+    /// outcome is taken against the pre-redaction document rather than by looking for that literal
+    /// in the result, so the ticket's author cannot raise the marker by writing it.
+    /// </summary>
+    [Fact]
+    public void RedactOutput_RecordsThatNothingWasRedacted_WhenTheOutputAlreadySpellsOutThePlaceholder()
+    {
+        var output = CanonicalJsonSerializer.ToElement(new JsonObject
+        {
+            ["matched"] = true,
+            ["items"] = new JsonArray(new JsonObject
+            {
+                ["quote"] = "the reporter wrote [REDACTED] into the ticket body on purpose"
+            })
+        });
+
+        var redacted = RedactedToolArtifactFactory.RedactOutput(output, Redaction());
+
+        Assert.Contains("[REDACTED]", redacted.Output.GetRawText(), StringComparison.Ordinal);
+        Assert.False(redacted.RedactionApplied);
     }
 
     /// <summary>
@@ -394,7 +478,7 @@ public sealed class ToolArtifactRedactionTests
         var draft = Assert.Single(execution.Artifacts!);
         var artifact = RedactedToolArtifactFactory.Create(job, draft, configuration.Redaction, Now);
         return artifact.RedactedPayload.GetRawText() +
-            RedactedToolArtifactFactory.RedactOutput(execution.Output, configuration.Redaction).GetRawText();
+            RedactedToolArtifactFactory.RedactOutput(execution.Output, configuration.Redaction).Output.GetRawText();
     }
 
     private static DateTimeOffset Now { get; } =

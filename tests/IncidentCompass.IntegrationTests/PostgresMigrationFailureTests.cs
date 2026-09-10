@@ -1,3 +1,4 @@
+using System.Globalization;
 using IncidentCompass.Infrastructure.Postgres;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
@@ -31,7 +32,7 @@ public sealed class PostgresMigrationFailureTests(PostgresRepositoryFixture fixt
         await RunMigrationsAsync(database.ConnectionString);
 
         Assert.Equal(
-            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17],
+            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18],
             await ReadAppliedVersionsAsync(database.ConnectionString));
         Assert.True(await HasRequiredV02IndexesAndColumnsAsync(database.ConnectionString));
         await AssertPreProjectionActionPreservedAsync(database.ConnectionString, actionId);
@@ -60,7 +61,7 @@ public sealed class PostgresMigrationFailureTests(PostgresRepositoryFixture fixt
         await RunMigrationsAsync(database.ConnectionString);
 
         Assert.Equal(
-            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17],
+            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18],
             await ReadAppliedVersionsAsync(database.ConnectionString));
         Assert.True(await HasRequiredV02IndexesAndColumnsAsync(database.ConnectionString));
         await AssertPreProjectionActionPreservedAsync(database.ConnectionString, actionId);
@@ -88,7 +89,7 @@ public sealed class PostgresMigrationFailureTests(PostgresRepositoryFixture fixt
         await RunMigrationsAsync(database.ConnectionString);
 
         Assert.Equal(
-            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17],
+            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18],
             await ReadAppliedVersionsAsync(database.ConnectionString));
         Assert.True(await HasRequiredV02IndexesAndColumnsAsync(database.ConnectionString));
         await AssertCostRollupHistoryPreservedAsync(database.ConnectionString, costHistory);
@@ -141,17 +142,31 @@ public sealed class PostgresMigrationFailureTests(PostgresRepositoryFixture fixt
     {
         await using var database = await MigrationDatabase.CreateAsync(fixture);
         await RunMigrationsAsync(database.ConnectionString);
-        await RenumberMigrationAsync(database.ConnectionString, fromVersion: 17, toVersion: 18);
+
+        // Renumbering has to move a durable row onto a version the catalog does not know, so the
+        // target is derived as one past the catalog's highest version. A literal would either
+        // collide with the newest migration's primary key or stop being unknown once it ships.
+        var highestCatalogVersion = PostgresMigrationCatalog.All.Max(migration => migration.Version);
+        var unknownVersion = highestCatalogVersion + 1;
+        Assert.DoesNotContain(PostgresMigrationCatalog.All, migration => migration.Version == unknownVersion);
+
+        await RenumberMigrationAsync(
+            database.ConnectionString,
+            fromVersion: highestCatalogVersion,
+            toVersion: unknownVersion);
         var beforeRestart = await ReadMigrationRecordsAsync(database.ConnectionString);
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(
             () => RunMigrationsAsync(database.ConnectionString));
 
-        Assert.Contains("unexpected durable version 18", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(
+            "unexpected durable version " + unknownVersion.ToString(CultureInfo.InvariantCulture),
+            exception.Message,
+            StringComparison.OrdinalIgnoreCase);
         Assert.Contains("not present in this released catalog", exception.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("do not renumber", exception.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(beforeRestart, await ReadMigrationRecordsAsync(database.ConnectionString));
-        Assert.DoesNotContain(beforeRestart, record => record.Version == 17);
+        Assert.DoesNotContain(beforeRestart, record => record.Version == highestCatalogVersion);
     }
 
     [DockerAvailableFact]
