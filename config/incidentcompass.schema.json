@@ -77,7 +77,8 @@
         "Temperature": { "type": ["number", "null"] },
         "MaxOutputTokens": { "type": ["integer", "null"], "minimum": 1 },
         "ContextWindowTokens": { "type": ["integer", "null"], "minimum": 1 },
-        "Reasoning": { "enum": ["off", "low", "medium", "high", null] }
+        "Reasoning": { "enum": ["off", "low", "medium", "high", null] },
+        "FallbackRouteId": { "anyOf": [{ "$ref": "#/$defs/nonBlankString" }, { "type": "null" }] }
       },
       "allOf": [
         {
@@ -86,7 +87,10 @@
             "required": ["Kind"]
           },
           "then": {
-            "properties": { "Reasoning": { "type": "null" } }
+            "properties": {
+              "Reasoning": { "type": "null" },
+              "FallbackRouteId": { "type": "null" }
+            }
           }
         }
       ]

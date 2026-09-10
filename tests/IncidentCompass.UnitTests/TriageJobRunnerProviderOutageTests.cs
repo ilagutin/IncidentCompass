@@ -154,6 +154,73 @@ public sealed class TriageJobRunnerProviderOutageTests
         Assert.False(ProviderOutageExceptionClassifier.IsProviderOutage(embeddingFailure));
     }
 
+    /// <summary>
+    /// A model call that failed over and failed again arrives here as the fallback call's accounting
+    /// wrapped over the primary's failure. The runner must read one failure kind out of that, the
+    /// primary's, so the disposition table still describes what a job does; and it must persist the
+    /// accounting still owed, which is the fallback call's, because the primary's was made durable
+    /// before the second call was allowed to start.
+    /// </summary>
+    [Fact]
+    public async Task ProcessClaimedAsync_FailedFailOverKeepsThePrimarysDispositionAndTheFallbacksAccounting()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var recorder = new RecordingRuntimeRepository();
+        var primaryFailure = new InvestigationModelCallFailureException(
+            CreateAccounting("report-chat", fallbackForRouteId: null, "provider_unavailable"),
+            new AiModelException(
+                "test-provider",
+                "Service unavailable.",
+                failureKind: ProviderFailureKind.Unavailable));
+        var fallbackAccounting = CreateAccounting("backup-chat", "report-chat", "provider_request_rejected");
+        var runner = new TriageJobRunner(
+            recorder,
+            new StaticConfigurationRepository(),
+            new ProviderFailingProcessor(
+                new InvestigationModelCallFailureException(fallbackAccounting, primaryFailure)),
+            new FixedTimeProvider(now));
+
+        await runner.ProcessClaimedAsync(
+            CreateJob(now, attempt: 1),
+            "worker",
+            new TriageJobProcessingSettings(MaxAttempts: 3, RetryDelay: TimeSpan.FromSeconds(5)),
+            CancellationToken.None);
+
+        var failure = Assert.Single(recorder.Failures);
+        Assert.Equal(TriageJobStatus.RetryPending, failure.Status);
+        Assert.Equal("provider_unavailable", failure.ErrorCode);
+        Assert.Equal(TriageJobRetryBudgetDisposition.DoNotConsumeAttempt, failure.RetryBudgetDisposition);
+        Assert.Same(fallbackAccounting, failure.ModelCallAccounting);
+    }
+
+    private static InvestigationModelCallAccounting CreateAccounting(
+        string routeId,
+        string? fallbackForRouteId,
+        string errorCode)
+    {
+        var callId = Guid.NewGuid();
+        return new InvestigationModelCallAccounting(
+            callId,
+            Role: null,
+            new ModelCallLedgerMetadata(
+                "orchestrator",
+                routeId,
+                "test-model",
+                "test-provider",
+                "unknown",
+                InputTokens: null,
+                OutputTokens: null,
+                TotalTokens: null,
+                DurationMs: 12,
+                ProposedToolCallCount: 0,
+                CallId: callId,
+                Outcome: "failed",
+                ErrorCode: errorCode,
+                ReasoningTokens: null,
+                FallbackForRouteId: fallbackForRouteId),
+            ChargeTokens: null);
+    }
+
     [Fact]
     public async Task ProcessClaimedAsync_UnknownFailurePreservesSafeProviderErrorCode()
     {

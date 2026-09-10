@@ -73,4 +73,24 @@ public sealed class ModelCallLedgerMetadataTests
 
         Assert.Equal(expected, JsonSerializer.Serialize(metadata));
     }
+
+    /// <summary>
+    /// A fail-over call names the route it answered for, after every field an existing row already
+    /// carries. Every other call omits the property entirely, which is what keeps the rows written
+    /// before this field existed byte-identical to the ones written after it.
+    /// </summary>
+    [Fact]
+    public void Serialize_AppendsTheFallbackRouteOnlyOnAFailOverCall()
+    {
+        var metadata = Metadata with { RouteId = "backup-chat", FallbackForRouteId = "report-chat" };
+        const string expected =
+            "{\"kind\":\"orchestrator\",\"routeId\":\"backup-chat\",\"model\":\"local-model\"," +
+            "\"provider\":\"local-oai\",\"usageSource\":\"provider\",\"inputTokens\":128," +
+            "\"outputTokens\":64,\"totalTokens\":192,\"durationMs\":1234,\"proposedToolCallCount\":1," +
+            "\"callId\":\"11111111-1111-1111-1111-111111111111\",\"outcome\":\"success\"," +
+            "\"errorCode\":null,\"fallbackForRouteId\":\"report-chat\"}";
+
+        Assert.Equal(expected, JsonSerializer.Serialize(metadata));
+        Assert.DoesNotContain("fallbackForRouteId", JsonSerializer.Serialize(Metadata), StringComparison.Ordinal);
+    }
 }

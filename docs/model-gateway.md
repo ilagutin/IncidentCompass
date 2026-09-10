@@ -88,8 +88,8 @@ into that call through linked cancellation.
   Model-provider outages are retried as an explicit `provider_unavailable` delayed job state. After
   the configured consecutive-failure threshold, each Worker process pauses new claims for
   `IncidentCompass:ProviderResilience:BackpressureSeconds`; a successful model call clears that
-  local pause. This is in-process backpressure, not cross-host coordination, and fallback routes
-  remain later scope. The delayed state is visible to callers: `GET /api/v1/faults/{id}` returns the
+  local pause, and a call answered by a route's fallback deliberately does not. This is in-process
+  backpressure, not cross-host coordination. The delayed state is visible to callers: `GET /api/v1/faults/{id}` returns the
   job's `lastErrorCode` and `nextAttemptAtUtc` alongside its `RetryPending` status, without exposing
   any provider-authored text (see `docs/observability.md`, "Why a waiting job is waiting").
 - Request/response objects carry correlation IDs.
@@ -120,6 +120,11 @@ and invalid, unknown or embedding `TransportFailure` failures consume the normal
 budget. An embedding transport failure is `RetryPending` while attempts remain and `DeadLettered`
 at `MaxAttempts`. A pre-processing attempt guard also dead-letters a reclaimed job whose attempt is
 already beyond `MaxAttempts`.
+
+One kind still maps to one disposition when a route declares a fallback. The second call happens
+inside the governed model call rather than in the job runner, and a fallback that fails as well
+raises the failure of the call that started it, so what the runner classifies is a single kind. See
+"Route Fallback" below.
 
 ## Routing
 
@@ -186,9 +191,70 @@ must not require draining every in-flight job first.
 A direct `IAiModelClient` or `IEmbeddingClient` caller that supplies no `ProviderId` reaches the
 host-wide profile without the triage configuration being read at all.
 
-This commit makes fallback routing *expressible*: a second provider can now be configured and
-reached. It does not add fallback routing itself. Nothing yet retries a failed call against a
-different provider; provider-outage handling remains the process-local backpressure described above.
+### Route Fallback
+
+A chat route may name another chat route as its `FallbackRouteId`. When the provider fails one of
+that route's model calls in a way a different provider could plausibly answer, the same call is
+retried once on the fallback route, which reaches that route's own provider, model and ceilings.
+Absent means no fail-over, which is what every shipped route does.
+
+```json
+"report-chat": {
+  "Kind": "Chat", "ProviderId": "local-oai", "Model": "local-model",
+  "FallbackRouteId": "report-chat-backup"
+}
+```
+
+The declaration is validated while the host starts, not at the first failure: the named route must
+exist, must be a chat route and must not be the route itself, and a fallback on an embedding route is
+rejected because nothing on the embedding path executes one. A route naming a provider that is not in
+the `Providers` table already fails load in its own right, so a fallback cannot resolve to one.
+
+**Which failures are retried elsewhere.** Only `Unavailable` and `GenerationTimeout`. The first is the
+case the feature exists for: the provider positively did not accept the request - 429, 503, a refused
+connection, a name that did not resolve, a failed TLS handshake - so nothing was generated and a
+different endpoint is the one thing that can plausibly answer. The second is the provider owning a
+deadline and not answering inside it, which a different provider, or the smaller model a fallback
+route usually names, plausibly does inside what is left of the attempt.
+
+Nothing else is. `RejectedRequest` describes a request that the same request, sent again, reproduces;
+`OutputLimitReached` is a completion that ran into its ceiling; `InvalidResponse` covers an empty
+completion and a malformed tool call as well as an unparsable body. Those are the model's own answer
+being wrong, and a second provider is the same money spent twice for the same outcome.
+`AmbiguousInterruption` means the request may already have been accepted and generated, which is
+exactly why it dead-letters rather than being replayed; `Unknown` is unclassified by definition; and
+`TransportFailure` is not produced on the chat path at all.
+
+**What fail-over does not change.**
+
+- *The deadline.* Both calls share the single cancellation the attempt-budget gate created for the
+  first one, so `MaxWallClockSeconds` bounds the pair and no configured bound doubles. The provider's
+  own per-HTTP-attempt `TimeoutSeconds` still bounds each call, and a fallback that runs into the
+  attempt deadline ends as a budget exhaustion, because the attempt really did run out of time. A
+  call that is already cancelled is not failed over at all.
+- *Admission.* The attempt-budget gate admits the call once, before the first attempt at it: a
+  fail-over is the same logical call reaching a second endpoint, not a new request asking for
+  permission. One consequence is worth stating plainly: the prompt was measured against the
+  declaring route's `ContextWindowTokens`, and the fallback route's own value is not re-checked, so
+  a fallback naming a materially smaller context window is a configuration mistake the load
+  validator does not catch.
+- *The accounting.* Both calls are charged. The failed call's `ModelCall` row and its `BudgetEvent`
+  charge are made durable before the second call is allowed to spend anything, and nothing refunds,
+  exempts or hides them.
+- *The disposition.* One hop only: a fallback does not itself fail over, even if the route it names
+  declares one. A fallback that fails at the provider raises the primary's failure, so the job runner
+  still reads exactly one failure kind and applies exactly one disposition from the table above.
+- *Claim backpressure.* Only a call on the route's own provider clears the process-local pause. A
+  fallback answering is evidence about the fallback's provider and none about the one that failed, so
+  claiming stays paused rather than resuming against a provider that is still down.
+
+**What the report says.** A report published from an attempt in which a call was answered by a
+fallback carries a backend-owned limitation stating that at least one model call failed on its
+configured route and was answered by that route's fallback. It follows the withheld-evidence and
+read-only-context markers: derived at publication from the ledger, owned in both directions, and
+never asked of the model, which has no way to know which route dispatched it. The model provenance on
+the report names the fallback route and model that answered; it does not, on its own, say that
+anything failed first, which is what the sentence adds. See `docs/observability.md`.
 
 ### Route Reasoning Preference
 

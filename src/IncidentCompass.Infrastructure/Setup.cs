@@ -11,6 +11,7 @@ using IncidentCompass.Application.Intake.Retention;
 using IncidentCompass.Application.Investigation.Jobs;
 using IncidentCompass.Application.Investigation.Reports;
 using IncidentCompass.Application.Investigation.Reports.Context;
+using IncidentCompass.Application.Investigation.Reports.Fallback;
 using IncidentCompass.Application.Investigation.Reports.List;
 using IncidentCompass.Application.Investigation.Reports.Redaction;
 using IncidentCompass.Application.Investigation.Retention;
@@ -253,6 +254,7 @@ public static class Setup
         services.TryAddScoped<IAttemptArtifactRetentionRepository, PostgresAttemptArtifactRetentionRepository>();
         services.TryAddScoped<IReadOnlyContextOutcomeRepository, PostgresReadOnlyContextOutcomeRepository>();
         services.TryAddScoped<ICitedEvidenceRedactionRepository, PostgresCitedEvidenceRedactionRepository>();
+        services.TryAddScoped<IAttemptModelFallbackRepository, PostgresAttemptModelFallbackRepository>();
         services.TryAddScoped<IActionProposalRepository, PostgresActionProposalRepository>();
         services.TryAddScoped<IActionApprovalReviewRepository, PostgresActionReviewRepository>();
         services.TryAddScoped<IActionDispatchRepository, PostgresActionDispatchRepository>();

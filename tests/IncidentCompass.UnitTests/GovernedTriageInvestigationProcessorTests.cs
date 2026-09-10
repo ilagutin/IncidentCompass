@@ -7,6 +7,7 @@ using IncidentCompass.Application.Intake.Configuration;
 using IncidentCompass.Application.Investigation.Jobs;
 using IncidentCompass.Application.Investigation.Reports;
 using IncidentCompass.Application.Investigation.Reports.Context;
+using IncidentCompass.Application.Investigation.Reports.Fallback;
 using IncidentCompass.Application.Investigation.Reports.Redaction;
 using IncidentCompass.Domain.Incidents;
 using IncidentCompass.Domain.Incidents.Statuses;
@@ -269,7 +270,8 @@ public sealed class GovernedTriageInvestigationProcessorTests
             new TriageReportPublisher(
                 reports,
                 new EmptyContextOutcomeRepository(),
-                new EmptyCitedEvidenceRedactionRepository()),
+                new EmptyCitedEvidenceRedactionRepository(),
+                new EmptyAttemptModelFallbackRepository()),
             appender,
             timeProvider,
             logger);
@@ -432,6 +434,13 @@ public sealed class GovernedTriageInvestigationProcessorTests
             IReadOnlyCollection<string> referenceIds,
             CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<CitedEvidenceRedaction>>([]);
+    }
+
+    private sealed class EmptyAttemptModelFallbackRepository : IAttemptModelFallbackRepository
+    {
+        public Task<IReadOnlyList<AttemptModelFallback>> ReadCurrentAttemptAsync(
+            Guid jobId, int attempt, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<AttemptModelFallback>>([]);
     }
 
     private sealed class RecordingArtifactRepository : ITriageArtifactRepository

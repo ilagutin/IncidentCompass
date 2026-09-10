@@ -387,8 +387,16 @@ cannot prove that the provider did not accept and begin the first generation. A 
 finite job attempt budget, and output-limit exhaustion, rejected requests and ambiguous interruption
 dead-letter immediately. Only a failure classified as `Unavailable` enters the delayed
 no-attempt-cost path and process-local backpressure. The policy avoids unbounded replay of work that
-may already have been dispatched, but it is not a distributed provider-health mechanism and does not
-add fallback routing.
+may already have been dispatched, and it is not a distributed provider-health mechanism.
+
+A route may now name a fallback route, and a call the provider answers with `Unavailable` or
+`GenerationTimeout` is retried once there. That is the whole of it, and the boundaries above are why
+the set is that small: the kinds left out are either the model's own answer being wrong, where a
+second provider is the same money spent twice, or a dispatch whose outcome is not known, where a
+second call is the opposite of the stance the previous paragraph takes. One hop, one shared deadline,
+both calls charged, and the primary's kind is still what the job runner classifies. A fallback that
+answers does not clear claim backpressure, because it says nothing about the provider that failed.
+See `docs/model-gateway.md`, "Route Fallback".
 
 Failed generations can return billable usage. When they do, failure accounting writes a failed
 `ModelCall` and its `BudgetEvent` charge in the same transaction as the fenced job/fault disposition.
@@ -401,8 +409,16 @@ That boundary favors audit honesty over a guessed cost: unknown failed usage can
 cost rollup below the provider's eventual invoice. Success accounting still estimates missing or
 incomplete usage. When both ledger rows exist, model-call accounting is atomic as a pair, but it is
 not an exactly-once distributed billing system beyond the database lock and call-id deduplication
-boundary. Streaming idle detection, progress recovery and fallback routes remain separate design
-work.
+boundary. Streaming idle detection and progress recovery remain separate design work.
+
+A call that fails over is charged twice, once per provider call, and that is the intended answer
+rather than an oversight: both calls happened, and a provider invoices for a generation it failed
+partway through the same as for one that succeeded. The failed call's `ModelCall` row and its
+`BudgetEvent` charge are made durable before the second call is allowed to start, so the attempt is
+never left having spent tokens the ledger cannot account for; if that write fails, no fail-over is
+attempted and the original failure carries its accounting to the attempt-failure path unchanged. The
+cost of that ordering is one extra ledger round trip on a path that is already recovering from a
+provider failure.
 
 ## Budget And Governance Exhaustion Dead-Letters Instead Of Retrying
 

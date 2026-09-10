@@ -80,6 +80,8 @@ leased work was abandoned for an unrequested reason and is reported rather than 
 | 3202 | Warning | Model call failed with a bounded exception type. |
 | 3203 | Warning | Model call was cancelled because the attempt wall-clock budget ran out. |
 | 3204 | Information | Model call was cancelled by host shutdown. |
+| 3205 | Warning | Model call failed on its route and is being retried once on that route's fallback, with both route IDs and the failed call's error code. |
+| 3206 | Warning | Fail-over was not attempted because the failed call's accounting could not be made durable. |
 | 3211 | Debug | Model tokens were charged to the attempt budget. |
 | 3212 | Warning | Attempt budget limit was reached, with its bounded reason token. |
 | 3301 | Warning | Worker tool call was denied, with its bounded denial token. |
@@ -208,7 +210,8 @@ The live model telemetry mechanism is the append-only triage ledger. Each invest
 - stable call ID;
 - outcome (`success` or `failed`);
 - nullable safe error code;
-- nullable provider-reported reasoning token count.
+- nullable provider-reported reasoning token count;
+- nullable fail-over route ID (`fallbackForRouteId`).
 
 That payload is the named `ModelCallLedgerMetadata` record. Its JSON property names, casing and order
 are pinned by attribute because ledger rows and the cost-rollup reader share this persisted contract.
@@ -216,9 +219,17 @@ The call ID, outcome and nullable error code extend the earlier success-only sha
 field names remain stable. Unknown usage is represented by nullable token fields rather than a
 fabricated estimate.
 
+`routeId` always names the route that was actually called. On a call that failed over to a route's
+declared fallback (see `docs/model-gateway.md`, "Route Fallback") that is the fallback route, and
+`fallbackForRouteId` names the route it answered for; on every other call the property is absent, so
+rows written before the field existed are byte-identical to rows written after it. A fail-over
+therefore appears in the ledger as two `ModelCall` rows: the failed call on the configured route,
+with its own error code and its own `BudgetEvent` charge, and the successful call on the fallback
+route. Neither is refunded, exempted or merged into the other.
+
 The ledger does not store rendered prompts, full provider responses, document text, provider credentials, API keys, embedding vectors or reasoning text. A numeric provider-reported reasoning token count may be stored in `ModelCall` metadata, but no reasoning text is logged or persisted. Token budget accounting is recorded separately as first-class `BudgetEvent` rows with `tokens_delta` and `workers_delta` columns. Every worker or orchestrator correction turn also writes one bounded `BudgetEvent`. A worker correction uses the `worker_output_reprompt:` rationale prefix, retains the role and is capped at 1,000 characters; it contains safe diagnostics, not validation exception text, model output, prompt or schema.
 
-`ModelCall` rows and token-accounting `BudgetEvent` rows are mirrored by bounded application log events 3201-3204 and 3211-3212 above, while reprompt `BudgetEvent` rows are mirrored by events 3401 and 3402, so live model observability is readable from logs and auditable from the ledger.
+`ModelCall` rows and token-accounting `BudgetEvent` rows are mirrored by bounded application log events 3201-3206 and 3211-3212 above, while reprompt `BudgetEvent` rows are mirrored by events 3401 and 3402, so live model observability is readable from logs and auditable from the ledger.
 
 ### Report Model Provenance
 
@@ -241,6 +252,12 @@ ledger with one producer rather than a second accumulator kept in step by hand, 
 comes from model output: a `publish_report` body that asserts its own provenance is ignored. Only
 successful calls are counted, because a failed call produced nothing the report is built on and its
 accounting belongs to the attempt that failed.
+
+A call answered by a route's fallback is therefore listed under the fallback route and its model, and
+the call it replaced is not listed at all. That is why provenance is not, on its own, how a reader
+learns that a run was degraded: an attempt legitimately spans several routes, so a second route in
+this list is not by itself evidence that anything failed. The report states that separately, as a
+backend-owned limitation described in `docs/model-gateway.md`, "Route Fallback".
 
 It is stored on the report as well as in the ledger because a report row is immutable and never
 deleted while ledger rows carry no such guarantee, and a report that could stop being able to name

@@ -157,6 +157,11 @@ the value is absent, no reasoning-specific provider field is sent and existing r
 current behavior. `MaxOutputTokens` is unchanged: on most servers it remains a limit shared by
 reasoning and the final answer.
 
+A chat route can also name another chat route as its `"FallbackRouteId"`. A call the provider fails
+with an outage or its own timeout is then retried once on that route, inside the same attempt
+deadline and charged for both calls; the shipped routes declare none. See `docs/model-gateway.md`,
+"Route Fallback".
+
 The checked-in config references `config/incidentcompass.schema.json` for editor completion and
 structural feedback. Run the same semantic validator used at startup before launching either host:
 

@@ -30,6 +30,7 @@ internal sealed partial class ModelCallLedgerAccountant(
         AiModelResponse response,
         Guid callId,
         TimeSpan duration,
+        string? fallbackForRouteId,
         CancellationToken cancellationToken)
     {
         var estimatedInputTokens = TriageTokenEstimator.EstimateMessages(request.Messages, request.Tools);
@@ -53,7 +54,8 @@ internal sealed partial class ModelCallLedgerAccountant(
             callId,
             Outcome: "success",
             ErrorCode: null,
-            ReasoningTokens: response.Usage?.ReasoningTokens);
+            ReasoningTokens: response.Usage?.ReasoningTokens,
+            FallbackForRouteId: fallbackForRouteId);
 
         var accounting = new InvestigationModelCallAccounting(
             callId,
@@ -90,7 +92,8 @@ internal sealed partial class ModelCallLedgerAccountant(
         AiModelRequest request,
         Guid callId,
         AiModelException exception,
-        TimeSpan duration)
+        TimeSpan duration,
+        string? fallbackForRouteId)
     {
         var usageSource = exception.Usage is null ? "unknown" : "provider";
         var errorCode = ProviderErrorCodes.For(exception.FailureKind, exception);
@@ -108,7 +111,8 @@ internal sealed partial class ModelCallLedgerAccountant(
             CallId: callId,
             Outcome: RuntimeTelemetryOutcome.Failed.ToString().ToLowerInvariant(),
             ErrorCode: errorCode,
-            ReasoningTokens: exception.Usage?.ReasoningTokens);
+            ReasoningTokens: exception.Usage?.ReasoningTokens,
+            FallbackForRouteId: fallbackForRouteId);
         return new InvestigationModelCallAccounting(
             callId,
             context.Role,

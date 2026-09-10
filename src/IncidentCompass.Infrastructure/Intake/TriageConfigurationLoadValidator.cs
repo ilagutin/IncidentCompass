@@ -94,7 +94,52 @@ internal sealed class TriageConfigurationLoadValidator(
                     route.Reasoning.Value.ToString(),
                     "unset for an embedding route");
             }
+
         }
+
+        // A second pass, so that every route has already been checked against the provider table
+        // before any fallback is resolved. That is what makes "the fallback names a usable provider"
+        // hold without being restated here: a route whose ProviderId names no configured provider
+        // fails the loop above, whichever route happens to point at it and whatever order the two
+        // are declared in.
+        foreach (var (routeId, route) in routes)
+        {
+            ValidateFallbackRoute(routes, routeId, route);
+        }
+    }
+
+    /// <summary>
+    /// Checks a route's declared fallback while the host is starting, so a fallback that could never
+    /// answer is rejected at load rather than discovered at the first provider failure - which is the
+    /// one moment an operator is least able to act on it, and the moment the declaration exists to
+    /// survive.
+    /// </summary>
+    private static void ValidateFallbackRoute(
+        IReadOnlyDictionary<string, TriageRouteSettings> routes,
+        string routeId,
+        TriageRouteSettings route)
+    {
+        if (route.FallbackRouteId is null)
+        {
+            return;
+        }
+
+        var settingName = "Routes." + routeId + ".FallbackRouteId";
+        RequireNonBlank(settingName, route.FallbackRouteId);
+
+        // Fail-over is executed by the governed chat call path and nothing else reads the
+        // declaration, so an embedding route carrying one would be a promise nothing keeps.
+        if (!string.Equals(route.Kind, "Chat", StringComparison.Ordinal))
+        {
+            throw Invalid(settingName, route.FallbackRouteId, "unset for an embedding route");
+        }
+
+        if (string.Equals(route.FallbackRouteId, routeId, StringComparison.Ordinal))
+        {
+            throw Invalid(settingName, route.FallbackRouteId, "a different route id");
+        }
+
+        RequireChatRoute(routes, route.FallbackRouteId, settingName);
     }
 
     private static void ValidateOrchestrator(

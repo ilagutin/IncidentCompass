@@ -12,6 +12,11 @@ namespace IncidentCompass.Application.Investigation.Jobs;
 /// <see cref="JsonPropertyOrderAttribute"/> values rather than left to member-declaration order.
 /// The payload carries bounded call metadata only - never rendered prompts, provider response
 /// bodies, credentials or embedding vectors.
+/// <para>
+/// <c>RouteId</c> always names the route that was actually called. On a fail-over call that is the
+/// fallback route, and <c>FallbackForRouteId</c> names the route it answered for; on every other
+/// call the property is absent, so no already-written row changes shape.
+/// </para>
 /// </remarks>
 public sealed record ModelCallLedgerMetadata(
     [property: JsonPropertyName("kind"), JsonPropertyOrder(0)] string Kind,
@@ -27,4 +32,5 @@ public sealed record ModelCallLedgerMetadata(
     [property: JsonPropertyName("callId"), JsonPropertyOrder(10)] Guid CallId,
     [property: JsonPropertyName("outcome"), JsonPropertyOrder(11)] string Outcome,
     [property: JsonPropertyName("errorCode"), JsonPropertyOrder(12)] string? ErrorCode,
-    [property: JsonPropertyName("reasoningTokens"), JsonPropertyOrder(13), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? ReasoningTokens = null);
+    [property: JsonPropertyName("reasoningTokens"), JsonPropertyOrder(13), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? ReasoningTokens = null,
+    [property: JsonPropertyName("fallbackForRouteId"), JsonPropertyOrder(14), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? FallbackForRouteId = null);

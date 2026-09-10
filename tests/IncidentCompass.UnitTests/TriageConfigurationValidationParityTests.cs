@@ -36,6 +36,14 @@ public sealed class TriageConfigurationValidationParityTests
         { "recurrence", false, false, "FaultGrouping.Recurrence.EscalateAfterCount" },
         { "redaction", false, false, "Redaction.Patterns[0].Name" },
         { "dangling-role-route", true, false, "Roles.analysis.RouteId" },
+        { "valid-route-fallback", true, true, null },
+        { "unknown-route-fallback", true, false, "Routes.report-chat.FallbackRouteId" },
+        { "self-route-fallback", true, false, "Routes.report-chat.FallbackRouteId" },
+        { "embedding-route-fallback", false, false, "Routes.memory-embed.FallbackRouteId" },
+        { "embedding-target-route-fallback", true, false, "Routes.report-chat.FallbackRouteId" },
+        // A fallback pointing at a route whose provider does not exist is rejected by that route's
+        // own provider rule, which runs for every route before any fallback is resolved.
+        { "fallback-to-dangling-provider-route", true, false, "Routes.analysis-chat.ProviderId" },
         { "valid-external-action", true, true, null },
         { "valid-telegram-action", true, true, null },
         { "valid-ticket-create-action", true, true, null },
@@ -185,6 +193,25 @@ public sealed class TriageConfigurationValidationParityTests
                 return;
             case "dangling-role-route":
                 root["Roles"]!["analysis"]!["RouteId"] = "missing-route";
+                return;
+            case "valid-route-fallback":
+                root["Routes"]!["report-chat"]!["FallbackRouteId"] = "analysis-chat";
+                return;
+            case "unknown-route-fallback":
+                root["Routes"]!["report-chat"]!["FallbackRouteId"] = "missing-route";
+                return;
+            case "self-route-fallback":
+                root["Routes"]!["report-chat"]!["FallbackRouteId"] = "report-chat";
+                return;
+            case "embedding-route-fallback":
+                root["Routes"]!["memory-embed"]!["FallbackRouteId"] = "analysis-chat";
+                return;
+            case "embedding-target-route-fallback":
+                root["Routes"]!["report-chat"]!["FallbackRouteId"] = "memory-embed";
+                return;
+            case "fallback-to-dangling-provider-route":
+                root["Routes"]!["report-chat"]!["FallbackRouteId"] = "analysis-chat";
+                root["Routes"]!["analysis-chat"]!["ProviderId"] = "missing-provider";
                 return;
             case "valid-external-action":
                 AddExternalAction(root);
