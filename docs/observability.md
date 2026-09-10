@@ -219,6 +219,13 @@ closed decisions/statuses and `action:<id>` or `artifact:<id>` references. They 
 payload bodies, provenance bodies, adapter routes, credentials, prompts or transcripts into the
 ledger or application logs.
 
+Every tool-policy denial writes its reason in one shape: a stable reason code, optionally followed by
+`: ` and a human detail. `rate_cap_exceeded: memory_search used 3/3 in attempt scope` is one row;
+`tool_not_granted_to_role` with no detail is another. The code is always the leading token, so
+denials in `PolicyDecision(Denied)` rows aggregate by cause without parsing the prose after it, and
+the same code leads the reason on the matching log event. Allowed and approval-required decisions
+keep a descriptive reason instead: they name every rule that matched, which is not a single cause.
+
 Denied post-report proposals use `PolicyDecision(Denied)` with a closed bounded reason and a safe
 `report:<id>` reference only after same-tenant current origin resolution. They do not create action,
 artifact or provenance rows. Rejections before that origin boundary write no ledger row, avoiding a

@@ -172,7 +172,7 @@ internal sealed partial class TriageJobRunner(
         {
             return new TriageJobAttemptFailure(
                 TriageJobStatus.RetryPending,
-                "provider_unavailable",
+                ProviderErrorCodes.For(ProviderFailureKind.Unavailable, exception),
                 "Triage delayed: provider unavailable.",
                 timeProvider.GetUtcNow().Add(providerOutageTracker?.RetryDelay ?? settings.RetryDelay),
                 TriageJobRetryBudgetDisposition.DoNotConsumeAttempt,
@@ -183,7 +183,7 @@ internal sealed partial class TriageJobRunner(
             ProviderFailureKind.OutputLimitReached or
             ProviderFailureKind.AmbiguousInterruption)
         {
-            var immediateFailureCode = GetProviderErrorCode(providerFailureKind.Value, exception);
+            var immediateFailureCode = ProviderErrorCodes.For(providerFailureKind.Value, exception);
             return new TriageJobAttemptFailure(
                 TriageJobStatus.DeadLettered,
                 immediateFailureCode,
@@ -194,7 +194,7 @@ internal sealed partial class TriageJobRunner(
 
         var maxAttempts = Math.Max(1, settings.MaxAttempts);
         var errorCode = providerFailureKind is { } failureKind
-            ? GetProviderErrorCode(failureKind, exception)
+            ? ProviderErrorCodes.For(failureKind, exception)
             : configurationLoaded
                 ? "triage_job_attempt_failed"
                 : "config_snapshot_unavailable";
@@ -216,19 +216,6 @@ internal sealed partial class TriageJobRunner(
             ModelCallAccounting: accounting);
     }
 
-    private static string GetProviderErrorCode(ProviderFailureKind failureKind, Exception exception) =>
-        failureKind switch
-        {
-            ProviderFailureKind.Unavailable => "provider_unavailable",
-            ProviderFailureKind.RejectedRequest => "provider_request_rejected",
-            ProviderFailureKind.GenerationTimeout => "provider_generation_timeout",
-            ProviderFailureKind.OutputLimitReached => "provider_output_limit_reached",
-            ProviderFailureKind.AmbiguousInterruption => "provider_dispatch_outcome_unknown",
-            ProviderFailureKind.InvalidResponse =>
-                ProviderOutageExceptionClassifier.FindSafeErrorCode(exception) ?? "provider_invalid_response",
-            _ => ProviderOutageExceptionClassifier.FindSafeErrorCode(exception) ?? "provider_failure"
-        };
-
     private static InvestigationModelCallAccounting? FindModelCallAccounting(Exception exception)
     {
         for (Exception? current = exception; current is not null; current = current.InnerException)
@@ -249,12 +236,9 @@ internal sealed partial class TriageJobRunner(
     // understood without copying the original exception message.
     private static string NormalizeMessage(string errorCode, Exception exception)
     {
-        if (string.Equals(errorCode, WorkerOutputInvalidException.ErrorCode, StringComparison.Ordinal))
-        {
-            return WorkerOutputInvalidException.StoredReason;
-        }
-
-        var classified = $"{errorCode}: {exception.GetType().Name}.";
+        var classified = string.Equals(errorCode, WorkerOutputInvalidException.ErrorCode, StringComparison.Ordinal)
+            ? WorkerOutputInvalidException.StoredReason
+            : $"{errorCode}: {exception.GetType().Name}.";
         return TextTruncator.Truncate(classified, MaxStoredErrorMessageLength);
     }
 

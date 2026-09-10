@@ -27,7 +27,8 @@ internal static class ActionDispatchGuard
             return ActionDispatchGuardResult.Fail("action_configuration_changed");
         }
 
-        var currentMode = EffectiveMode(currentConfiguration.Actions.DefaultMode, settings.Mode);
+        var currentMode = ActionGovernanceDefaults.EffectiveMode(
+            currentConfiguration.Actions.DefaultMode, settings.Mode);
         if (action.Mode == ActionExecutionMode.Disabled || currentMode == ActionExecutionMode.Disabled)
         {
             return ActionDispatchGuardResult.Fail("action_disabled");
@@ -46,15 +47,8 @@ internal static class ActionDispatchGuard
 
     private static bool RequiresApproval(TriageConfiguration configuration, ActionApprovalRecord action) =>
         configuration.Actions.RequireApprovalForAll ||
-        action.Category != ActionCategory.Notification ||
+        action.Category != ActionGovernanceDefaults.AutoApprovableCategory ||
         configuration.Rules.Any(rule =>
             string.Equals(rule.Type, TriageRuleTypes.RequiresApproval, StringComparison.Ordinal) &&
             string.Equals(rule.Tool, action.ToolId, StringComparison.Ordinal));
-
-    private static ActionExecutionMode EffectiveMode(string globalMode, string? overrideMode)
-    {
-        var global = ActionApprovalVocabulary.ParseMode(globalMode);
-        var perTool = overrideMode is null ? global : ActionApprovalVocabulary.ParseMode(overrideMode);
-        return (ActionExecutionMode)Math.Max((int)global, (int)perTool);
-    }
 }

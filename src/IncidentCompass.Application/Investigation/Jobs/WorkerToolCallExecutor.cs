@@ -136,16 +136,20 @@ internal sealed partial class WorkerToolCallExecutor(
     {
         if (tool is null)
         {
-            LogWorkerToolDenied(logger, job.Id, job.Attempt, roleName, toolCall.Name, "tool_not_registered");
-            return ToolRulePolicyResult.Denied("tool_not_registered");
+            LogWorkerToolDenied(
+                logger, job.Id, job.Attempt, roleName, toolCall.Name, ToolPolicyDenialReasons.ToolNotRegistered);
+            return ToolRulePolicyResult.Denied(ToolPolicyDenialReasons.ToolNotRegistered);
         }
 
         if (validation is null || !validation.IsValid)
         {
             // The validator message can echo model-supplied arguments, so only the bounded
-            // classification token reaches the log; the full reason stays in the durable ledger.
-            LogWorkerToolDenied(logger, job.Id, job.Attempt, roleName, toolCall.Name, "tool_arguments_invalid");
-            return ToolRulePolicyResult.Denied(validation?.ErrorMessage ?? "tool_arguments_invalid");
+            // classification token reaches the log; the full reason stays in the durable ledger, where
+            // it is the detail behind the same reason code the log records.
+            LogWorkerToolDenied(
+                logger, job.Id, job.Attempt, roleName, toolCall.Name, ToolPolicyDenialReasons.ToolArgumentsInvalid);
+            return ToolRulePolicyResult.Denied(
+                ToolPolicyDenialReasons.ToolArgumentsInvalid, validation?.ErrorMessage);
         }
 
         return await ruleEngine.DecideImmediateAsync(job, configuration, roleName, toolCall.Name, cancellationToken);

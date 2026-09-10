@@ -18,7 +18,12 @@ internal sealed partial class WorkerRoleRunner(
     /// one bounds orchestrator work turns for the whole attempt, while this bounds a single worker.
     /// </summary>
     private const int WorkerTurnSlack = 4;
-    private const int MaxLoggedValidationDiagnosticLength = 1000;
+
+    /// <summary>
+    /// The classification that opens every worker reprompt rationale in the ledger. The appender
+    /// charges its length against <see cref="TriageLedgerAppender.MaxRepromptRationaleLength" />, so
+    /// this prefix is never what gets cut and never eats into the diagnostic that follows it.
+    /// </summary>
     internal const string RepromptRationalePrefix = "worker_output_reprompt: ";
 
     private readonly ILogger logger = logger ?? NullLogger<WorkerRoleRunner>.Instance;
@@ -85,7 +90,8 @@ internal sealed partial class WorkerRoleRunner(
                 }
 
                 reprompts++;
-                var safeDiagnostic = exception.GetSafeDiagnostic(MaxLoggedValidationDiagnosticLength);
+                var safeDiagnostic = exception.GetSafeDiagnostic(
+                    TriageLedgerAppender.MaxRepromptRationaleLength);
                 LogWorkerReprompted(
                     logger,
                     job.Id,
@@ -97,7 +103,8 @@ internal sealed partial class WorkerRoleRunner(
                 await ledgerAppender.AppendRepromptBudgetEventAsync(
                     job,
                     roleName,
-                    RepromptRationalePrefix + safeDiagnostic,
+                    RepromptRationalePrefix,
+                    safeDiagnostic,
                     cancellationToken);
                 messages.Add(new AiChatMessage(AiMessageRole.Assistant, response.Content));
                 messages.Add(new AiChatMessage(

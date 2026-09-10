@@ -7,6 +7,30 @@ internal static class AnalysisWorkerOutputSchemaValidator
 {
     internal const int MaxReportedViolations = 20;
 
+    private const string ObjectSchemaType = "object";
+    private const string ArraySchemaType = "array";
+    private const string StringSchemaType = "string";
+    private const string BooleanSchemaType = "boolean";
+    private const string NumberSchemaType = "number";
+
+    /// <summary>
+    /// The schema <c>type</c> values <c>ValidateElement</c> knows how to evaluate, built from the same
+    /// tokens its switch matches. A type outside this set leaves the worker loop as an
+    /// <see cref="InvalidOperationException" /> rather than as a correctable validation failure, so the
+    /// configuration tests that guard shipped and fixture schemas read the set from here through
+    /// <see cref="IsSupportedSchemaType" /> instead of restating it.
+    /// </summary>
+    private static readonly HashSet<string> SupportedSchemaTypes = new(StringComparer.Ordinal)
+    {
+        ObjectSchemaType,
+        ArraySchemaType,
+        StringSchemaType,
+        BooleanSchemaType,
+        NumberSchemaType
+    };
+
+    internal static bool IsSupportedSchemaType(string schemaType) => SupportedSchemaTypes.Contains(schemaType);
+
     public static string Validate(string content, string outputSchema, string roleName)
     {
         using var schemaDocument = ParseSchema(outputSchema, roleName);
@@ -76,26 +100,26 @@ internal static class AnalysisWorkerOutputSchemaValidator
         var expectedType = ReadSchemaType(schema, path, schemaLabel);
         switch (expectedType)
         {
-            case "object":
+            case ObjectSchemaType:
                 ValidateObject(value, schema, path, outputLabel, schemaLabel, violations, ref violationsTruncated);
                 break;
-            case "array":
+            case ArraySchemaType:
                 ValidateArray(value, schema, path, outputLabel, schemaLabel, violations, ref violationsTruncated);
                 break;
-            case "string":
+            case StringSchemaType:
                 ValidateString(value, schema, path, outputLabel, violations, ref violationsTruncated);
                 break;
-            case "boolean":
+            case BooleanSchemaType:
                 if (value.ValueKind is not JsonValueKind.True and not JsonValueKind.False)
                 {
-                    AddViolation(violations, ref violationsTruncated, Invalid(path, "boolean", outputLabel));
+                    AddViolation(violations, ref violationsTruncated, Invalid(path, BooleanSchemaType, outputLabel));
                 }
 
                 break;
-            case "number":
+            case NumberSchemaType:
                 if (value.ValueKind != JsonValueKind.Number)
                 {
-                    AddViolation(violations, ref violationsTruncated, Invalid(path, "number", outputLabel));
+                    AddViolation(violations, ref violationsTruncated, Invalid(path, NumberSchemaType, outputLabel));
                 }
 
                 break;
@@ -115,7 +139,7 @@ internal static class AnalysisWorkerOutputSchemaValidator
     {
         if (value.ValueKind != JsonValueKind.Object)
         {
-            AddViolation(violations, ref violationsTruncated, Invalid(path, "object", outputLabel));
+            AddViolation(violations, ref violationsTruncated, Invalid(path, ObjectSchemaType, outputLabel));
             return;
         }
 
@@ -171,7 +195,7 @@ internal static class AnalysisWorkerOutputSchemaValidator
     {
         if (value.ValueKind != JsonValueKind.Array)
         {
-            AddViolation(violations, ref violationsTruncated, Invalid(path, "array", outputLabel));
+            AddViolation(violations, ref violationsTruncated, Invalid(path, ArraySchemaType, outputLabel));
             return;
         }
 
@@ -210,7 +234,7 @@ internal static class AnalysisWorkerOutputSchemaValidator
     {
         if (value.ValueKind != JsonValueKind.String)
         {
-            AddViolation(violations, ref violationsTruncated, Invalid(path, "string", outputLabel));
+            AddViolation(violations, ref violationsTruncated, Invalid(path, StringSchemaType, outputLabel));
             return;
         }
 

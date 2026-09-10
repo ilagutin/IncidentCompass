@@ -272,7 +272,7 @@ internal sealed partial class InvestigationModelCaller(
         TimeSpan duration)
     {
         var usageSource = exception.Usage is null ? "unknown" : "provider";
-        var errorCode = GetProviderErrorCode(exception);
+        var errorCode = ProviderErrorCodes.For(exception.FailureKind, exception);
         var metadata = new ModelCallLedgerMetadata(
             context.CallKind,
             context.RouteId,
@@ -307,19 +307,6 @@ internal sealed partial class InvestigationModelCaller(
 
         return null;
     }
-
-    private static string GetProviderErrorCode(AiModelException exception) =>
-        exception.FailureKind switch
-        {
-            ProviderFailureKind.Unavailable => "provider_unavailable",
-            ProviderFailureKind.RejectedRequest => "provider_request_rejected",
-            ProviderFailureKind.GenerationTimeout => "provider_generation_timeout",
-            ProviderFailureKind.OutputLimitReached => "provider_output_limit_reached",
-            ProviderFailureKind.AmbiguousInterruption => "provider_dispatch_outcome_unknown",
-            ProviderFailureKind.InvalidResponse =>
-                ProviderOutageExceptionClassifier.FindSafeErrorCode(exception) ?? "provider_invalid_response",
-            _ => ProviderOutageExceptionClassifier.FindSafeErrorCode(exception) ?? "provider_failure"
-        };
 
     [LoggerMessage(
         EventId = 3201,

@@ -158,7 +158,7 @@ internal sealed class PostgresActionProposalRepository(
                 proposal.Configuration, proposal.RegisteredTool, facts, cancellationToken);
             if (!policy.MayProceed)
             {
-                await DenyAsync(ActionProposalDenialReason.NormalizePolicy(policy.Reason));
+                await DenyAsync(ActionProposalDenialReason.NormalizePolicy(policy.ReasonCode));
             }
 
             var prepared = new PreparedActionProposal(

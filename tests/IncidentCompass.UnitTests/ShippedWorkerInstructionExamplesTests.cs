@@ -6,9 +6,6 @@ namespace IncidentCompass.UnitTests;
 
 public sealed class ShippedWorkerInstructionExamplesTests
 {
-    private static readonly HashSet<string> SupportedSchemaTypes =
-        new(["object", "array", "string", "boolean", "number"], StringComparer.Ordinal);
-
     private static readonly Regex JsonExamplePattern = new(
         "~~~json\\r?\\n(?<example>\\{[\\s\\S]*?\\})\\r?\\n~~~",
         RegexOptions.CultureInvariant);
@@ -96,7 +93,10 @@ public sealed class ShippedWorkerInstructionExamplesTests
             type.ValueKind == JsonValueKind.String,
             $"Role '{roleName}' in '{configPath}' declares a type at {path} that must be one supported " +
             "string, not an array or union.");
-        Assert.Contains(type.GetString()!, SupportedSchemaTypes);
+        Assert.True(
+            AnalysisWorkerOutputSchemaValidator.IsSupportedSchemaType(type.GetString()!),
+            $"Role '{roleName}' in '{configPath}' declares type '{type.GetString()}' at {path}, which " +
+            "the worker output validator cannot evaluate.");
 
         if (schema.TryGetProperty("properties", out var properties) && properties.ValueKind == JsonValueKind.Object)
         {

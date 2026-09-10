@@ -48,13 +48,15 @@ internal sealed partial class ToolRuleEngine(
         if (!configuration.Tools.TryGetValue(toolName, out var settings) ||
             !string.Equals(settings.Kind, "internal", StringComparison.Ordinal))
         {
-            return Task.FromResult(ToolRulePolicyResult.Denied("unknown_or_unconfigured_tool"));
+            return Task.FromResult(
+                ToolRulePolicyResult.Denied(ToolPolicyDenialReasons.UnknownOrUnconfiguredTool));
         }
 
         if (!configuration.Roles.TryGetValue(roleName, out var role) ||
             !role.Tools.Contains(toolName, StringComparer.Ordinal))
         {
-            return Task.FromResult(ToolRulePolicyResult.Denied("tool_not_granted_to_role"));
+            return Task.FromResult(
+                ToolRulePolicyResult.Denied(ToolPolicyDenialReasons.ToolNotGrantedToRole));
         }
 
         return EvaluateRulesAsync(
@@ -75,18 +77,19 @@ internal sealed partial class ToolRuleEngine(
             !string.Equals(settings.Kind, "external_action", StringComparison.Ordinal) ||
             !configuration.Actions.AllowedTools.Contains(registeredTool.ToolId, StringComparer.Ordinal))
         {
-            return ToolRulePolicyResult.Denied("action_not_granted");
+            return ToolRulePolicyResult.Denied(ToolPolicyDenialReasons.ActionNotGranted);
         }
 
         if (!MatchesRegistration(settings, registeredTool))
         {
-            return ToolRulePolicyResult.Denied("action_registration_mismatch");
+            return ToolRulePolicyResult.Denied(ToolPolicyDenialReasons.ActionRegistrationMismatch);
         }
 
-        var effectiveMode = EffectiveMode(configuration.Actions.DefaultMode, settings.Mode);
+        var effectiveMode = ActionGovernanceDefaults.EffectiveMode(
+            configuration.Actions.DefaultMode, settings.Mode);
         if (effectiveMode == ActionExecutionMode.Disabled)
         {
-            return ToolRulePolicyResult.Denied("action_disabled");
+            return ToolRulePolicyResult.Denied(ToolPolicyDenialReasons.ActionDisabled);
         }
 
         var rules = await EvaluateRulesAsync(
@@ -98,7 +101,7 @@ internal sealed partial class ToolRuleEngine(
 
         var approvalRequired = rules.Decision == TriageLedgerDecision.ApprovalRequired ||
             configuration.Actions.RequireApprovalForAll ||
-            registeredTool.Category != ActionCategory.Notification;
+            registeredTool.Category != ActionGovernanceDefaults.AutoApprovableCategory;
         var reason = approvalRequired
             ? CombineReason(rules.Reason, "approval required by action ceiling")
             : rules.Reason;
@@ -123,7 +126,8 @@ internal sealed partial class ToolRuleEngine(
                     if (rule.Max is not > 0)
                     {
                         return ToolRulePolicyResult.Denied(
-                            $"rate_cap_missing_max: rate_cap rule for {toolName} has no positive Max in {rule.Scope} scope");
+                            ToolPolicyDenialReasons.RateCapMissingMax,
+                            $"rate_cap rule for {toolName} has no positive Max in {rule.Scope} scope");
                     }
 
                     var max = rule.Max.Value;
@@ -132,7 +136,8 @@ internal sealed partial class ToolRuleEngine(
                     if (count >= max)
                     {
                         return ToolRulePolicyResult.Denied(
-                            $"rate_cap exceeded for {toolName}: {count}/{max} in {rule.Scope} scope");
+                            ToolPolicyDenialReasons.RateCapExceeded,
+                            $"{toolName} used {count}/{max} in {rule.Scope} scope");
                     }
 
                     reasons.Add($"rate_cap {count}/{max} in {rule.Scope} scope");
@@ -142,14 +147,16 @@ internal sealed partial class ToolRuleEngine(
                     if (string.IsNullOrWhiteSpace(prerequisite))
                     {
                         return ToolRulePolicyResult.Denied(
-                            $"precondition_missing_prerequisite: precondition rule for {toolName} names no prerequisite tool");
+                            ToolPolicyDenialReasons.PreconditionMissingPrerequisite,
+                            $"precondition rule for {toolName} names no prerequisite tool");
                     }
 
                     if (!await factReader.HasSuccessfulToolResultAsync(
                             prerequisite, rule.Scope, cancellationToken))
                     {
                         return ToolRulePolicyResult.Denied(
-                            $"precondition unsatisfied: {prerequisite} has no successful ToolResult in {rule.Scope} scope");
+                            ToolPolicyDenialReasons.PreconditionUnsatisfied,
+                            $"{prerequisite} has no successful ToolResult in {rule.Scope} scope");
                     }
 
                     reasons.Add($"precondition satisfied by {prerequisite} in {rule.Scope} scope");
@@ -163,7 +170,8 @@ internal sealed partial class ToolRuleEngine(
                     break;
                 default:
                     return ToolRulePolicyResult.Denied(
-                        $"unknown_rule_type: '{rule.Type}' configured for {toolName}");
+                        ToolPolicyDenialReasons.UnknownRuleType,
+                        $"'{rule.Type}' configured for {toolName}");
             }
         }
 
@@ -176,13 +184,6 @@ internal sealed partial class ToolRuleEngine(
     private static bool MatchesRegistration(TriageToolSettings settings, AgentToolDescriptor registeredTool) =>
         string.Equals(settings.Category, registeredTool.Category?.ToStorageValue(), StringComparison.Ordinal) &&
         string.Equals(settings.LogicalTargetId, registeredTool.LogicalTargetId, StringComparison.Ordinal);
-
-    private static ActionExecutionMode EffectiveMode(string globalMode, string? overrideMode)
-    {
-        var global = ActionApprovalVocabulary.ParseMode(globalMode);
-        var perTool = overrideMode is null ? global : ActionApprovalVocabulary.ParseMode(overrideMode);
-        return (ActionExecutionMode)Math.Max((int)global, (int)perTool);
-    }
 
     private static string CombineReason(string first, string second) =>
         string.IsNullOrWhiteSpace(first) ? second : first + "; " + second;

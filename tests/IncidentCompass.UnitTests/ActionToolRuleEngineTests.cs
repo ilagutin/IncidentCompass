@@ -65,6 +65,30 @@ public sealed class ActionToolRuleEngineTests
         Assert.Equal(expected, result.EffectiveMode);
     }
 
+    /// <summary>
+    /// Every ordered pair of execution modes, so the ladder is pinned rather than inferred from the
+    /// four pairs the engine-level tests happen to reach. Reordering an arm so that a globally
+    /// dry-run tool overridden to disabled resolved to <c>DryRun</c> would let a denied action
+    /// execute, which is a governance change no other test observes.
+    /// </summary>
+    [Theory]
+    [InlineData(ActionExecutionMode.Live, ActionExecutionMode.Live, ActionExecutionMode.Live)]
+    [InlineData(ActionExecutionMode.Live, ActionExecutionMode.DryRun, ActionExecutionMode.DryRun)]
+    [InlineData(ActionExecutionMode.Live, ActionExecutionMode.Disabled, ActionExecutionMode.Disabled)]
+    [InlineData(ActionExecutionMode.DryRun, ActionExecutionMode.Live, ActionExecutionMode.DryRun)]
+    [InlineData(ActionExecutionMode.DryRun, ActionExecutionMode.DryRun, ActionExecutionMode.DryRun)]
+    [InlineData(ActionExecutionMode.DryRun, ActionExecutionMode.Disabled, ActionExecutionMode.Disabled)]
+    [InlineData(ActionExecutionMode.Disabled, ActionExecutionMode.Live, ActionExecutionMode.Disabled)]
+    [InlineData(ActionExecutionMode.Disabled, ActionExecutionMode.DryRun, ActionExecutionMode.Disabled)]
+    [InlineData(ActionExecutionMode.Disabled, ActionExecutionMode.Disabled, ActionExecutionMode.Disabled)]
+    public void MostRestrictiveModeHoldsForEveryModePair(
+        ActionExecutionMode first,
+        ActionExecutionMode second,
+        ActionExecutionMode expected)
+    {
+        Assert.Equal(expected, ActionGovernanceDefaults.MostRestrictive(first, second));
+    }
+
     [Fact]
     public async Task DisabledUnlistedAliasAndRegistrationMismatchFailClosed()
     {

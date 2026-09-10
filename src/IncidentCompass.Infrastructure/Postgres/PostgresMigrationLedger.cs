@@ -1,9 +1,12 @@
+using IncidentCompass.Application.Core.Text;
 using Npgsql;
 
 namespace IncidentCompass.Infrastructure.Postgres;
 
 internal sealed class PostgresMigrationLedger(PostgresDataSourceProvider dataSourceProvider)
 {
+    private const int MaxStoredErrorMessageLength = 1000;
+
     public Task<NpgsqlConnection> OpenConnectionAsync(CancellationToken cancellationToken) =>
         dataSourceProvider.OpenConnectionAsync(cancellationToken);
 
@@ -171,6 +174,6 @@ internal sealed class PostgresMigrationLedger(PostgresDataSourceProvider dataSou
     private static string DescribeFailure(Exception exception)
     {
         var description = exception.GetType().Name + ": " + exception.Message;
-        return description.Length <= 1_000 ? description : description[..1_000];
+        return TextTruncator.Truncate(description, MaxStoredErrorMessageLength);
     }
 }

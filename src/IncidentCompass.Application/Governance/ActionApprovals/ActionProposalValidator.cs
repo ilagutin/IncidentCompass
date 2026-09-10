@@ -61,7 +61,8 @@ public static class ActionProposalValidator
         IReadOnlyList<Guid> evidenceArtifactIds)
     {
         if (string.IsNullOrWhiteSpace(tenantId) || !AgentToolIdentity.IsValid(toolId) ||
-            string.IsNullOrWhiteSpace(proposalKey) || proposalKey.Length > 256)
+            string.IsNullOrWhiteSpace(proposalKey) ||
+            proposalKey.Length > ActionApprovalLimits.MaximumProposalKeyCharacters)
         {
             throw new ActionProposalValidationException("Action proposal identity is invalid.");
         }

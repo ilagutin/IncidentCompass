@@ -1,5 +1,6 @@
 using System.Text.Json;
 using IncidentCompass.Application.Core.ModelClients;
+using IncidentCompass.Application.Core.Text;
 using IncidentCompass.Application.Intake.Configuration;
 using IncidentCompass.Application.Investigation.Reports;
 using IncidentCompass.Domain.Incidents;
@@ -15,6 +16,14 @@ namespace IncidentCompass.Application.Investigation.Jobs;
 /// </summary>
 internal sealed partial class GovernedTriageInvestigationProcessor : IClaimedTriageJobProcessor
 {
+    /// <summary>
+    /// The classification that opens every orchestrator reprompt rationale in the ledger. It is
+    /// followed by the closed reprompt reason and then the turn's diagnostic; the appender charges the
+    /// whole prefix against <see cref="TriageLedgerAppender.MaxRepromptRationaleLength" />, so the
+    /// classification survives even when the diagnostic has to be cut.
+    /// </summary>
+    internal const string OrchestratorRepromptRationalePrefix = "orchestrator_reprompt: ";
+
     private readonly ITriageJobInvestigationContextRepository contextRepository;
     private readonly InvestigationModelCaller modelCaller;
     private readonly AnalysisDelegateExecutor delegateExecutor;
@@ -268,6 +277,12 @@ internal sealed partial class GovernedTriageInvestigationProcessor : IClaimedTri
         CancellationToken cancellationToken,
         Exception? innerException = null)
     {
+        // The log site and the ledger site describe the same turn, so they are bounded once, by the
+        // same constant, before either is written. The appender then charges the rationale prefix
+        // against that same bound so the prefix cannot displace part of the diagnostic.
+        var safeDiagnostic = TextTruncator.Truncate(
+            validationDiagnostic,
+            TriageLedgerAppender.MaxRepromptRationaleLength);
         if (reprompts >= configuration.Orchestrator.Budget.MaxReprompts)
         {
             LogOrchestratorRepromptLimitReached(
@@ -275,7 +290,7 @@ internal sealed partial class GovernedTriageInvestigationProcessor : IClaimedTri
                 job.Id,
                 job.Attempt,
                 repromptReason,
-                validationDiagnostic,
+                safeDiagnostic,
                 configuration.Orchestrator.Budget.MaxReprompts);
             throw new TriageBudgetExhaustedException(
                 TriageBudgetExhaustedException.OrchestratorRepromptLimitReachedCode,
@@ -289,13 +304,14 @@ internal sealed partial class GovernedTriageInvestigationProcessor : IClaimedTri
             job.Id,
             job.Attempt,
             repromptReason,
-            validationDiagnostic,
+            safeDiagnostic,
             chargedReprompts,
             configuration.Orchestrator.Budget.MaxReprompts);
         await ledgerAppender.AppendRepromptBudgetEventAsync(
             job,
             "orchestrator",
-            "orchestrator_reprompt: " + repromptReason + ": " + validationDiagnostic,
+            OrchestratorRepromptRationalePrefix + repromptReason + ": ",
+            safeDiagnostic,
             cancellationToken);
         return chargedReprompts;
     }
