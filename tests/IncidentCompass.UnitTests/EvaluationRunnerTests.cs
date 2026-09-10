@@ -16,17 +16,23 @@ public sealed class EvaluationRunnerTests
         try
         {
             var outputPath = Path.Combine(directory, "result.json");
-            var handler = new TransientPollingFailureHandler();
+            await WarmIngestPathAsync(TestContext.Current.CancellationToken);
+            var handler = new DeadlineBoundPollingHandler();
             using var client = CreateClient(handler);
-            var runner = new EvaluationRunner(client, CreateOptions(outputPath, TimeSpan.FromMilliseconds(50)));
+            // The deadline is not a race against anything the runner does: the stub blocks until it
+            // fires, so it only has to outlast an in-memory ingest round trip that measures in
+            // microseconds. It is sized against scheduler stalls on a contended machine, not against
+            // work, because an attempt cancelled while ingesting never reaches the polling phase.
+            var runner = new EvaluationRunner(client, CreateOptions(outputPath, TimeSpan.FromMilliseconds(150)));
 
             var run = runner.RunAsync(TestContext.Current.CancellationToken);
             await handler.PollingStarted.Task.WaitAsync(TimeSpan.FromSeconds(2), TestContext.Current.CancellationToken);
-            var exitCode = await run.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+            var exitCode = await run.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
 
             Assert.Equal(1, exitCode);
             Assert.Equal(5 * EvaluationCorpus.RequiredAttemptsPerCase, handler.IncidentPosts);
-            Assert.True(handler.FaultReads > handler.IncidentPosts);
+            Assert.True(handler.FaultReads >=
+                handler.IncidentPosts * (DeadlineBoundPollingHandler.TransientReadsPerAttempt + 1));
             using var result = JsonDocument.Parse(await File.ReadAllTextAsync(outputPath, TestContext.Current.CancellationToken));
             Assert.Equal(2, result.RootElement.GetProperty("schemaVersion").GetInt32());
             var attempts = result.RootElement.GetProperty("attempts").EnumerateArray().ToArray();
@@ -37,6 +43,47 @@ public sealed class EvaluationRunnerTests
                 Assert.NotEqual(Guid.Empty, attempt.GetProperty("faultId").GetGuid());
                 Assert.NotEqual(Guid.Empty, attempt.GetProperty("jobId").GetGuid());
                 Assert.Contains("attempt deadline exceeded", attempt.GetProperty("failureDetail").GetString() ?? string.Empty, StringComparison.Ordinal);
+            });
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ExhaustedTransientPollingRetries_ReportTheUpstreamStatusInsteadOfTheDeadline()
+    {
+        var directory = CreateTemporaryDirectory();
+        try
+        {
+            var outputPath = Path.Combine(directory, "retry-cap-result.json");
+            var handler = new TransientPollingFailureHandler();
+            using var client = CreateClient(handler);
+            // The retry cap is a per-read bound, so one attempt per case proves it as well as three.
+            // The poll interval only paces the capped retries here, and a platform with coarse timer
+            // granularity charges a full timer tick for each of them, so this test drops the pacing
+            // rather than paying nine ticks per attempt for a bound that counts reads.
+            var runner = new EvaluationRunner(client, CreateOptions(
+                outputPath,
+                TimeSpan.FromSeconds(10),
+                runsPerCase: 1,
+                pollInterval: TimeSpan.Zero));
+
+            var run = runner.RunAsync(TestContext.Current.CancellationToken);
+            await handler.PollingStarted.Task.WaitAsync(TimeSpan.FromSeconds(2), TestContext.Current.CancellationToken);
+            var exitCode = await run.WaitAsync(TimeSpan.FromSeconds(60), TestContext.Current.CancellationToken);
+
+            Assert.Equal(1, exitCode);
+            Assert.Equal(5, handler.IncidentPosts);
+            Assert.True(handler.FaultReads >= handler.IncidentPosts * TransientHttpRetry.MaxAttempts);
+            using var result = JsonDocument.Parse(await File.ReadAllTextAsync(outputPath, TestContext.Current.CancellationToken));
+            var attempts = result.RootElement.GetProperty("attempts").EnumerateArray().ToArray();
+            Assert.Equal(handler.IncidentPosts, attempts.Length);
+            Assert.All(attempts, static attempt =>
+            {
+                Assert.Equal("wait_for_terminal", attempt.GetProperty("lastObservedPhase").GetString());
+                Assert.Equal("HttpRequestException: HTTP status 500", attempt.GetProperty("failureDetail").GetString());
             });
         }
         finally
@@ -255,23 +302,51 @@ public sealed class EvaluationRunnerTests
         Assert.DoesNotContain("providerBody", serialized, StringComparison.Ordinal);
     }
 
-    private static EvaluationOptions CreateOptions(string outputPath, TimeSpan attemptTimeout) =>
+    private static EvaluationOptions CreateOptions(
+        string outputPath,
+        TimeSpan attemptTimeout,
+        int runsPerCase = EvaluationCorpus.RequiredAttemptsPerCase,
+        TimeSpan? pollInterval = null) =>
         new(
             new Uri("http://tester/"),
             TimeSpan.FromSeconds(5),
             attemptTimeout,
             TimeSpan.FromMilliseconds(20),
-            TimeSpan.FromMilliseconds(1),
+            pollInterval ?? TimeSpan.FromMilliseconds(1),
             Path.Combine(RepositoryRootLocator.Find(), "evaluations", "triage", "corpus-v1.json"),
             "unused-config.json",
             outputPath,
-            EvaluationCorpus.RequiredAttemptsPerCase,
+            runsPerCase,
             "test-revision",
             "git-tree:test",
             false,
             new EvaluationConfigurationSnapshot([], new EvaluationOrchestratorBudgetResult(4, 1000, 60, 1)),
             true,
             false);
+
+    // The attempt deadline covers ingest as well as polling, so the first attempt of a run would
+    // otherwise pay one-time JIT and source-generated serializer initialization for the whole ingest
+    // path inside that deadline. On a cold, contended machine that alone costs tens of milliseconds
+    // and ends the attempt in the ingest phase instead of while polling. Warming the same path first
+    // leaves every measured attempt doing steady-state work. The warm-up uses a throwaway client so
+    // the counters of the handler under test stay untouched.
+    private static async Task WarmIngestPathAsync(CancellationToken cancellationToken)
+    {
+        var corpus = EvaluationCorpus.Load(Path.Combine(
+            RepositoryRootLocator.Find(),
+            "evaluations",
+            "triage",
+            "corpus-v1.json"));
+        using var client = CreateClient(new DeadlineBoundPollingHandler());
+        using var response = await client.PostAsJsonAsync(
+            "api/v1/incidents",
+            corpus.Cases[0].CreateEnvelope("warm-up", 1),
+            TesterJsonContext.Default.IncidentEnvelope,
+            cancellationToken);
+        _ = await response.Content.ReadFromJsonAsync(
+            TesterJsonContext.Default.IngestSignalResponse,
+            cancellationToken);
+    }
 
     private static HttpClient CreateClient(HttpMessageHandler handler) =>
         new(handler)
@@ -321,6 +396,74 @@ public sealed class EvaluationRunnerTests
         return path;
     }
 
+    // A polling attempt has two legitimate terminal bounds: the attempt deadline, and the transient
+    // retry cap in TransientHttpRetry, which deliberately propagates the real upstream failure on
+    // its last attempt. A stub that only ever answers transient failures lets those two bounds race
+    // - the cap needs ten in-memory reads plus nine poll delays, and whether that fits inside a
+    // short attempt deadline depends on the platform timer granularity - so the reported terminal
+    // failure would vary by machine. This stub answers a bounded number of transient failures per
+    // attempt, which exercises the retry path, and then blocks every later read until the request is
+    // cancelled. The cap becomes unreachable, so the attempt deadline is the only way out.
+    private sealed class DeadlineBoundPollingHandler : HttpMessageHandler
+    {
+        public const int TransientReadsPerAttempt = 2;
+
+        private int readsForCurrentAttempt;
+
+        public TaskCompletionSource PollingStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public int IncidentPosts { get; private set; }
+        public int FaultReads { get; private set; }
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var path = request.RequestUri?.AbsolutePath;
+            if (request.Method == HttpMethod.Get && path == "/api/v1/health")
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK);
+            }
+
+            if (request.Method == HttpMethod.Post && path == "/api/v1/incidents")
+            {
+                IncidentPosts++;
+                readsForCurrentAttempt = 0;
+                return JsonResponse(new IngestSignalResponse(
+                    Guid.NewGuid(),
+                    Guid.NewGuid(),
+                    true,
+                    true,
+                    false,
+                    Guid.NewGuid(),
+                    "test-config"));
+            }
+
+            if (request.Method == HttpMethod.Get && path is not null && path.StartsWith("/api/v1/faults/", StringComparison.Ordinal))
+            {
+                FaultReads++;
+                readsForCurrentAttempt++;
+                PollingStarted.TrySetResult();
+                if (readsForCurrentAttempt <= TransientReadsPerAttempt)
+                {
+                    return new HttpResponseMessage(HttpStatusCode.InternalServerError);
+                }
+
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            }
+
+            throw new InvalidOperationException("Unexpected evaluator route: " + path);
+        }
+
+        private static HttpResponseMessage JsonResponse(IngestSignalResponse value) =>
+            new(HttpStatusCode.Created)
+            {
+                Content = JsonContent.Create(value, TesterJsonContext.Default.IngestSignalResponse)
+            };
+    }
+
+    // Every fault read fails transiently, so the retry cap is the terminal bound. Pair it with an
+    // attempt deadline far above the capped retry window, never with one the cap can race.
     private sealed class TransientPollingFailureHandler : HttpMessageHandler
     {
         public TaskCompletionSource PollingStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
