@@ -16,6 +16,7 @@ Privacy and access
 - [Configurable Redaction Is Best Effort](#configurable-redaction-is-best-effort)
 - [Source Excerpts Are Redacted Like Everything Else](#source-excerpts-are-redacted-like-everything-else)
 - [Pseudonymization Salt Rotation](#pseudonymization-salt-rotation)
+- [Payload Retention Is Not Data Governance](#payload-retention-is-not-data-governance)
 - [Simple Access Control vs Enterprise RBAC](#simple-access-control-vs-enterprise-rbac)
 - [Local Tenant Partition And API-Key Mapping](#local-tenant-partition-and-api-key-mapping)
 
@@ -195,6 +196,50 @@ User identifiers can be replaced with stable HMAC-SHA256 pseudonyms so later bla
 count distinct users without storing raw identifiers. The host-only salt is intentionally outside the
 snapshotted triage config. Rotating it breaks continuity with older pseudonyms; running without it
 fails safe to redaction and therefore loses distinct-user counting.
+
+## Payload Retention Is Not Data Governance
+
+Two lifecycle operations shorten how long raw payloads stay readable: aged signal payloads are
+emptied, and triage artifacts belonging to an attempt that is no longer their job's current attempt
+are deleted once they are past an age threshold. The mechanics and the full exclusion list are in
+`docs/security-model.md`. What is recorded here is what they deliberately are not.
+
+They are not a retention policy over records. Nothing removes a signal row, a fault, a job, a report
+or a ledger entry. Two of those are not merely unimplemented: `faults.trigger_signal_id` references
+the signal row, so deleting a signal would take the trigger away from the fault it opened, and
+published reports are immutable by trigger, which rejects UPDATE and DELETE unconditionally. Report
+retention would mean weakening that trigger, and the immutability is worth more here than the disk.
+The ledger is the audit trail the whole exercise is meant to leave intact, so it is out of scope by
+intent rather than by obstacle.
+
+They do not reap failed attempts, because a failed attempt is not a fact this system records. A retry
+that does not consume an attempt reuses the attempt number, so the artifacts of the run that went
+wrong and of the run that replaced it cannot be told apart. "Not the job's current attempt" is the
+whole of what is implementable, and the reuse case keeps both runs' artifacts rather than guessing.
+
+The age default for reaping is seven days, and it is a judgement rather than a measurement. Zero would
+be defensible on storage grounds and is wrong on every other: an attempt stops being current the
+moment the next one is claimed, so a zero-day threshold destroys the working evidence of a failure at
+the moment it becomes interesting. A week covers the ordinary case where a failure lands on a Friday
+and is picked up the following Friday. Signal payloads default to thirty days because the derived
+fields the pipeline actually reasons over survive compaction. Neither default can be set to zero: the
+validator requires at least one day, so a missing or mistyped setting cannot become the configuration
+that empties a payload the moment it lands.
+
+Compaction is not free, and the price is worth naming because it is the thing the signal window is
+really buying. Two worker tools read the raw payload rather than the derived columns: `source_lookup`
+looks for a stack trace in `attributes` and `body` before falling back to the signal's `description`
+and `error_message`, and `ticket_search` takes its component and label terms out of `attributes`. A
+job claimed after its signal's window has expired - a re-triage of an old fault, or a job that sat
+unclaimed that long - therefore runs with no source frames and a narrower ticket query. Both degrade
+rather than fail, and a job that ran while the payload was still there is unaffected, because its
+artifacts are stored separately. This is inherent to compaction: the alternative is keeping the raw
+body forever, and the point of the operation is not to. What it means in practice is that
+`SignalPayloadRetentionDays` is a choice about how far back a re-triage still gets full context, not
+only about disk. The mechanics are in `docs/security-model.md`.
+
+There is no scheduler in this release. Both operations are plain callable services, so something has
+to drive them; an operator running them on a timer of their own is the current answer.
 
 ## Simple Access Control vs Enterprise RBAC
 
@@ -541,8 +586,10 @@ prompts into a second audit system. The detailed bounded canonical result remain
 
 The trade-off is intentionally narrow reconstruction. Failure, dry-run and outcome-unknown rows have
 no external-success projection, and the projection does not model arbitrary provider state or later
-out-of-band changes. Retention, reaping and cross-system reconciliation remain future work rather than
-being inferred from uncertain provider outcomes.
+out-of-band changes. Cross-system reconciliation remains future work rather than being inferred from
+uncertain provider outcomes. Payload retention deliberately leaves both halves alone: the projection
+lives on the action row, and `ActionResult` artifacts are excluded from reaping by kind because they
+are the audit record of an external effect rather than working evidence.
 
 ## Two Compose Naming Styles Are Kept
 

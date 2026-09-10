@@ -80,6 +80,11 @@ implementations stay under `Infrastructure/Governance/ActionApprovals/`.
 The single live tool rule engine and the immediate/action capability contracts live under
 `Governance/Tools/`; investigation-only execution orchestration stays under `Investigation/Jobs/`.
 `Memory/` contains memory_search contracts, seed records and retrieval orchestration.
+Payload retention is split the same way the data is: `Intake/Retention/` owns compaction of raw
+signal payloads and `Investigation/Retention/` owns reaping of non-current-attempt artifacts, each a
+persistence port plus the bounded callable operation that turns the shared `RetentionOptions` window
+into a cutoff. The single-statement SQL, its exclusion list and the index that bounds each scan stay
+in the matching `Infrastructure/` folder.
 `Observability/CostRollup/` contains the tenant-scoped read request, validator, response and
 persistence port. ModelCall JSON parsing, effective-price ambiguity handling and PostgreSQL query
 details stay under `Infrastructure/Observability/`; API endpoints remain transport-only.

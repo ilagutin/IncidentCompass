@@ -22,8 +22,8 @@ flowchart LR
   - `Core/`: dispatcher, pipeline behaviors, identity/correlation contracts, shared configuration, base errors, health echo, current-user use case, and model/embedding gateway abstractions.
   - `Governance/`: common worker-tool contracts, validation primitives, durable triage-ledger ports
     and post-report evaluation and action approval contracts and use cases.
-  - `Intake/`: source normalization, input limits, redaction, fingerprinting, fault grouping, triage-job creation and grounded intake artifacts for ingestion.
-  - `Investigation/`: Worker job claim/runtime seams that rehydrate claimed jobs by config hash and hand them to the governed investigation processor.
+  - `Intake/`: source normalization, input limits, redaction, fingerprinting, fault grouping, triage-job creation, grounded intake artifacts for ingestion and raw signal payload compaction.
+  - `Investigation/`: Worker job claim/runtime seams that rehydrate claimed jobs by config hash and hand them to the governed investigation processor, plus reaping of artifacts belonging to an attempt that is no longer a job's current attempt.
   - `Memory/`: memory search contracts, seed records and the governed `memory_search` worker tool.
   - `Notifications/`: ordered notification routing and the non-secret Telegram tool descriptor.
     The Worker-owned workflow accepts report identity and a configured route id, not recipient or

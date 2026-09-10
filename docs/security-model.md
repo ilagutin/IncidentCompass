@@ -319,6 +319,76 @@ code, the same rules run over it, and a line containing `password =` or `pwd =` 
 side while the rest of the excerpt survives. That cost, the analysis behind it and the bound that
 keeps it to a single line are recorded in `docs/trade-offs.md`.
 
+## Payload Retention
+
+Two lifecycle operations shorten how long raw payloads stay readable. Neither is data governance, and
+neither deletes a record: they empty or drop payloads, and everything that makes a record a record is
+left where it is. Both are bounded per run, idempotent and safe to interrupt, because each is a single
+statement whose predicate is the only state it keeps.
+
+**Aged signal payloads are compacted, not deleted.** `signals.attributes` and `signals.body` are
+emptied for signals intake received longer ago than the configured window. The signal row itself
+cannot go: `faults.trigger_signal_id` references it, so removing the row would take the trigger away
+from the fault the signal opened. Everything the pipeline derived from the payload before storing it -
+fingerprint, service, environment, severity, error type, summary, trace ids, the fault link - is
+untouched and stays readable.
+
+An operator reading such a row afterwards has to be able to tell an emptied payload from one that
+arrived empty, and the payload cannot answer that: both are the same `{}` bytes, and a sentinel
+written inside the payload would be something a connector could write too. So the claim is a column,
+`signals.payload_compacted_at_utc`, written by the backend at the moment it empties the row. NULL
+means retention never touched this row, which is deliberately not the same claim as "arrived empty".
+
+Ageing is by `received_at_utc`, never by `observed_at_utc`. The observed time arrives inside the
+signal, so a source that chose it could have its payload dropped immediately by naming an ancient
+time, or stay out of retention forever by naming a future one. The received time is written by intake.
+
+**Compaction does cost something, and it lands on a late re-triage.** The derived fields survive, but
+two worker tools read the raw payload directly and get less after it is emptied. `source_lookup`
+parses a stack trace out of `attributes["exception.stacktrace"]`, `attributes["exception.stack_trace"]`
+or `body["stackTrace"]` before falling back to the signal's `description` and `error_message`
+columns, which retention leaves alone; once the payload is gone, a signal whose trace lived only in
+the payload yields no frames and the tool returns `source_frames_not_found`. `ticket_search` reads
+`attributes["service.component"]`, `attributes["component"]`, `attributes["code.namespace"]` and
+`attributes["incident.labels"]`; after compaction it searches on fingerprint, service, error type and
+error message alone. Neither fails - both degrade to a narrower answer - and neither affects a job
+that ran while the payload was still there, because the artifacts of that run are stored separately.
+The exposure is a job claimed after its signal's window has expired: a re-triage of an old fault, or
+a job that sat unclaimed longer than the window. An operator shortening `SignalPayloadRetentionDays`
+is choosing how far back a re-triage still gets full source and ticket context.
+
+**Artifacts of non-current attempts are reaped.** This is worth stating precisely, because it is less
+than it sounds like: a failed attempt is not a fact this system records. A retry that does not consume
+an attempt reuses the attempt number, so the working evidence of a run that went wrong and of the run
+that replaced it are indistinguishable. The only implementable predicate is "this artifact does not
+belong to its job's current attempt", and that is what runs. Reusing an attempt number keeps both
+runs' artifacts, which is the safe direction.
+
+An age threshold applies on top of the attempt predicate, and it is not decoration. An attempt stops
+being current the moment the next one is claimed, so reaping on the attempt predicate alone would
+destroy the artifacts of the attempt that went wrong at exactly the moment an operator would come
+looking for them.
+
+Nothing a report cites is ever reaped, and neither is anything a governed action still points at. The
+exclusions are: job-level artifacts (the `attempt IS NULL` sentinel, which intake writes for facts
+that stay valid across retries); the job's current attempt; the `ProposedAction` and `ActionResult`
+kinds, which are the audit record of a governed external action rather than working evidence; any
+artifact cited by `triage_evidence`; any artifact that is an approval's proposal artifact; and any
+artifact named by `action_approval_provenance`. The last one is the one that needs stating: its
+`source_id` is polymorphic over reports and artifacts, so it carries no foreign key at all, and the
+database would neither refuse the delete nor report the orphan afterwards. That exclusion is the only
+guard that exists.
+
+**Reports and the audit ledger are out of scope, and that is structural.** Published reports are
+immutable by trigger: `trg_triage_reports_immutable` rejects UPDATE and DELETE unconditionally, so
+report retention is not unimplemented, it is refused by the schema. The triage ledger is the audit
+trail these operations are meant to leave intact, so nothing removes ledger entries either.
+
+The ledger already survives a reaped payload and is meant to keep doing so. It stores a compact
+reference, `payload_ref`, as plain text in the shape `artifact:{id}` with no foreign key, and the
+ledger reader never joins the artifacts table. Reconstruction therefore shows the same audit sequence
+before and after retention has run, with the reference still readable and the payload behind it gone.
+
 ## Tools
 
 Unknown, unregistered, ungranted and invalid worker tool calls fail closed with audit-visible decisions.

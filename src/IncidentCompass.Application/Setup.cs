@@ -95,6 +95,14 @@ public static class Setup
             IngestionLimitsOptionsValidator>());
 
         services
+            .AddOptions<RetentionOptions>()
+            .Bind(configuration.GetSection(RetentionOptions.SectionName))
+            .ValidateOnStart();
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<
+            IValidateOptions<RetentionOptions>,
+            RetentionOptionsValidator>());
+
+        services
             .AddOptions<PseudonymizationOptions>()
             .Bind(configuration.GetSection(PseudonymizationOptions.SectionName));
 

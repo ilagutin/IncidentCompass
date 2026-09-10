@@ -1,9 +1,12 @@
+using IncidentCompass.Application.Core.Configuration;
 using IncidentCompass.Application.Core.Embeddings;
 using IncidentCompass.Application.Core.ModelClients;
 using IncidentCompass.Application.Core.Security;
 using IncidentCompass.Application.Governance.PostReportActions;
 using IncidentCompass.Application.Governance.Tools;
 using IncidentCompass.Application.Intake.Configuration;
+using IncidentCompass.Application.Intake.Retention;
+using IncidentCompass.Application.Investigation.Retention;
 using IncidentCompass.Application.Notifications;
 using IncidentCompass.Application.Tickets;
 using IncidentCompass.Domain.Incidents.Actions;
@@ -113,6 +116,47 @@ public sealed class HostCompositionTests
             tool => tool.Definition.Name == TicketCreateTool.ToolId);
         Assert.Contains(scope.ServiceProvider.GetServices<IExternalActionTool>(),
             tool => tool.Definition.Name == TicketUpdatePostReportActionWorkflow.UpdateToolId);
+    }
+
+    /// <summary>
+    /// The retention operations are Application types registered by <c>AddInfrastructure</c>, because
+    /// neither can be constructed without the persistence port its adapter supplies. Nothing else
+    /// resolves them - there is no scheduler and no endpoint - so without this the wiring could be
+    /// wrong in either direction and every other test would still pass.
+    /// </summary>
+    [Fact]
+    public void WorkerHostServices_ResolveBothRetentionOperations()
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["IncidentCompass:Application:ApiVersion"] = "v1",
+                ["IncidentCompass:Postgres:ConnectionStringName"] = "IncidentCompass",
+                ["IncidentCompass:Retention:SignalPayloadRetentionDays"] = "45",
+                ["IncidentCompass:Retention:AttemptArtifactRetentionDays"] = "3",
+                ["IncidentCompass:Retention:MaxRowsPerRun"] = "250"
+            })
+            .Build();
+
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddTestApplication(configuration);
+        services.AddInfrastructure(configuration);
+        services.AddWorker(configuration);
+
+        using var provider = services.BuildServiceProvider(new ServiceProviderOptions
+        {
+            ValidateOnBuild = true,
+            ValidateScopes = true
+        });
+
+        using var scope = provider.CreateScope();
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<AgedSignalPayloadCompactor>());
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<StaleAttemptArtifactReaper>());
+        var retention = scope.ServiceProvider.GetRequiredService<IOptions<RetentionOptions>>().Value;
+        Assert.Equal(45, retention.SignalPayloadRetentionDays);
+        Assert.Equal(3, retention.AttemptArtifactRetentionDays);
+        Assert.Equal(250, retention.MaxRowsPerRun);
     }
 
     [Fact]
@@ -428,6 +472,50 @@ public sealed class HostCompositionTests
 
         Assert.NotNull(exception);
         Assert.NotEmpty(GetOptionsValidationFailures(exception));
+    }
+
+    /// <summary>
+    /// Both retention operations are destructive and irreversible, so an out-of-bounds window has to
+    /// stop the host rather than be clamped or ignored at the first run. A zero-day window is the
+    /// case that matters: it is what an empty or mistyped setting would otherwise become, and it
+    /// means "empty the payload the moment it lands".
+    /// </summary>
+    [Theory]
+    [InlineData("IncidentCompass:Retention:SignalPayloadRetentionDays", "0")]
+    [InlineData("IncidentCompass:Retention:SignalPayloadRetentionDays", "3651")]
+    [InlineData("IncidentCompass:Retention:AttemptArtifactRetentionDays", "0")]
+    [InlineData("IncidentCompass:Retention:AttemptArtifactRetentionDays", "-1")]
+    [InlineData("IncidentCompass:Retention:MaxRowsPerRun", "0")]
+    [InlineData("IncidentCompass:Retention:MaxRowsPerRun", "100001")]
+    public async Task HostServices_RejectInvalidRetentionOptionsOnStart(string key, string value)
+    {
+        using var host = CreateHostWithConfiguration(new Dictionary<string, string?> { [key] = value });
+
+        var exception = await Record.ExceptionAsync(() => host.StartAsync());
+
+        var expectedFieldName = key.Split(':')[^1];
+        Assert.NotNull(exception);
+        Assert.Contains(
+            GetOptionsValidationFailures(exception),
+            failure => failure.Contains(expectedFieldName, StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("1", "1", "1")]
+    [InlineData("3650", "3650", "100000")]
+    public async Task HostServices_AcceptsRetentionOptionsAtInclusiveBounds(
+        string signalDays,
+        string artifactDays,
+        string maxRows)
+    {
+        using var host = CreateHostWithConfiguration(new Dictionary<string, string?>
+        {
+            ["IncidentCompass:Retention:SignalPayloadRetentionDays"] = signalDays,
+            ["IncidentCompass:Retention:AttemptArtifactRetentionDays"] = artifactDays,
+            ["IncidentCompass:Retention:MaxRowsPerRun"] = maxRows
+        });
+
+        await host.StartAsync();
     }
 
     [Theory]

@@ -7,11 +7,13 @@ using IncidentCompass.Application.Governance.ActionApprovals.Testing;
 using IncidentCompass.Application.Governance.Ledger;
 using IncidentCompass.Application.Governance.PostReportActions;
 using IncidentCompass.Application.Governance.PostReportActions.Testing;
+using IncidentCompass.Application.Intake.Retention;
 using IncidentCompass.Application.Investigation.Jobs;
 using IncidentCompass.Application.Investigation.Reports;
 using IncidentCompass.Application.Investigation.Reports.Context;
 using IncidentCompass.Application.Investigation.Reports.List;
 using IncidentCompass.Application.Investigation.Reports.Redaction;
+using IncidentCompass.Application.Investigation.Retention;
 using IncidentCompass.Infrastructure.Configuration;
 using IncidentCompass.Infrastructure.Embeddings.Mock;
 using IncidentCompass.Infrastructure.Embeddings.OpenAi;
@@ -48,6 +50,7 @@ public static class Setup
         services.Replace(ServiceDescriptor.Scoped<IClaimedTriageJobProcessor, GovernedTriageInvestigationProcessor>());
         services.AddObservabilityInfrastructure(configuration);
         services.AddPersistenceAdapters();
+        services.AddRetentionOperations();
         services.AddIntakeInfrastructure(configuration);
         services.AddMemoryInfrastructure(configuration);
         services.AddSourceContextInfrastructure(configuration);
@@ -81,6 +84,21 @@ public static class Setup
         services.TryAddScoped<WorkerRoleRunner>();
         services.TryAddScoped<AnalysisDelegateExecutor>();
         services.TryAddScoped<TriageReportPublisher>();
+        return services;
+    }
+
+    /// <summary>
+    /// Binds the two retention operations here rather than in <c>AddApplication</c>. Both are
+    /// Application types, but neither can be constructed without the persistence port its adapter
+    /// supplies, and <c>AddApplication</c> has to stay resolvable on its own: the memory-only path
+    /// composes Application without any of this. Registering them next to the adapters keeps the
+    /// operation and the only thing that can satisfy it in one place - the same reason
+    /// <see cref="AddGovernedInvestigationServices" /> lives here.
+    /// </summary>
+    private static IServiceCollection AddRetentionOperations(this IServiceCollection services)
+    {
+        services.TryAddScoped<AgedSignalPayloadCompactor>();
+        services.TryAddScoped<StaleAttemptArtifactReaper>();
         return services;
     }
 
@@ -213,6 +231,8 @@ public static class Setup
         services.TryAddScoped<ITriageReportReadRepository, PostgresTriageReportReadRepository>();
         services.TryAddScoped<ITriageReportListRepository, PostgresTriageReportListRepository>();
         services.TryAddScoped<ITriageToolResultCommitter, PostgresTriageToolResultCommitter>();
+        services.TryAddScoped<ISignalPayloadCompactionRepository, PostgresSignalPayloadCompactionRepository>();
+        services.TryAddScoped<IAttemptArtifactRetentionRepository, PostgresAttemptArtifactRetentionRepository>();
         services.TryAddScoped<IReadOnlyContextOutcomeRepository, PostgresReadOnlyContextOutcomeRepository>();
         services.TryAddScoped<ICitedEvidenceRedactionRepository, PostgresCitedEvidenceRedactionRepository>();
         services.TryAddScoped<IActionProposalRepository, PostgresActionProposalRepository>();
