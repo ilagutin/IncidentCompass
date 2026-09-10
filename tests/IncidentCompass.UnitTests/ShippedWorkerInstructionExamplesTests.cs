@@ -1,7 +1,6 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using IncidentCompass.Application.Investigation.Jobs;
-using IncidentCompass.TestSupport;
 
 namespace IncidentCompass.UnitTests;
 
@@ -26,15 +25,16 @@ public sealed class ShippedWorkerInstructionExamplesTests
     [Fact]
     public void EveryShippedRoleInstructionJsonExample_ValidatesItsRoleOutputSchema()
     {
-        var root = RepositoryRootLocator.Find();
-        var configPath = Path.Combine(root, "config", "incidentcompass.config.json");
+        var configPath = TriageConfigurationFileLocator.Shipped();
         using var configDocument = JsonDocument.Parse(File.ReadAllText(configPath));
         var roles = configDocument.RootElement.GetProperty("Roles");
 
         foreach (var role in roles.EnumerateObject())
         {
-            var instructions = File.ReadAllText(ResolveConfigReference(root, role.Value.GetProperty("Instructions").GetString()!));
-            var outputSchema = File.ReadAllText(ResolveConfigReference(root, role.Value.GetProperty("OutputSchema").GetString()!));
+            var instructions = File.ReadAllText(TriageConfigurationFileLocator.ResolveReference(
+                configPath, role.Value.GetProperty("Instructions").GetString()!));
+            var outputSchema = File.ReadAllText(TriageConfigurationFileLocator.ResolveReference(
+                configPath, role.Value.GetProperty("OutputSchema").GetString()!));
             var examples = JsonExamplePattern.Matches(instructions);
             var fenceOpenings = JsonExampleFenceOpeningPattern.Matches(instructions);
 
@@ -54,50 +54,61 @@ public sealed class ShippedWorkerInstructionExamplesTests
         }
     }
 
+    /// <summary>
+    /// Every configuration in the repository, not only the shipped one: <c>WorkerRoleRunner</c>
+    /// validates a role's output against whichever configuration the job was snapshotted from, using
+    /// the same validator. A test fixture whose role schema uses a construct the validator cannot
+    /// evaluate throws <see cref="InvalidOperationException" /> from inside the worker loop, which is
+    /// not the <c>WorkerOutputValidationException</c> the reprompt path catches, so the attempt dies
+    /// instead of correcting itself. This assertion is what keeps the fixture and shipped schema
+    /// dialects from diverging again.
+    /// </summary>
     [Fact]
-    public void EveryShippedRoleSchema_UsesSupportedStringTypesWithoutUnions()
+    public void EveryConfiguredRoleSchema_UsesSupportedStringTypesWithoutUnions()
     {
-        var root = RepositoryRootLocator.Find();
-        var configPath = Path.Combine(root, "config", "incidentcompass.config.json");
-        using var configDocument = JsonDocument.Parse(File.ReadAllText(configPath));
+        var configPaths = TriageConfigurationFileLocator.FindAll();
 
-        foreach (var role in configDocument.RootElement.GetProperty("Roles").EnumerateObject())
+        TriageConfigurationFileLocator.AssertDiscoveryCoversShippedAndFixtureConfigurations(configPaths);
+        foreach (var configPath in configPaths)
         {
-            var schemaPath = ResolveConfigReference(root, role.Value.GetProperty("OutputSchema").GetString()!);
-            using var schemaDocument = JsonDocument.Parse(File.ReadAllText(schemaPath));
+            using var configDocument = JsonDocument.Parse(File.ReadAllText(configPath));
+            foreach (var role in configDocument.RootElement.GetProperty("Roles").EnumerateObject())
+            {
+                var schemaPath = TriageConfigurationFileLocator.ResolveReference(
+                    configPath, role.Value.GetProperty("OutputSchema").GetString()!);
+                using var schemaDocument = JsonDocument.Parse(File.ReadAllText(schemaPath));
 
-            AssertSupportedSchemaNode(schemaDocument.RootElement, role.Name, "output");
+                AssertSupportedSchemaNode(schemaDocument.RootElement, configPath, role.Name, "output");
+            }
         }
     }
 
-    private static void AssertSupportedSchemaNode(JsonElement schema, string roleName, string path)
+    private static void AssertSupportedSchemaNode(
+        JsonElement schema,
+        string configPath,
+        string roleName,
+        string path)
     {
         Assert.True(
             schema.TryGetProperty("type", out var type),
-            $"Role '{roleName}' schema is missing type at {path}.");
+            $"Role '{roleName}' in '{configPath}' is missing type at {path}.");
         Assert.True(
             type.ValueKind == JsonValueKind.String,
-            $"Role '{roleName}' schema type at {path} must be one supported string, not an array or union.");
+            $"Role '{roleName}' in '{configPath}' declares a type at {path} that must be one supported " +
+            "string, not an array or union.");
         Assert.Contains(type.GetString()!, SupportedSchemaTypes);
 
         if (schema.TryGetProperty("properties", out var properties) && properties.ValueKind == JsonValueKind.Object)
         {
             foreach (var property in properties.EnumerateObject())
             {
-                AssertSupportedSchemaNode(property.Value, roleName, path + "." + property.Name);
+                AssertSupportedSchemaNode(property.Value, configPath, roleName, path + "." + property.Name);
             }
         }
 
         if (schema.TryGetProperty("items", out var items) && items.ValueKind == JsonValueKind.Object)
         {
-            AssertSupportedSchemaNode(items, roleName, path + "[]");
+            AssertSupportedSchemaNode(items, configPath, roleName, path + "[]");
         }
-    }
-
-    private static string ResolveConfigReference(string root, string reference)
-    {
-        const string prefix = "ref:";
-        Assert.StartsWith(prefix, reference, StringComparison.Ordinal);
-        return Path.Combine(root, "config", reference[prefix.Length..].Replace('/', Path.DirectorySeparatorChar));
     }
 }

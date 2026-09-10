@@ -15,15 +15,15 @@
           "title": { "type": "string" },
           "quote": { "type": "string" },
           "relativePath": { "type": "string" },
-          "lineStart": { "type": "integer", "minimum": 1 },
-          "lineEnd": { "type": "integer", "minimum": 1 },
+          "lineStart": { "type": "number" },
+          "lineEnd": { "type": "number" },
           "release": { "type": "string" },
-          "mappingMethod": { "const": "heuristic" }
+          "mappingMethod": { "type": "string", "enum": ["heuristic"] }
         },
         "required": ["artifactId", "title", "relativePath", "lineStart", "lineEnd", "release", "mappingMethod"]
       }
     },
-    "noMatchReason": { "type": ["string", "null"] }
+    "noMatchReason": { "type": "string" }
   },
   "required": ["matched", "items"]
 }
