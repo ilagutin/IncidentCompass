@@ -115,6 +115,7 @@ internal sealed class PostgresSignalRepository(PostgresDataSourceProvider dataSo
             reader.IsDBNull(3) ? null : reader.GetGuid(3),
             reader.IsDBNull(4) ? null : reader.GetString(4));
     }
+
     public async Task AttachToFaultAsync(Guid signalId, Guid faultId, CancellationToken cancellationToken)
     {
         await using var lease = await transactionContext.OpenConnectionAsync(dataSourceProvider, cancellationToken);
@@ -128,6 +129,7 @@ internal sealed class PostgresSignalRepository(PostgresDataSourceProvider dataSo
 
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
+
     public async Task<int> CountDistinctNeighborsAsync(
         string tenantId,
         string serviceName,

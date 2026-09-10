@@ -82,6 +82,7 @@ internal sealed partial class PostgresTriageReportRepository(
             throw;
         }
     }
+
     private static async Task<bool> MarkJobSucceededAsync(NpgsqlConnection connection,
         NpgsqlTransaction transaction,
         TriageJob job,
@@ -108,6 +109,7 @@ internal sealed partial class PostgresTriageReportRepository(
         command.AddParameter("worker_id", workerId);
         return await command.ExecuteNonQueryAsync(cancellationToken) == 1;
     }
+
     private static async Task<bool?> ReadIsMassIssueAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,
@@ -131,6 +133,7 @@ internal sealed partial class PostgresTriageReportRepository(
         var value = await command.ExecuteScalarAsync(cancellationToken);
         return value is DBNull or null ? null : (bool)value;
     }
+
     private static async Task<Guid> InsertReportAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,
@@ -166,6 +169,7 @@ internal sealed partial class PostgresTriageReportRepository(
         command.AddParameter("created_at_utc", now);
         return (Guid)(await command.ExecuteScalarAsync(cancellationToken))!;
     }
+
     private async Task MarkFaultTerminalAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,

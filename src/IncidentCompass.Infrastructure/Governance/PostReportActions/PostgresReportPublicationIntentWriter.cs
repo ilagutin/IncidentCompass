@@ -63,6 +63,7 @@ internal sealed class PostgresReportPublicationIntentWriter(
             await persistAsync(intent, cancellationToken);
         }
     }
+
     internal static async Task<(string TenantId, string ServiceName, string Environment, string? Severity)> ReadFaultContextAsync(
             NpgsqlConnection connection,
             NpgsqlTransaction transaction,
@@ -83,6 +84,7 @@ internal sealed class PostgresReportPublicationIntentWriter(
         return (reader.GetString(0), reader.GetString(1), reader.GetString(2),
             reader.IsDBNull(3) ? null : reader.GetString(3));
     }
+
     internal static async Task InsertAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,
@@ -115,6 +117,7 @@ internal sealed class PostgresReportPublicationIntentWriter(
         command.AddParameter("created_at_utc", intent.CreatedAtUtc);
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
+
     internal static async Task<Guid?> ReadFaultIdAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,
@@ -127,6 +130,7 @@ internal sealed class PostgresReportPublicationIntentWriter(
         command.AddParameter("id", intentId);
         return await command.ExecuteScalarAsync(cancellationToken) is Guid value ? value : null;
     }
+
     internal static async Task<bool?> PrepareExhaustedClaimAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,
@@ -165,6 +169,7 @@ internal sealed class PostgresReportPublicationIntentWriter(
         var result = await command.ExecuteScalarAsync(cancellationToken);
         return result is bool recovery ? recovery : null;
     }
+
     internal static PostReportActionIntent ReadIntent(NpgsqlDataReader reader) => new(
         reader.GetGuid(0), reader.GetString(1), reader.GetGuid(2), reader.GetGuid(3), reader.GetGuid(4),
         reader.GetInt32(5), reader.GetString(6), reader.GetInt32(7), reader.IsDBNull(8) ? null : reader.GetString(8),
@@ -181,6 +186,7 @@ internal sealed class PostgresReportPublicationIntentWriter(
             throw new ArgumentOutOfRangeException(nameof(owner));
         }
     }
+
     internal static void ValidateError(string errorCode)
     {
         if (string.IsNullOrWhiteSpace(errorCode) || errorCode.Length > 128)
@@ -188,6 +194,7 @@ internal sealed class PostgresReportPublicationIntentWriter(
             throw new ArgumentOutOfRangeException(nameof(errorCode));
         }
     }
+
     private static PostReportActionIntentState ParseState(string state) => state switch
     {
         "pending" => PostReportActionIntentState.Pending,

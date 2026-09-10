@@ -72,6 +72,7 @@ internal sealed class PostgresTriageToolResultCommitter(
             throw new InvalidOperationException($"Triage job '{job.Id}' is no longer owned by attempt {job.Attempt}.");
         }
     }
+
     private static void ValidateAdditionalArtifact(
         TriageToolResultCommitRequest request,
         TriageArtifact artifact)

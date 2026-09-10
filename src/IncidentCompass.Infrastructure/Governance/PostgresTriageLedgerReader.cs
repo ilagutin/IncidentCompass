@@ -156,6 +156,7 @@ internal sealed class PostgresTriageLedgerReader(PostgresDataSourceProvider data
 
         return entries;
     }
+
     private static string ScopePredicate(string scope)
     {
         return scope switch

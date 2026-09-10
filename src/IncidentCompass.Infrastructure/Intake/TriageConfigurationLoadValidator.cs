@@ -32,6 +32,7 @@ internal sealed class TriageConfigurationLoadValidator(
         toolValidator.Validate(configuration.Routes, configuration.Tools, configuration.Actions);
         TriageRuleLoadValidator.Validate(configuration.Tools, configuration.Rules);
     }
+
     private void ValidateAllowedSources(IngestionSettings settings)
     {
         foreach (var source in settings.AllowedSources)
@@ -42,6 +43,7 @@ internal sealed class TriageConfigurationLoadValidator(
             }
         }
     }
+
     private static void ValidateCurrentReleases(IReadOnlyDictionary<string, string> currentReleases)
     {
         foreach (var (service, release) in currentReleases)
@@ -50,6 +52,7 @@ internal sealed class TriageConfigurationLoadValidator(
             RequireNonBlank("CurrentReleases." + service, release);
         }
     }
+
     private static void ValidateProviders(IReadOnlyDictionary<string, TriageProviderSettings> providers)
     {
         foreach (var (providerId, provider) in providers)
@@ -58,6 +61,7 @@ internal sealed class TriageConfigurationLoadValidator(
             RequireKnown("Providers." + providerId + ".Kind", provider.Kind, ProviderKinds);
         }
     }
+
     private static void ValidateRoutes(
         IReadOnlyDictionary<string, TriageProviderSettings> providers,
         IReadOnlyDictionary<string, TriageRouteSettings> routes)
@@ -100,6 +104,7 @@ internal sealed class TriageConfigurationLoadValidator(
             }
         }
     }
+
     private static void ValidateOrchestrator(
         IReadOnlyDictionary<string, TriageRouteSettings> routes,
         OrchestratorSettings orchestrator)

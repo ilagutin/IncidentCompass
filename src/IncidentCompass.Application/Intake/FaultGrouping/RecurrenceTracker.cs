@@ -57,6 +57,7 @@ public sealed class RecurrenceTracker(IRecurrenceStateRepository recurrenceState
         await groundedFactsAssembler.ReplaceRecurrenceStateAsync(job, recurrenceState, cancellationToken);
         return new RecurrenceAttachmentResult(job, recurrenceState);
     }
+
     private async Task<RecurrenceState?> RecordAsync(
         RecurrenceOccurrence recurrence,
         CancellationToken cancellationToken) =>

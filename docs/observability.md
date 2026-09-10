@@ -48,6 +48,12 @@ An id is stable once published. A retired event keeps its id reserved rather tha
 | 1701 | Warning | Post-report workflow failed after its evaluation lease was lost. |
 | 1702 | Warning | A post-report action intent lost its evaluation lease; the attempt is abandoned without writing a result. |
 
+The three "failed after claim" events (1401, 1501, 1601) also cover a cancellation the host did not
+request. Each pump links its per-item cancellation to the host token and removes items from its task
+set before draining cancels them, so a cancellation observed outside host shutdown means claimed,
+leased work was abandoned for an unrequested reason and is reported rather than dropped. The
+"failed while draining" events (1402, 1502, 1602) do not: draining requests that cancellation itself.
+
 ### Infrastructure adapters (2000-2999)
 
 | Id | Level | Meaning |

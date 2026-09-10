@@ -9,7 +9,7 @@ internal sealed class PostReportActionEvaluationPump(
     PostReportActionEvaluationLeaseRenewer leaseRenewer,
     ILogger<PostReportActionEvaluationPump> logger)
 {
-    private readonly PostReportActionEvaluationTaskSet activeEvaluations = new(logger);
+    private readonly ClaimedTaskSet activeEvaluations = PostReportActionEvaluationTaskSet.Create(logger);
 
     public int ActiveEvaluationCount => activeEvaluations.Count;
 

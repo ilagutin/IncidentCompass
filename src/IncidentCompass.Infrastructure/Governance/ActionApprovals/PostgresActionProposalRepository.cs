@@ -194,6 +194,7 @@ internal sealed class PostgresActionProposalRepository(
             throw;
         }
     }
+
     private static ActionProposalGroundingInput GroundingInput(PreparedActionProposal proposal) =>
         new(proposal.TenantId, proposal.OriginReportId, proposal.EvidenceArtifactIds);
     private static ActionProposalGroundingInput GroundingInput(GovernedActionProposal proposal) =>

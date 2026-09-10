@@ -64,6 +64,7 @@ internal static class OtlpEndpoints
         await DispatchAsync(commands, dispatcher, configurationRepository, cancellationToken);
         return Results.Bytes(new ExportTraceServiceResponse().ToByteArray(), "application/x-protobuf");
     }
+
     private static async Task<IResult> IngestLogsAsync(
         HttpRequest request,
         IApplicationDispatcher dispatcher,

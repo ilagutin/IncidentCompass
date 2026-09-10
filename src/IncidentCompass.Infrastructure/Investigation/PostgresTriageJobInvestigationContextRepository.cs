@@ -141,6 +141,7 @@ internal sealed class PostgresTriageJobInvestigationContextRepository(PostgresDa
             EffectiveSuppressionWindowMinutes = reader.IsDBNull(35) ? null : reader.GetInt32(35)
         };
     }
+
     private static async Task<IReadOnlyCollection<TriageArtifact>> LoadArtifactsAsync(
         NpgsqlConnection connection,
         Guid jobId,

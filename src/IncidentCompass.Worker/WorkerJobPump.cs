@@ -12,7 +12,7 @@ internal sealed partial class WorkerJobPump(
     IProviderOutageTracker? providerOutageTracker = null,
     IRuntimeTelemetry? telemetry = null)
 {
-    private readonly WorkerJobTaskSet activeJobs = new(logger);
+    private readonly ClaimedTaskSet activeJobs = WorkerJobTaskSet.Create(logger);
 
     public int ActiveJobCount => activeJobs.Count;
 

@@ -55,6 +55,7 @@ public static class Setup
         services.TryAddScoped<IBackgroundUserContext, SystemUserContext>();
         return services;
     }
+
     public static IServiceCollection AddPostgresMigrations(this IServiceCollection services)
     {
         // Test fault seam, not a real service: the no-op default lets PostgresMigrationRunner call
@@ -70,6 +71,7 @@ public static class Setup
 
         return services;
     }
+
     private static IServiceCollection AddGovernedInvestigationServices(this IServiceCollection services)
     {
         services.TryAddScoped<TriageLedgerAppender>();
@@ -80,6 +82,7 @@ public static class Setup
         services.TryAddScoped<TriageReportPublisher>();
         return services;
     }
+
     private static IServiceCollection AddInfrastructureOptions(
         this IServiceCollection services,
         IConfiguration configuration)
@@ -120,6 +123,7 @@ public static class Setup
 
         return services;
     }
+
     private static IServiceCollection AddModelGatewayAdapters(this IServiceCollection services)
     {
         // AddHttpClient registers the typed client itself; the mock has no HTTP dependency and is
@@ -139,6 +143,7 @@ public static class Setup
             static options => options.Provider,
             static provider => $"Unsupported model gateway provider '{provider}'.");
     }
+
     private static IServiceCollection AddEmbeddingAdapters(this IServiceCollection services)
     {
         services.AddHttpClient<OpenAiCompatibleEmbeddingClient>(client =>
@@ -193,6 +198,7 @@ public static class Setup
 
         return services;
     }
+
     private static IServiceCollection AddPersistenceAdapters(this IServiceCollection services)
     {
         services.TryAddSingleton<PostgresDataSourceProvider>();

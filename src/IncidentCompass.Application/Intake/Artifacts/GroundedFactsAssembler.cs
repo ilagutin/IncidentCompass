@@ -130,6 +130,7 @@ public sealed class GroundedFactsAssembler(
 
         return CreateArtifact(job.Id, attempt: null, ArtifactKind.RecurrenceState, $"job:{job.Id}", payload);
     }
+
     private async Task InsertPriorReportArtifactIfRecurrenceAsync(TriageJob job, Fault fault, CancellationToken cancellationToken)
     {
         if (fault.RecurrenceOf is not Guid recurrenceOfFaultId)

@@ -113,6 +113,7 @@ internal static class FaultGroupingSettingsLoadValidator
             ValidateSelector(prefix + ".Severity", rule.Severity);
         }
     }
+
     private static void ValidateSelector(string settingName, string? value)
     {
         if (value is not null)

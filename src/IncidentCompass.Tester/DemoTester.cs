@@ -185,6 +185,7 @@ internal sealed class DemoTester(HttpClient client, TesterOptions options)
         }
         return endpoint;
     }
+
     private string BuildUrl(string path) => new Uri(options.PublicBaseUrl, path).ToString();
 
     private static bool TryParseReportId(string? payloadRef, out Guid reportId)
