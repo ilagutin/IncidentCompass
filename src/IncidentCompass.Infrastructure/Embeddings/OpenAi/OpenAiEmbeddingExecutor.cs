@@ -19,7 +19,10 @@ internal sealed class OpenAiEmbeddingExecutor(
         ValidateRequest(request);
 
         var clientOptions = optionsResolver.Get();
-        var endpointUri = optionsResolver.GetEndpointUri(clientOptions);
+        var providerProfile = await optionsResolver.ResolveProviderProfileAsync(
+            request.ProviderId,
+            clientOptions,
+            cancellationToken);
         var payloadJson = requestFactory.CreatePayloadJson(request);
         var maxRetryAttempts = Math.Max(0, clientOptions.MaxRetryAttempts);
 
@@ -29,7 +32,7 @@ internal sealed class OpenAiEmbeddingExecutor(
                 clientOptions,
                 request,
                 payloadJson,
-                endpointUri);
+                providerProfile);
             try
             {
                 var response = await SendAttemptAsync(

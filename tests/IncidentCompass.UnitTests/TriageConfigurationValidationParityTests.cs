@@ -357,6 +357,7 @@ public sealed class TriageConfigurationValidationParityTests
                 IncidentCompass.Domain.Incidents.Actions.ActionCategory.Notification,
                 "telegram:ops")
         ]));
+        services.AddSingleton<IModelProviderSecretReader, EnvironmentModelProviderSecretReader>();
         services.AddSingleton<TriageConfigurationLoadValidator>();
         services.AddSingleton<TriageConfigurationMaterializer>();
         services.AddSingleton<ITriageConfigurationSnapshotStore>(snapshots);

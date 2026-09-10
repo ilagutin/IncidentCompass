@@ -17,7 +17,25 @@ internal static class OpenAiCompatibleEndpointPolicy
                    endpointPath,
                    allowInsecureHttpForLoopback,
                    out _) &&
-               timeoutSeconds is > 0 and <= 3600 &&
+               IsTransportValid(
+                   timeoutSeconds,
+                   maxRetryAttempts,
+                   retryBaseDelayMilliseconds);
+    }
+
+    /// <summary>
+    /// The half of <see cref="IsValid" /> that stays host-wide once a provider entry can bring its
+    /// own endpoint and credential. A per-call check uses this rather than the whole predicate,
+    /// because in a multi-provider configuration the host-wide <c>BaseUrl</c> and <c>ApiKey</c> are
+    /// not the ones the call will use, and failing a call because an unused default is blank would
+    /// force operators to invent a dummy host credential.
+    /// </summary>
+    public static bool IsTransportValid(
+        int timeoutSeconds,
+        int maxRetryAttempts,
+        int retryBaseDelayMilliseconds)
+    {
+        return timeoutSeconds is > 0 and <= 3600 &&
                maxRetryAttempts is >= 0 and <= 10 &&
                retryBaseDelayMilliseconds is > 0 and <= 60_000;
     }

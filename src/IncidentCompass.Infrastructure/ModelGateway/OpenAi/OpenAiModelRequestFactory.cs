@@ -77,15 +77,20 @@ internal static class OpenAiModelRequestFactory
         return new OpenAiChatTemplateKwargs(enableThinking);
     }
 
+    /// <summary>
+    /// The endpoint and the credential both come from <paramref name="providerProfile" />, which the
+    /// client resolved from the request's route provider. <paramref name="clientOptions" /> still
+    /// supplies the host-wide transport settings.
+    /// </summary>
     public static HttpRequestMessage CreateHttpRequest(
         OpenAiCompatibleModelClientOptions clientOptions,
         AiModelRequest request,
         string payloadJson,
-        Uri endpointUri,
+        OpenAiCompatibleProviderProfile providerProfile,
         string idempotencyKey)
     {
-        var httpRequest = new HttpRequestMessage(HttpMethod.Post, endpointUri);
-        httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", clientOptions.ApiKey);
+        var httpRequest = new HttpRequestMessage(HttpMethod.Post, providerProfile.EndpointUri);
+        httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", providerProfile.ApiKey);
         httpRequest.Headers.Add("X-Correlation-Id", request.CorrelationId);
         httpRequest.Headers.Add("Idempotency-Key", idempotencyKey);
 

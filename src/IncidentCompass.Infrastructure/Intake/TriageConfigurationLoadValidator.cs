@@ -4,16 +4,17 @@ using IncidentCompass.Application.Governance.Tools;
 using IncidentCompass.Application.Intake.Configuration;
 using IncidentCompass.Application.Intake.Normalization;
 using IncidentCompass.Application.Investigation.Jobs;
+using IncidentCompass.Infrastructure.Configuration;
 using static IncidentCompass.Infrastructure.Intake.TriageConfigurationValidationGuards;
 
 namespace IncidentCompass.Infrastructure.Intake;
 
 internal sealed class TriageConfigurationLoadValidator(
     SignalNormalizerRegistry normalizerRegistry,
-    IAgentToolRegistry toolRegistry)
+    IAgentToolRegistry toolRegistry,
+    IModelProviderSecretReader secretReader)
 {
     private static readonly HashSet<string> RouteKinds = new(["Chat", "Embedding"], StringComparer.Ordinal);
-    private static readonly HashSet<string> ProviderKinds = new(["Mock", "OpenAICompatible"], StringComparer.Ordinal);
     private const string MemoryRoleName = "memory";
     private const string MemorySearchToolName = "memory_search";
     private static readonly HashSet<string> OrchestratorTools = new(OrchestratorToolNames.All, StringComparer.Ordinal);
@@ -25,7 +26,7 @@ internal sealed class TriageConfigurationLoadValidator(
         RedactionSettingsLoadValidator.Validate(configuration.Redaction);
         ValidateCurrentReleases(configuration.CurrentReleases);
         ValidateAllowedSources(configuration.Ingestion);
-        ValidateProviders(configuration.Providers);
+        TriageProviderSettingsLoadValidator.Validate(configuration.Providers, secretReader);
         ValidateRoutes(configuration.Providers, configuration.Routes);
         ValidateOrchestrator(configuration.Routes, configuration.Orchestrator);
         ValidateRoles(configuration.Routes, configuration.Tools, configuration.Roles);
@@ -50,15 +51,6 @@ internal sealed class TriageConfigurationLoadValidator(
         {
             RequireKey(service, "CurrentReleases");
             RequireNonBlank("CurrentReleases." + service, release);
-        }
-    }
-
-    private static void ValidateProviders(IReadOnlyDictionary<string, TriageProviderSettings> providers)
-    {
-        foreach (var (providerId, provider) in providers)
-        {
-            RequireKey(providerId, "Providers");
-            RequireKnown("Providers." + providerId + ".Kind", provider.Kind, ProviderKinds);
         }
     }
 

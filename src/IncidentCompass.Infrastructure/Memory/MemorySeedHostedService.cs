@@ -170,7 +170,8 @@ internal sealed partial class MemorySeedHostedService(
         }
 
         var embedding = await embeddingClient.CreateEmbeddingAsync(
-            new EmbeddingRequest(file.Content, route.Model, "memory-seed:" + file.Source), cancellationToken);
+            new EmbeddingRequest(file.Content, route.Model, "memory-seed:" + file.Source, route.ProviderId),
+            cancellationToken);
         var chunk = new MemorySeedChunk(
             MemorySeedFileLoader.DeterministicId(item.Id + ":0:" + embedding.Provider + ":" + embedding.Model + ":" + embedding.Vector.Count),
             Position: 0, file.Content, ComputeSha256Hex(file.Content), embedding.Provider, embedding.Model,

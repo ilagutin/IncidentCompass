@@ -8,6 +8,7 @@ using IncidentCompass.Application.Core.ModelGateway;
 using IncidentCompass.Infrastructure.Configuration;
 using IncidentCompass.Infrastructure.ModelGateway.OpenAi;
 using IncidentCompass.Infrastructure.OpenAiCompatible;
+using IncidentCompass.TestSupport;
 using Microsoft.Extensions.Options;
 
 namespace IncidentCompass.UnitTests;
@@ -73,7 +74,7 @@ public sealed class OpenAiCompatibleRetryPolicyTests
             BaseUrl = "not-a-valid-uri",
             ApiKey = "test-api-key"
         });
-        var modelClient = new OpenAiCompatibleModelClient(httpClient, options);
+        var modelClient = new OpenAiCompatibleModelClient(httpClient, options, TestModelProviderProfiles.CreateResolver());
 
         var exception = await Assert.ThrowsAsync<AiModelException>(() =>
             modelClient.CompleteAsync(CreateRequest(), TestContext.Current.CancellationToken));
@@ -354,7 +355,7 @@ public sealed class OpenAiCompatibleRetryPolicyTests
             MaxRetryDelaySeconds = 5,
             TimeoutSeconds = timeoutSeconds
         });
-        return new OpenAiCompatibleModelClient(httpClient, options);
+        return new OpenAiCompatibleModelClient(httpClient, options, TestModelProviderProfiles.CreateResolver());
     }
 
     private static AiModelRequest CreateRequest()

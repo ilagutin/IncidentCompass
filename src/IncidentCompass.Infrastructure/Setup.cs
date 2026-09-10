@@ -26,6 +26,7 @@ using IncidentCompass.Infrastructure.Memory;
 using IncidentCompass.Infrastructure.ModelGateway.Mock;
 using IncidentCompass.Infrastructure.ModelGateway.OpenAi;
 using IncidentCompass.Infrastructure.Observability;
+using IncidentCompass.Infrastructure.OpenAiCompatible;
 using IncidentCompass.Infrastructure.Postgres;
 using IncidentCompass.Infrastructure.Postgres.Testing;
 using IncidentCompass.Infrastructure.Security;
@@ -143,8 +144,23 @@ public static class Setup
         return services;
     }
 
+    /// <summary>
+    /// The provider-selection collaborators both OpenAI-compatible adapters share. They are
+    /// registered once, beside the adapters rather than inside either one's registration, because a
+    /// route's provider must resolve to the same endpoint and credential whether the call is a chat
+    /// completion or an embedding.
+    /// </summary>
+    private static IServiceCollection AddProviderProfileResolution(this IServiceCollection services)
+    {
+        services.TryAddSingleton<IModelProviderSecretReader, EnvironmentModelProviderSecretReader>();
+        services.TryAddScoped<OpenAiCompatibleProviderProfileResolver>();
+        return services;
+    }
+
     private static IServiceCollection AddModelGatewayAdapters(this IServiceCollection services)
     {
+        services.AddProviderProfileResolution();
+
         // AddHttpClient registers the typed client itself; the mock has no HTTP dependency and is
         // registered directly. Both stay concrete-type registrations so the selector below can pick
         // one without a second factory.
@@ -165,6 +181,8 @@ public static class Setup
 
     private static IServiceCollection AddEmbeddingAdapters(this IServiceCollection services)
     {
+        services.AddProviderProfileResolution();
+
         services.AddHttpClient<OpenAiCompatibleEmbeddingClient>(client =>
             client.Timeout = Timeout.InfiniteTimeSpan);
         services.TryAddScoped<MockEmbeddingClient>();

@@ -80,7 +80,7 @@ internal sealed class MemorySearchTool(IEmbeddingClient embeddingClient, IMemory
         }
 
         var embedding = await embeddingClient.CreateEmbeddingAsync(
-            new EmbeddingRequest(query, route.Model, context.Job.Id.ToString()),
+            new EmbeddingRequest(query, route.Model, context.Job.Id.ToString(), route.ProviderId),
             cancellationToken);
 
         var topK = NormalizeTopK(toolSettings.TopK);

@@ -6,6 +6,7 @@ using IncidentCompass.Application.Core.Resilience;
 using IncidentCompass.Infrastructure.Configuration;
 using IncidentCompass.Infrastructure.Embeddings.OpenAi;
 using IncidentCompass.Infrastructure.OpenAiCompatible;
+using IncidentCompass.TestSupport;
 using Microsoft.Extensions.Options;
 
 namespace IncidentCompass.UnitTests;
@@ -156,7 +157,7 @@ public sealed class OpenAiCompatibleEmbeddingFailureTests
             RetryBaseDelayMilliseconds = 1,
             TimeoutSeconds = 30
         });
-        var client = new OpenAiCompatibleEmbeddingClient(httpClient, options);
+        var client = new OpenAiCompatibleEmbeddingClient(httpClient, options, TestModelProviderProfiles.CreateResolver());
 
         var exception = await Assert.ThrowsAsync<EmbeddingClientException>(() =>
             client.CreateEmbeddingAsync(

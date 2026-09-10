@@ -62,6 +62,42 @@ triage configuration and no raw key belongs in tracked files. For example, crede
 This is minimal authentication, not RBAC, key distribution, a secret store, OAuth or a production
 identity platform.
 
+## Model Provider Credentials
+
+A provider entry in the triage configuration names its credential rather than carrying it. Its
+`ApiKeySecretRef` holds the **name** of an environment variable, and the value is read from the
+process environment at the moment a call needs it.
+
+That indirection exists because the triage configuration is not a private file. It is tracked, it is
+reviewed, it is canonicalized and hashed into a `config_hash`, and the hashed document is persisted
+as a triage-configuration snapshot in PostgreSQL. Anything written into it is written into all of
+those. The `${VAR}` and `${VAR:-fallback}` placeholders elsewhere in that file are expanded *into*
+the loaded document, which is exactly why a credential must never be written as one: the expanded
+value would be hashed and stored. `ApiKeySecretRef` keeps the variable's name in the snapshot and
+resolves the value outside everything that is stored.
+
+There is no secret store here, and this is not one. The only resolver reads environment variables,
+which is the same channel the API-key credentials above arrive through.
+
+A provider credential is never logged, never included in an error message and never returned in a
+response. The specific guarantees:
+
+- The adapters that hold a resolved credential are inside the directories
+  `ModelGatewayLoggingGuardTests` scans, which contain no output sink of any kind.
+- The two types that carry a resolved credential are classes rather than records, so neither prints
+  its credential from an interpolation or a structured-logging argument anywhere in the process.
+  A record's generated `ToString` would have printed it.
+- A configuration failure names the setting and the environment-variable name, which are the only
+  actionable parts, and never a value - including the value of a *different* provider's credential
+  that did resolve.
+- A provider HTTP failure is normalized to a status code and an error code; the request that failed
+  is not echoed.
+
+Host configuration remains an alternative source: `IncidentCompass__ModelGateway__OpenAiCompatible__ApiKey`
+and its embedding counterpart are the default provider profile's credential, and a single-provider
+configuration keeps using them. See `docs/model-gateway.md`, "Providers", for exactly when that
+default applies and when a configuration must supply per-provider credentials instead.
+
 ## Incident Data Tenant Scope
 
 `IIncidentTenantContext` is separate from `IUserContext`. With API-key authentication enabled it

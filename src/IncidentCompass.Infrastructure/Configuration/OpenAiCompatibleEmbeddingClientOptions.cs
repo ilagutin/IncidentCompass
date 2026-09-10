@@ -24,12 +24,26 @@ public sealed class OpenAiCompatibleEmbeddingClientOptions
 
     public bool IsValid()
     {
-        return MaxRetryDelaySeconds is > 0 and <= 3600 &&
+        return IsTransportValid() &&
                OpenAiCompatibleEndpointPolicy.IsValid(
                    ApiKey,
                    BaseUrl,
                    EmbeddingsPath,
                    AllowInsecureHttpForLoopback,
+                   TimeoutSeconds,
+                   MaxRetryAttempts,
+                   RetryBaseDelayMilliseconds);
+    }
+
+    /// <summary>
+    /// The settings that stay host-wide when a triage-configuration provider entry supplies the
+    /// endpoint and credential for a call. See the matching member on
+    /// <see cref="OpenAiCompatibleModelClientOptions" />.
+    /// </summary>
+    public bool IsTransportValid()
+    {
+        return MaxRetryDelaySeconds is > 0 and <= 3600 &&
+               OpenAiCompatibleEndpointPolicy.IsTransportValid(
                    TimeoutSeconds,
                    MaxRetryAttempts,
                    RetryBaseDelayMilliseconds);

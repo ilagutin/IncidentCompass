@@ -4,6 +4,7 @@ using System.Text.Json;
 using IncidentCompass.Application.Core.Embeddings;
 using IncidentCompass.Infrastructure.Configuration;
 using IncidentCompass.Infrastructure.Embeddings.OpenAi.Dtos;
+using IncidentCompass.Infrastructure.OpenAiCompatible;
 
 namespace IncidentCompass.Infrastructure.Embeddings.OpenAi;
 
@@ -16,14 +17,19 @@ internal sealed class OpenAiEmbeddingRequestFactory
             OpenAiEmbeddingJson.Options);
     }
 
+    /// <summary>
+    /// The endpoint and the credential both come from <paramref name="providerProfile" />, which the
+    /// executor resolved from the request's route provider. <paramref name="clientOptions" /> still
+    /// supplies the host-wide transport settings.
+    /// </summary>
     public HttpRequestMessage CreateHttpRequest(
         OpenAiCompatibleEmbeddingClientOptions clientOptions,
         EmbeddingRequest request,
         string payloadJson,
-        Uri endpointUri)
+        OpenAiCompatibleProviderProfile providerProfile)
     {
-        var httpRequest = new HttpRequestMessage(HttpMethod.Post, endpointUri);
-        httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", clientOptions.ApiKey);
+        var httpRequest = new HttpRequestMessage(HttpMethod.Post, providerProfile.EndpointUri);
+        httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", providerProfile.ApiKey);
 
         if (!string.IsNullOrWhiteSpace(request.CorrelationId))
         {

@@ -133,6 +133,63 @@ There is no host-level model setting beside the route. `ModelGateway` and `Embed
 provider, the request ceilings and the transport; the model name for a call comes from the route the
 caller resolved and from nowhere else.
 
+### Providers
+
+Entries under `Providers` in the triage configuration are real bindings, not labels. A route's
+`ProviderId` selects one, and the entry decides which endpoint answers that route's calls and which
+credential the request presents. Chat completions and embeddings resolve through the same provider
+table, so a route naming a provider and an embedding route naming a different one reach different
+endpoints.
+
+A provider entry carries two fields beyond its `Kind`:
+
+- `Endpoint`: the absolute base URL for that provider. It is validated at load and must be `http`
+  or `https`; whether plaintext HTTP is actually permitted is still the host-wide loopback decision
+  described below.
+- `ApiKeySecretRef`: the **name** of an environment variable holding that provider's credential,
+  never the credential. See `docs/security-model.md`, "Model Provider Credentials".
+
+What is per-provider and what is host-wide:
+
+| Setting | Scope |
+| --- | --- |
+| Endpoint base URL | per provider, falling back to the host-wide `BaseUrl` |
+| API credential | per provider, falling back to the host-wide `ApiKey` |
+| `ChatCompletionsPath` / `EmbeddingsPath` | host-wide |
+| `TimeoutSeconds`, retry counts and delays | host-wide |
+| `ReasoningModes` | host-wide, keyed by provider id |
+| `AllowInsecureHttpForLoopback` | host-wide |
+| `Organization` | host-wide |
+
+The fallback has one rule, and it is what keeps every existing configuration working unchanged:
+
+> `IncidentCompass:ModelGateway:OpenAiCompatible` and `IncidentCompass:Embeddings:OpenAiCompatible`
+> are the **default provider profile**. A configuration that declares exactly one provider keeps
+> using them; that provider's `Endpoint` and `ApiKeySecretRef` override the default where they
+> resolve, and the default fills whatever they leave. A configuration that declares more than one
+> provider gets no default at all: every `OpenAICompatible` entry must name its own `Endpoint` and
+> its own `ApiKeySecretRef`, and each named variable must be set.
+
+The line is drawn at the provider count rather than per entry because the failure a default would
+cause in a multi-provider configuration is not a missing call. It is the first provider's credential
+arriving at the second provider's endpoint. Refusing to start is the only safe answer to that, so a
+multi-provider configuration missing an endpoint or a resolvable credential fails while the host is
+starting, not at the first model call. A `Mock` provider entry is exempt, because it has no endpoint
+to reach and no credential to present.
+
+The provider table is read from the currently loaded configuration rather than from the snapshot a
+running job is pinned to. A job's route - its model, its ceilings, its reasoning preference - stays
+pinned, because that is what makes a report reproducible. Where a call is sent and what it
+authenticates with is operational rather than behavioural, and rotating a key or moving an endpoint
+must not require draining every in-flight job first.
+
+A direct `IAiModelClient` or `IEmbeddingClient` caller that supplies no `ProviderId` reaches the
+host-wide profile without the triage configuration being read at all.
+
+This commit makes fallback routing *expressible*: a second provider can now be configured and
+reached. It does not add fallback routing itself. Nothing yet retries a failed call against a
+different provider; provider-outage handling remains the process-local backpressure described above.
+
 ### Route Reasoning Preference
 
 A chat route may set its optional `Reasoning` value to `off`, `low`, `medium` or `high`. When the

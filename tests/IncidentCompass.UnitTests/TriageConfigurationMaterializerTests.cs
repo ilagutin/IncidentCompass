@@ -3,6 +3,7 @@ using IncidentCompass.Application.Core.ModelClients;
 using IncidentCompass.Application.Governance.Tools;
 using IncidentCompass.Application.Intake.Normalization;
 using IncidentCompass.Application.Tickets;
+using IncidentCompass.Infrastructure.Configuration;
 using IncidentCompass.Infrastructure.Intake;
 
 namespace IncidentCompass.UnitTests;
@@ -454,7 +455,7 @@ public sealed class TriageConfigurationMaterializerTests
             new AgentToolDescriptor("ticket_search", AgentToolCapability.ImmediateRead),
             TicketCreateTool.Descriptor
         ]);
-        return new TriageConfigurationMaterializer(new TriageConfigurationLoadValidator(registry, tools));
+        return new TriageConfigurationMaterializer(new TriageConfigurationLoadValidator(registry, tools, new EnvironmentModelProviderSecretReader()));
     }
 
     private static JsonObject ResolvedReferences() => new()

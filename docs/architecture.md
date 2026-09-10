@@ -15,6 +15,11 @@ flowchart LR
     Infrastructure --> Providers["Mock or OpenAI-compatible providers"]
 ```
 
+Application contracts carry a provider *identity* only. `AiModelRequest.ProviderId` and
+`EmbeddingRequest.ProviderId` name the configured provider a route resolved to; turning that name
+into an endpoint and a credential happens inside Infrastructure, so no endpoint URL and no
+credential travels on an Application contract. See `docs/model-gateway.md`, "Providers".
+
 ## Projects
 
 - `IncidentCompass.Api`: HTTP endpoints, OpenAPI, demo auth adapter, request/response mapping.

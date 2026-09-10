@@ -35,6 +35,7 @@
          of per-file copies. -->
     <Compile Include="..\Shared\RepositoryRootLocator.cs" Link="Support\RepositoryRootLocator.cs" />
     <Compile Include="..\Shared\TriageConfigurationFileLocator.cs" Link="Support\TriageConfigurationFileLocator.cs" />
+    <Compile Include="..\Shared\TestModelProviderProfiles.cs" Link="Support\TestModelProviderProfiles.cs" />
   </ItemGroup>
 
   <ItemGroup>

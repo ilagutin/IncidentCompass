@@ -26,15 +26,30 @@ public sealed class OpenAiCompatibleModelClientOptions
 
     public bool IsValid()
     {
-        return MaxRetryDelaySeconds is > 0 and <= 3600 &&
-               ReasoningModes.All(static entry =>
-                   !string.IsNullOrWhiteSpace(entry.Key) &&
-                   Enum.IsDefined(entry.Value)) &&
+        return IsTransportValid() &&
                OpenAiCompatibleEndpointPolicy.IsValid(
                    ApiKey,
                    BaseUrl,
                    ChatCompletionsPath,
                    AllowInsecureHttpForLoopback,
+                   TimeoutSeconds,
+                   MaxRetryAttempts,
+                   RetryBaseDelayMilliseconds);
+    }
+
+    /// <summary>
+    /// The settings that stay host-wide when a triage-configuration provider entry supplies the
+    /// endpoint and credential for a call. <see cref="IsValid" /> keeps its meaning for the
+    /// startup options validator, which still requires a usable host-wide default profile whenever
+    /// the host selects the OpenAI-compatible gateway.
+    /// </summary>
+    public bool IsTransportValid()
+    {
+        return MaxRetryDelaySeconds is > 0 and <= 3600 &&
+               ReasoningModes.All(static entry =>
+                   !string.IsNullOrWhiteSpace(entry.Key) &&
+                   Enum.IsDefined(entry.Value)) &&
+               OpenAiCompatibleEndpointPolicy.IsTransportValid(
                    TimeoutSeconds,
                    MaxRetryAttempts,
                    RetryBaseDelayMilliseconds);

@@ -3,6 +3,7 @@ using IncidentCompass.Application.Governance.Tools;
 using IncidentCompass.Application.Intake.Configuration;
 using IncidentCompass.Application.Intake.Normalization;
 using IncidentCompass.Application.Tickets;
+using IncidentCompass.Infrastructure.Configuration;
 using IncidentCompass.Infrastructure.Intake;
 using IncidentCompass.TestSupport;
 
@@ -82,7 +83,7 @@ public sealed class OrchestratorTurnLimitLoadValidationTests
             new AgentToolDescriptor("memory_search", AgentToolCapability.ImmediateRead),
             TicketCreateTool.Descriptor
         ]);
-        return new TriageConfigurationMaterializer(new TriageConfigurationLoadValidator(registry, tools));
+        return new TriageConfigurationMaterializer(new TriageConfigurationLoadValidator(registry, tools, new EnvironmentModelProviderSecretReader()));
     }
 
     private static JsonObject ResolvedReferences() => new()
