@@ -57,8 +57,9 @@ Before making non-trivial changes, read the relevant public docs:
 - Live model observability uses structured application logs plus durable `ModelCall` and `BudgetEvent`
   entries in the triage ledger. Full rendered prompt/body logging remains disabled.
 - `Api` maps HTTP input/output, OpenAPI metadata and foreground user context only.
-- `Worker` runs the database-backed claim loop and governed investigation processing, composing only
-  `Application` and `Infrastructure`.
+- `Worker` runs the database-backed claim loop, governed investigation processing and the periodic
+  data-retention pass, composing only `Application` and `Infrastructure`. It owns when a scheduled
+  pass happens; `Application` owns what the pass does.
 - `Tester` is an HTTP-only demo and evaluation driver with no project references. It speaks to the API
   as a black box, so it deliberately declares its own copies of Domain and Application concepts, such
   as `EvaluationJobStatus` and `EvaluationModelCallMetadata`, instead of sharing types.

@@ -238,8 +238,23 @@ body forever, and the point of the operation is not to. What it means in practic
 `SignalPayloadRetentionDays` is a choice about how far back a re-triage still gets full context, not
 only about disk. The mechanics are in `docs/security-model.md`.
 
-There is no scheduler in this release. Both operations are plain callable services, so something has
-to drive them; an operator running them on a timer of their own is the current answer.
+The Worker now drives both operations, one pass every fifteen minutes, and that schedule is as simple
+as it looks. There is no cron expression, no maintenance window and no coordination between hosts: a
+second Worker would run its own passes on its own clock. That is safe rather than tidy - both
+statements are bounded and idempotent, and two concurrent passes contend on row locks and then find
+nothing left to do - but it is not a scheduler, and this deployment is a single host by design.
+
+One pass is one bounded run of each operation, not a loop that drains the backlog. The row budget
+bounds what a run writes, not what it reads, and the reap reads work proportional to the artifact
+table however small the backlog is, so draining would repeat a table-sized read once per budget of
+rows against the same database the Worker claims jobs from. The cost of choosing the bounded pass is
+that an accumulated backlog clears over days rather than at once, at the budget divided by the
+interval; `docs/single-host-production.md` says what that means for the first start after an upgrade.
+
+Retention reports itself through Worker logs and nothing else. It writes no ledger entry and exposes
+no counter, so "how much has been reclaimed" is a database question, not an API one. That is
+deliberate: the ledger is the audit trail of what the agent decided, and a maintenance pass that
+emptied 500 payloads is not one of those decisions.
 
 ## Simple Access Control vs Enterprise RBAC
 

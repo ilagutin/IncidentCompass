@@ -38,6 +38,13 @@ public static class Setup
             IValidateOptions<PostReportActionEvaluationOptions>,
             PostReportActionEvaluationOptionsValidator>());
         services
+            .AddOptions<RetentionScheduleOptions>()
+            .Bind(configuration.GetSection(RetentionScheduleOptions.SectionName))
+            .ValidateOnStart();
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<
+            IValidateOptions<RetentionScheduleOptions>,
+            RetentionScheduleOptionsValidator>());
+        services
             .AddOptions<TelegramOptions>()
             .Bind(configuration.GetSection(TelegramOptions.SectionName))
             .ValidateOnStart();
@@ -65,11 +72,13 @@ public static class Setup
         services.TryAddSingleton<WorkerActionPump>();
         services.TryAddSingleton<PostReportActionEvaluationLeaseRenewer>();
         services.TryAddSingleton<PostReportActionEvaluationPump>();
+        services.TryAddSingleton<RetentionPump>();
         services.AddHostedService<TelegramConfigurationStartupValidator>();
         services.AddHostedService<GitHubIssueConfigurationStartupValidator>();
         services.AddHostedService<Worker>();
         services.AddHostedService<ActionDispatchWorker>();
         services.AddHostedService<PostReportActionEvaluationWorker>();
+        services.AddHostedService<RetentionWorker>();
 
         // Last, so it sees every registration: the Worker host must not start with the deferred
         // "not configured" placeholders still bound for the investigation and re-triage ports.

@@ -326,6 +326,15 @@ neither deletes a record: they empty or drop payloads, and everything that makes
 left where it is. Both are bounded per run, idempotent and safe to interrupt, because each is a single
 statement whose predicate is the only state it keeps.
 
+The Worker runs both, one bounded pass of each every fifteen minutes; no API request triggers either,
+and no operator action is required to keep them running. Two things follow for anyone reasoning about
+exposure from this section. The windows are a promise about a running Worker only: a deployment whose
+Worker is stopped, or whose `IncidentCompass:RetentionSchedule:Enabled` is set to `false`, keeps every
+raw payload readable for as long as it stays that way, and turning retention back on drains the
+backlog at a bounded rate rather than instantly. And a window is an upper bound on age, not a
+deletion deadline: a pass compacts at most `MaxRowsPerRun` rows, so a payload past its window stays
+readable until a pass reaches it. `docs/single-host-production.md` covers the operational side.
+
 **Aged signal payloads are compacted, not deleted.** `signals.attributes` and `signals.body` are
 emptied for signals intake received longer ago than the configured window. The signal row itself
 cannot go: `faults.trigger_signal_id` references it, so removing the row would take the trigger away

@@ -101,7 +101,11 @@ approval and dispatch path, never a worker role tool.
 The Worker keeps triage-job and approved-action scheduling in separate pump/task-set types. The action
 pump owns only bounded polling, task observation and shutdown draining; current-policy checks, exact
 payload dispatch and terminal workflow decisions remain in Application, while database fencing remains
-in Infrastructure.
+in Infrastructure. Retention follows the same split: the Worker owns when a pass happens - the
+schedule options, their validator, the pump that runs one bounded pass of each operation in one scope,
+and the hosted service around it - while what a pass does stays in the Application operations. A
+schedule is a property of a host, so it is bound from the Worker's own configuration section rather
+than from the shared `RetentionOptions` that both operations read.
 
 Use `Query.cs` instead of `Command.cs` when the use case is read-only. Avoid repeating the full folder context in file names, such as `GetCurrentUserQuery.cs`, when `Users/GetCurrent/Query.cs` already communicates the intent.
 

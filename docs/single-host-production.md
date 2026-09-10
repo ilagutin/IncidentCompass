@@ -93,6 +93,67 @@ docker @compose start
 
 Do not use `down --volumes` for routine shutdown. The named PostgreSQL volume is the durable database.
 
+## Payload retention
+
+The Worker runs payload retention on a timer of its own. Every 15 minutes it makes one pass: one
+bounded run of raw signal payload compaction, then one bounded run of attempt artifact reaping. Both
+are on by default in a running Worker, and the API never runs either.
+
+What a pass changes:
+
+- Signals that intake received more than `SignalPayloadRetentionDays` ago (30 by default) have their
+  raw `attributes` and `body` emptied, and `payload_compacted_at_utc` set to record that retention
+  did it. The signal row, the fault it opened and every field the pipeline derived from the payload
+  stay exactly where they were.
+- Triage artifacts belonging to an attempt that is no longer their job's current attempt, and older
+  than `AttemptArtifactRetentionDays` (7 by default), are deleted. Job-level artifacts, anything a
+  report cites, anything an approval or its provenance points at, and the `ProposedAction` and
+  `ActionResult` kinds are never candidates.
+
+Nothing else is touched. No signal, fault, job, report or ledger row is ever removed, and published
+reports are refused by the database in any case. The full exclusion list and the reasoning behind the
+two windows are in `docs/security-model.md` and `docs/trade-offs.md`.
+
+Each pass deletes or compacts at most `MaxRowsPerRun` rows per operation, 500 by default, so a pass
+costs the same whether the database is a week old or three years old. That bound is on what a pass
+writes, not on what it reads: the reap has to compare each artifact against its job's current
+attempt, which no index can hold, so every pass reads work proportional to the artifact table even
+when it deletes nothing. On the 285,000-artifact database measured in
+`infra/postgres/init/028-signal-payload-and-artifact-retention.sql` that read is 47 to 148 ms.
+
+**Upgrading an existing database.** The first Worker start after this release finds a backlog: every
+signal payload older than the window and every artifact of a superseded attempt is a candidate at
+once. There is no catch-up burst. The Worker drains it at 500 rows per operation per pass, which is
+48,000 rows a day at the default interval, so a database carrying a few hundred thousand stale rows
+is caught up within about a week and disk is reclaimed gradually rather than in one step. Take a
+backup before the first start after the upgrade, as the upgrade procedure already requires: once a
+payload is emptied the only copy of it is in that dump. To drain faster, raise
+`IncidentCompass__Retention__MaxRowsPerRun` for a few days and put it back; that is the setting that
+scales with rows. Shortening the interval mostly repeats the table read.
+
+Note that deletion does not by itself return disk to the filesystem. Reclaimed space is reused by
+PostgreSQL through autovacuum. Treat a shrinking backlog as the signal that retention is working, not
+a shrinking data directory.
+
+**Turning retention off.** Set `IncidentCompass__RetentionSchedule__Enabled` to `false` in the Worker
+environment:
+
+```yaml
+worker:
+  environment:
+    IncidentCompass__RetentionSchedule__Enabled: "false"
+```
+
+The hosted service still starts and logs, once, that retention is disabled and that this host will
+compact no payload and reap no artifact, so an operator reading a Worker log can tell a switched-off
+retention from a broken one. Nothing accumulates that cannot be drained later: turning it back on
+resumes from whatever backlog built up. `IncidentCompass__RetentionSchedule__IntervalMinutes` changes
+the interval and accepts 1 to 1440; a value outside that range fails Worker startup rather than being
+clamped, as an out-of-range retention window does.
+
+A failed pass is a warning in the Worker log, not an outage. The two operations are independent, so
+one failing still lets the other run, and the failed one is retried on the next pass after a backoff.
+
 ## Backup
 
 Create and protect an explicit absolute host directory, then run:

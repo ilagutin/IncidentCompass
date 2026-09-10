@@ -42,7 +42,9 @@ flowchart LR
 - `IncidentCompass.Worker`: DB-backed background host with separate bounded triage-job, post-report
   evaluation and approved-action pumps. Triage jobs and evaluations use renewable ownership-fenced
   leases and per-process concurrency limits; approved actions use immutable dispatch fences, deadlines
-  and at-most-once backend invocation.
+  and at-most-once backend invocation. The same host also runs the interval-driven payload retention
+  pass, which claims nothing and leases nothing: it is bounded maintenance, and it is the only thing
+  that drives the two retention operations.
 - `IncidentCompass.Tester`: the HTTP-only demo and evaluation driver. It references no other project
   in the solution and speaks to the API as a black box, so it deliberately declares its own local
   copies of Domain and Application concepts instead of sharing types.
