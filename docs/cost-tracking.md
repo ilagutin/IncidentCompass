@@ -54,9 +54,9 @@ public price administration or reload API, and currencies are never converted or
 
 ## Quotas
 
-Future quota examples:
-
-- max requests per user per day;
-- max tokens per user per day;
-- max estimated cost per user per month;
-- max requests per tenant per day, optional.
+Cost quotas are not implemented. This rollup is a read model over recorded usage; nothing in the
+system refuses work because of cost. Two nearby mechanisms are often mistaken for quotas and are
+not: the per-attempt orchestrator budget bounds one investigation's tokens, workers and wall clock,
+and the API rate limiter bounds requests per authenticated key. Neither tracks spend, and neither
+accumulates across investigations or across a billing period. A real quota would need its own
+governed policy and its own enforcement point rather than a threshold read off this rollup.

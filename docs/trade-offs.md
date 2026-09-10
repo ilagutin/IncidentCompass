@@ -2,6 +2,62 @@
 
 This document records intentional choices and their costs.
 
+## Contents
+
+Testing and verification
+
+- [Mock Model vs Real Model In Tests](#mock-model-vs-real-model-in-tests)
+- [Real-Model Smoke History](#real-model-smoke-history)
+- [Test Fault Seams Live In Production Code](#test-fault-seams-live-in-production-code)
+
+Privacy and access
+
+- [Full Prompt Logging vs Privacy](#full-prompt-logging-vs-privacy)
+- [Configurable Redaction Is Best Effort](#configurable-redaction-is-best-effort)
+- [Pseudonymization Salt Rotation](#pseudonymization-salt-rotation)
+- [Simple Access Control vs Enterprise RBAC](#simple-access-control-vs-enterprise-rbac)
+- [Local Tenant Partition And API-Key Mapping](#local-tenant-partition-and-api-key-mapping)
+
+Structure, dependencies and versioning
+
+- [Domain Records with Application-Owned Behavior](#domain-records-with-application-owned-behavior)
+- [Reference Implementation vs Framework](#reference-implementation-vs-framework)
+- [Internal Dispatcher vs MediatR](#internal-dispatcher-vs-mediatr)
+- [FluentValidation vs Custom Validators](#fluentvalidation-vs-custom-validators)
+- [.NET 10 LTS vs Older Targets](#net-10-lts-vs-older-targets)
+- [`0.x` vs `v1.0.0`](#0x-vs-v100)
+- [Raw String Identifiers vs Strongly-Typed Value Objects](#raw-string-identifiers-vs-strongly-typed-value-objects)
+- [Canonical Migration Checksums vs Ledger Rewriting](#canonical-migration-checksums-vs-ledger-rewriting)
+- [Two Compose Naming Styles Are Kept](#two-compose-naming-styles-are-kept)
+
+Budgets, providers and the investigation loop
+
+- [Sequential Ledger-Backed Governance](#sequential-ledger-backed-governance)
+- [Token Budget Overshoot](#token-budget-overshoot)
+- [Local-Safe Ceilings Allow Slower Generation](#local-safe-ceilings-allow-slower-generation)
+- [Provider Retries Prefer Bounded Uncertainty](#provider-retries-prefer-bounded-uncertainty)
+- [Budget And Governance Exhaustion Dead-Letters Instead Of Retrying](#budget-and-governance-exhaustion-dead-letters-instead-of-retrying)
+- [Provider Backpressure Is Process-Local](#provider-backpressure-is-process-local)
+- [Renewable Worker Leases Require Cooperative Calls](#renewable-worker-leases-require-cooperative-calls)
+
+Memory, grouping and evidence
+
+- [File-Backed Memory Is The Write Path](#file-backed-memory-is-the-write-path)
+- [Documentation Fit Is Evidence Classification](#documentation-fit-is-evidence-classification)
+- [Memory Embedding Model Changes Require Re-Embedding](#memory-embedding-model-changes-require-re-embedding)
+- [Bounded Memory Reranking Instead of Database Full-Text Search](#bounded-memory-reranking-instead-of-database-full-text-search)
+- [Deterministic Grouping Is Not Incident Correlation](#deterministic-grouping-is-not-incident-correlation)
+- [Re-triage Reuses Untrusted History](#re-triage-reuses-untrusted-history)
+- [Grounded Evidence vs Correct Conclusions](#grounded-evidence-vs-correct-conclusions)
+
+Governance and external actions
+
+- [One Live Tool Policy Path](#one-live-tool-policy-path)
+- [Read-Only Cost Rollup Uses Operator-Maintained Pricing](#read-only-cost-rollup-uses-operator-maintained-pricing)
+- [Durable Evaluation Queue Is Not A Second Action Outbox](#durable-evaluation-queue-is-not-a-second-action-outbox)
+- [At-Most-Once Action Dispatch Prefers Visible Uncertainty](#at-most-once-action-dispatch-prefers-visible-uncertainty)
+- [Compact External Projection, Not General Reconstruction](#compact-external-projection-not-general-reconstruction)
+
 ## Mock Model vs Real Model In Tests
 
 Real model calls are expensive and nondeterministic. Automated tests use mock clients by default.
@@ -302,6 +358,7 @@ can show current, stale-only, mixed historical, missing and multiple-current-doc
 cannot prove that two documents agree semantically or that a runbook is operationally correct. Multiple
 current matches therefore add an explicit review limitation rather than being silently resolved by the
 model.
+
 ## Memory Embedding Model Changes Require Re-Embedding
 
 Memory retrieval filters by tenant, embedding provider, embedding model and embedding dimensions. This avoids mixing incompatible corpora, but it also means changing the embedding provider or model makes existing memory chunks silently unretrievable until they are re-embedded. Changing the configured embedding provider or model should be paired with a full memory re-seed or migration.
@@ -330,6 +387,7 @@ uses a PostgreSQL upsert, so concurrent accepted recurrence deliveries count onc
 one threshold-crossing escalation intent. This keeps the behavior auditable, but the selected fingerprint
 and suppression policy can still be wrong for the operator's real incident boundary. Cross-fault incident
 correlation remains a later capability rather than an implicit effect of grouping.
+
 ## Re-triage Reuses Untrusted History
 
 Recurrence escalation is deterministic database state, but the prior report copied into a new investigation is model output and incident-derived context, not authority. The prompt labels it as an untrusted hypothesis; the worker must independently ground its result and cite the new `RecurrenceState` artifact before publishing a successor. This prevents historical text from becoming sticky fact, but it does not make model reasoning a security boundary. The current release has no manual re-triage endpoint or mass-issue-flip trigger; the latter remains an explicit scope cut.
@@ -337,9 +395,11 @@ Recurrence escalation is deterministic database state, but the prior report copi
 ## Provider Backpressure Is Process-Local
 
 Provider-outage backpressure is deliberately held in each Worker process. It prevents a local outage from rapidly consuming retries and clears after a successful model call, but multiple Worker hosts do not share breaker state. A future distributed deployment needs coordinated provider health if a global circuit is required; the current release remains a local/reference deployment and does not claim that property.
+
 ## Grounded Evidence vs Correct Conclusions
 
 Report grounding proves that each persisted evidence row came from a citable artifact visible to the job and that any stored quote was an exact substring of the redacted artifact payload. It does not prove the model's classification is correct. This is an intentional MVP boundary: durable evidence makes review possible, while evaluation of reasoning quality remains outside the backend transaction.
+
 ## Renewable Worker Leases Require Cooperative Calls
 
 The Worker renews an owned lease at roughly one third of its duration while processing an investigation.
@@ -351,6 +411,7 @@ releasing its slot. A job left in `Processing` becomes claimable after its curre
 This protects the durable ownership boundary, but it cannot forcibly interrupt a provider or tool that
 ignores its cancellation token. The shipped model and tool paths propagate cancellation; custom adapters
 must do the same to avoid work that can no longer publish a result.
+
 ## One Live Tool Policy Path
 
 `ToolRuleEngine` is the single tool-policy mechanism. Immediate Worker reads feed it role grants;

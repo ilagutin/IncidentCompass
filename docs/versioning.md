@@ -135,13 +135,31 @@ and warns in the job summary, it just costs that one approval click per pull req
 
 ## Pricing
 
-Pricing records include effective dates so historical cost calculations remain reproducible.
+`incidentcompass.ai_model_pricing` rows carry effective dates, so a cost calculation resolves the
+price in force at the call timestamp rather than the current one, and a historical window stays
+reproducible after a price change. Rows are operator-maintained database configuration; see
+[Cost tracking](cost-tracking.md) for the read model built on them.
 
 ## Tool Calls
 
-- tool name;
-- tool schema version;
-- tool policy version.
+Tool-call reproducibility on the live governed path comes from the triage ledger, not from a
+per-call tool schema version or tool policy version.
 
-These fields keep proposed, approved, rejected and executed tool calls
-reproducible after a tool schema or backend policy changes.
+- Every `incidentcompass.triage_ledger` row carries a `config_hash` that references an immutable
+  `incidentcompass.triage_config_snapshots` row (`infra/postgres/init/008-triage-ledger.sql`,
+  `infra/postgres/init/007-intake.sql`). The snapshot holds the serialized configuration and
+  instructions in force, and it is written once per hash and never updated. A job stamps its own
+  `config_hash` onto every event it appends
+  (`src/IncidentCompass.Application/Investigation/Jobs/TriageLedgerAppender.cs`), so a
+  `ToolProposed`, `PolicyDecision` or `ToolResult` event stays readable against the exact tool
+  registration and rule set that produced it after the current configuration changes.
+- Every `incidentcompass.action_approvals` row carries `approval_contract_version`, pinned to 1 by a
+  check constraint and held immutable by the lifecycle trigger
+  (`infra/postgres/init/023-action-approvals-outbox.sql`). That is the versioned contract for
+  backend-owned post-report actions: it fixes the shape of the review tuple whose hash an operator
+  approves. Changing that tuple requires a new contract version and an additive migration.
+- `incidentcompass.tool_audit_logs` does declare `tool_name`, `schema_version` and `policy_version`,
+  but its own header marks the table dormant (`infra/postgres/init/006-tool-audit.sql`) and no code
+  under `src/` reads or writes it. Those three columns are reserved for a future governed
+  tool-execution audit surface and hold no data today, so they are not the reproducibility
+  guarantee for anything shipped.

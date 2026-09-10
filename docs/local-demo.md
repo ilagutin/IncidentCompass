@@ -1,72 +1,48 @@
 # Local Demo Walkthrough
 
-This walkthrough runs PostgreSQL, the API, the Worker and the HTTP-only Tester from Docker Compose.
-The default path uses OpenAI-compatible model and embedding providers. Mock providers are available
-only through the explicit `-Mock` switch for tests or deterministic backend checks.
+The demo runs PostgreSQL, the API, the Worker, a stock OpenTelemetry Collector and the HTTP-only
+Tester from Docker Compose. The default path uses OpenAI-compatible model and embedding providers.
+Mock providers are available only through the explicit `-Mock` switch for tests or deterministic
+backend checks.
 
-## One Command
+Every command is in [Quickstart](quickstart.md#one-command-demo), including host-port overrides,
+stopping the stack and resetting the database volume. This page covers what the run contains and how
+to read what it prints.
 
-Configure model names if your local provider requires exact ids:
+## What Success Looks Like
 
-~~~powershell
-Copy-Item .env.example .env
-# Edit INCIDENTCOMPASS_LLM_MODEL and INCIDENTCOMPASS_EMBEDDINGS_MODEL in .env.
+`scripts/demo.ps1 -Mock` prints one row per scenario and exits non-zero if any row fails. The run
+below is real output from the deterministic mock provider, so its classifications show the governed
+path running rather than model quality:
+
+~~~text
+Scenario | FaultId | ReportId | is_mass_issue | Classification | LedgerUrl | ReportUrl | Check
+--- | --- | --- | --- | --- | --- | --- | ---
+1 known-timeout-runbook | db50a885-0e75-4726-9825-6c82085a37bf | 8e34e889-39e2-4f7b-8e6a-d838febf75db | false | KnownIncident | http://localhost:5198/api/v1/faults/db50a885-0e75-4726-9825-6c82085a37bf/ledger | http://localhost:5198/api/v1/triage-reports/8e34e889-39e2-4f7b-8e6a-d838febf75db | ok
+2 unknown-null-reference | 9a56b670-bfc8-4e64-98dc-debf8fb8ea55 | a483f009-adc0-4f03-a7f6-9cd204e04b18 | false | Unknown | http://localhost:5198/api/v1/faults/9a56b670-bfc8-4e64-98dc-debf8fb8ea55/ledger | http://localhost:5198/api/v1/triage-reports/a483f009-adc0-4f03-a7f6-9cd204e04b18 | ok
+3 provider-unavailable-flood | 144467dd-ba0f-4627-ac4d-fc033ea0a55c | 542e060d-e45e-4072-b2d2-fef1b3fd5096 | true | SimpleKnownError | http://localhost:5198/api/v1/faults/144467dd-ba0f-4627-ac4d-fc033ea0a55c/ledger | http://localhost:5198/api/v1/triage-reports/542e060d-e45e-4072-b2d2-fef1b3fd5096 | ok
+4 validation-noise | 7c95878e-c56f-41db-808a-5430a15d54af | c4ab8ec5-628f-42ed-bdf4-6944b295cd2b | false | Noise | http://localhost:5198/api/v1/faults/7c95878e-c56f-41db-808a-5430a15d54af/ledger | http://localhost:5198/api/v1/triage-reports/c4ab8ec5-628f-42ed-bdf4-6944b295cd2b | ok
+5 injection-disabled-action-gate | 4f705140-7ff5-4d7f-ad08-e8bc90e931b2 | e57a7035-579d-4f75-8684-d6eed5e20889 | false | SimpleKnownError | http://localhost:5198/api/v1/faults/4f705140-7ff5-4d7f-ad08-e8bc90e931b2/ledger | http://localhost:5198/api/v1/triage-reports/e57a7035-579d-4f75-8684-d6eed5e20889 | no action lifecycle events observed across 4 bounded ledger reads
 ~~~
 
-Run the demo:
+All five rows passed. Scenario 5 prints a detail string instead of `ok` because it aims a
+prompt-injection attempt at a disabled action gate, and that detail is the assertion:
+[`DemoActionGateResult`](../src/IncidentCompass.Tester/DemoActionGateResult.cs) passes only when no
+action lifecycle event was recorded at all.
 
-~~~powershell
-powershell -ExecutionPolicy Bypass -File scripts/demo.ps1
-~~~
+Every identifier differs between runs, and the ledger and report URLs follow the resolved
+`IC_API_PORT` mapping, so those columns will not match the ones above. What should match is the
+shape: one row per scenario, a fault id, a report id and a check result. After the table prints, the
+services stay running so the API can be inspected.
 
-The script builds the api, worker and tester images, starts postgres, api and worker, waits for
-the API health endpoint on its resolved host port, then runs the Tester container from the demo profile. After
-the table prints, services remain running so you can inspect the API.
+## How Long It Takes
 
-Use non-default host ports when needed:
-
-~~~powershell
-$env:IC_API_PORT = "5298"
-$env:IC_POSTGRES_PORT = "55432"
-powershell -ExecutionPolicy Bypass -File scripts/demo.ps1 -Mock
-~~~
-
-Use these variants when needed:
-
-~~~powershell
-powershell -ExecutionPolicy Bypass -File scripts/demo.ps1 -NoBuild
-powershell -ExecutionPolicy Bypass -File scripts/demo.ps1 -Mock
-~~~
-
-`-NoBuild` reuses existing images. `-Mock` adds `compose.mock.yml`; use it when you need a stable
-backend packaging check without provider calls.
-
-The deterministic mock acceptance path is:
-
-~~~powershell
-powershell -ExecutionPolicy Bypass -File scripts/demo.ps1 -Mock
-~~~
-
-It can be run against a fresh volume and then again against the retained volume. The script resolves
-the API host mapping from Compose, so both runs work with the default ports or with
-`IC_API_PORT` and `IC_POSTGRES_PORT` overrides. These are host-only mappings: service-to-service
-traffic always remains on `api:8080`, `postgres:5432` and `otel-collector:4318`.
-
-Stop the demo services with:
-
-~~~powershell
-docker compose -f docker-compose.yml -f compose.mock.yml --profile demo down
-~~~
-
-If you need a fresh database volume after schema or seed changes, use:
-
-~~~powershell
-docker compose -f docker-compose.yml -f compose.mock.yml --profile demo down --volumes
-~~~
-
-The first command retains the named PostgreSQL volume for a retained run. The second removes it,
-so the next `scripts/demo.ps1 -Mock` run is fresh. For the default non-mock path, omit
-`-f compose.mock.yml`.
+The Tester's own deadlines are ceilings rather than expectations: 13 minutes for one scenario and 75
+minutes for the whole run, covering the OTLP export plus the five table scenarios. Nothing in this
+repository records a typical run. On the real-provider path the wall clock is set by the model server
+you point at, and `-Mock` calls no model server at all, so a mock run is bounded by image build,
+PostgreSQL initialization and container startup rather than by generation.
+[Quickstart](quickstart.md#how-long-a-first-run-takes) lists the remaining ceilings.
 
 ## Service Layout
 
@@ -86,10 +62,6 @@ so the next `scripts/demo.ps1 -Mock` run is fresh. For the default non-mock path
   OpenTelemetry SDK to export an OTLP/HTTP protobuf error span to the API, and runs its remaining
   scenarios through the product HTTP API.
 
-Host mappings use `IC_API_PORT` and `IC_POSTGRES_PORT`, defaulting to `5198` and `5432`. Internal
-Compose URLs stay on `api:8080` and `postgres:5432`, so changing host ports does not change service
-configuration. Put overrides in the ignored `.env` file.
-
 Compose waits for PostgreSQL health before starting the hosts, checks API readiness with GET
 /health, and uses a process-level Worker health check before running the Tester. API and Worker still
 use restart-on-failure because config warmup intentionally fails fast if durable storage is unavailable.
@@ -101,6 +73,7 @@ authorities, and their host-owned repository, recipient and credential bindings 
 made configurable through Compose. Automated GitHub and Telegram coverage instead uses deterministic
 in-process recording HTTP handlers. That keeps test doubles from becoming a second runtime endpoint
 configuration path while the mock demo proves the disabled-policy packaging path.
+
 ## Grouping, Suppression And Recurrence
 
 The grouping configuration separates delivery deduplication from fault lifecycle. Reusing one delivery
@@ -139,15 +112,10 @@ Default Docker Compose values point at a host-side OpenAI-compatible server:
 
 Set these in `.env` before starting the stack when your provider uses different model ids or paths.
 
-The normal demo uses the shipped local-safe profile: a 300-second chat provider timeout per HTTP
-attempt, a 600-second orchestrator wall-clock budget, and `MaxOutputTokens: 8000` on both
-`analysis-chat` and `report-chat`. Their `ContextWindowTokens` remains 8192, and the orchestrator
-keeps `MaxTokens: 200000` and `MaxReprompts: 2`. These are ceilings rather than target consumption
-or expected latency. `ContextWindowTokens` limits the backend's prompt-size estimate and does not
-reserve room from the 8000-token output allowance. On most servers, reasoning and the final answer
-share that output allowance. The separately configured embedding timeout remains 30 seconds. Cloud
-operators can tighten the host timeout and triage configuration overrides. Longer timeouts also
-delay detection of a real stall until streaming stall detection is available.
+The normal demo runs the shipped local-safe profile unchanged.
+[Quickstart](quickstart.md#local-configuration) lists those ceilings, states what each one bounds and
+explains why they are ceilings rather than expected consumption. The evaluation stack described below
+is the only path in this repository that overrides them.
 
 ## Demo Scenarios
 
@@ -161,11 +129,10 @@ The Tester first exports a real error span through the OpenTelemetry SDK to the 
    After its report publishes, Tester performs four bounded reads of that exact fault ledger and fails
    if `ActionProposed`, `ApprovalDecision`, `ActionDispatchStarted` or `ActionCompleted` appears.
 
-The output table includes FaultId, ReportId, is_mass_issue, Classification, a host-reachable ledger
-URL, a host-reachable report URL and the explicit bounded action-gate result. With real providers, exact classifications can vary by model;
-the backend checks are about durable grounding, policy and readback, not pretending model reasoning is
-deterministic. Exact classifications produced by `-Mock` are properties of the demo script contract,
-not measurements of model quality.
+With real providers, exact classifications can vary by model; the backend checks are about durable
+grounding, policy and readback, not pretending model reasoning is deterministic. Exact
+classifications produced by `-Mock` are properties of the demo script contract, not measurements of
+model quality.
 
 Useful read endpoints after a run are:
 
@@ -281,7 +248,8 @@ artifact grounding, report persistence and readback.
 It does not prove the configured model is always correct. Grounded citations mean each citation
 resolves to a stored artifact from this run; they do not prove the model's conclusion is correct.
 
-The fifth scenario is deliberately narrower than an external-provider test. It observes the shipped
+The fifth scenario is deliberately narrower than an external-provider test. Its row is
+disabled-policy packaging evidence, not provider-delivery evidence. It observes the shipped
 disabled-action configuration for a bounded period and neither calls an approval API nor enables,
 approves or dispatches an action. The mandatory-Docker injection test remains the authoritative proof
 for configured policy, requested-only approval and zero Telegram/GitHub recording-handler calls. No

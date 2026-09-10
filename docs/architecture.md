@@ -49,8 +49,33 @@ flowchart LR
 
 ## Intake Flow
 
-`POST /api/v1/incidents` accepts a small incident envelope. API mapping stays transport-only and dispatches `IngestSignalCommand`. Application validation checks configured source allow-list and payload size limits, normalizers produce a handler-ready signal shape, redaction removes obvious secrets while preserving null optional text fields, and fingerprinting classifies signals as `Strong` only when both service name and structured `errorType` are present. `FaultGrouping.FingerprintRules` can select service, operation and source-specific normalized inputs through an ordered deterministic rule set; every resulting signal, fault and `NeighborSet` records the effective rule id and version, so a later rule generation cannot merge into its predecessor. Fault grouping then either attaches to an open strong fault in that exact generation, applies the deterministic service/severity policy selected from `FaultGrouping.SuppressionRules` to suppress a recent closed strong fault, or opens a new fault and pending triage job. Each signal and `NeighborSet` records the effective policy id and window; unmatched signals use the `default` policy with the global `SilenceWindowMinutes`, while the stable suppression reason remains `silence_window`.
-These are four separate intake decisions. Delivery deduplication returns the already accepted signal for the same tenant, source and delivery key, so retries do not change any facts. Open-fault grouping attaches a different accepted signal to the one open fault for its exact fingerprint-rule generation. Suppression stores a different accepted signal against a recently closed fault without opening a job. A later, non-suppressed recurrence opens one recurrence fault and job; every distinct accepted signal attached to that open recurrence increments the transactionally locked group-generation recurrence state. The state stores first and last recurrence timestamps and creates at most one escalation intent for its configured threshold. `RecurrenceState` is a job-level citable artifact and is replaced when an attached signal advances the state. A duplicate delivery never advances recurrence state or creates an escalation intent.
+`POST /api/v1/incidents` accepts a small incident envelope, and API mapping stays transport-only and
+dispatches `IngestSignalCommand`. Application validation checks configured source allow-list and
+payload size limits, normalizers produce a handler-ready signal shape, redaction removes obvious
+secrets while preserving null optional text fields, and fingerprinting classifies signals as `Strong`
+only when both service name and structured `errorType` are present.
+
+`FaultGrouping.FingerprintRules` can select service, operation and source-specific normalized inputs
+through an ordered deterministic rule set. Every resulting signal, fault and `NeighborSet` records
+the effective rule id and version, so a later rule generation cannot merge into its predecessor.
+
+Fault grouping then either attaches to an open strong fault in that exact generation, applies the
+deterministic service/severity policy selected from `FaultGrouping.SuppressionRules` to suppress a
+recent closed strong fault, or opens a new fault and pending triage job. Each signal and
+`NeighborSet` records the effective policy id and window; unmatched signals use the `default` policy
+with the global `SilenceWindowMinutes`, while the stable suppression reason remains `silence_window`.
+
+Those are four separate intake decisions. Delivery deduplication returns the already accepted signal
+for the same tenant, source and delivery key, so retries do not change any facts. Open-fault grouping
+attaches a different accepted signal to the one open fault for its exact fingerprint-rule generation.
+Suppression stores a different accepted signal against a recently closed fault without opening a job.
+A later, non-suppressed recurrence opens one recurrence fault and job.
+
+Every distinct accepted signal attached to that open recurrence increments the transactionally locked
+group-generation recurrence state. The state stores first and last recurrence timestamps and creates
+at most one escalation intent for its configured threshold. `RecurrenceState` is a job-level citable
+artifact and is replaced when an attached signal advances the state. A duplicate delivery never
+advances recurrence state or creates an escalation intent.
 
 Incident-data tenancy is resolved by the server-owned `IIncidentTenantContext`, never by
 sender-controlled envelope, demo-header or OTLP fields. The auth-disabled local path returns
@@ -79,14 +104,77 @@ or log records, each of which can open a fault and a triage job. It is applied t
 export carries, before mapping and before any command is dispatched, so an over-limit export is rejected
 whole with `413 Payload Too Large` and creates no signal, fault or job; partial ingestion would leave a
 caller unable to tell what was stored. Both bounds are independent of request rate limiting.
-The PostgreSQL schema added in `infra/postgres/init/007-intake.sql` stores `signals`, `faults`, `triage_jobs`, `triage_config_snapshots` and `triage_artifacts`. `triage_artifacts` carries job-level intake facts (`TriggerSignal`, `NeighborSet`, optional `RecurrenceState` and optional `PriorReport`) plus attempt-level `WorkerOutput`, `RetrievedItem` and `ToolResult` artifacts. Migration `infra/postgres/init/008-triage-ledger.sql` provides append-only DB-ordered triage events. Migration `infra/postgres/init/009-triage-reports-minimal.sql` defines grounded `triage_reports` plus `triage_evidence` persistence. Migration `023-action-approvals-outbox.sql` adds immutable post-report approval tuples, closed provenance, `ProposedAction` and `ActionResult` artifacts and constrained action lifecycle events. Migration `024-post-report-action-intents.sql` adds the durable evaluation queue that can create those proposals without becoming another action outbox. Migration `025-external-action-audit-projection.sql` adds an indexed immutable compact projection for confirmed Telegram and GitHub terminal results without changing the released 023/024 migrations. The Worker claim loop leases pending/retryable jobs, rehydrates each job's triage configuration from `triage_config_snapshots` by `config_hash`, runs a governed orchestrator with only `delegate(role, task)` and `publish_report(report_json)`, validates `delegate.role` against the config-derived role set, executes workers sequentially, enforces per-attempt budget and bounded reprompt policy, evaluates worker-tool rules over the ledger, and closes the job/fault only when backend-grounded report publication commits.
 
+## Persistence And The Worker Claim Loop
+
+The Worker claim loop is where a pending job becomes an investigation. It leases pending/retryable
+jobs, rehydrates each job's triage configuration from `triage_config_snapshots` by `config_hash`,
+runs a governed orchestrator with only `delegate(role, task)` and `publish_report(report_json)`,
+validates `delegate.role` against the config-derived role set, executes workers sequentially,
+enforces per-attempt budget and bounded reprompt policy, evaluates worker-tool rules over the ledger,
+and closes the job/fault only when backend-grounded report publication commits.
+
+Intake, the ledger, reports and the action outbox are added by numbered migrations under
+`infra/postgres/init`:
+
+- `007-intake.sql` stores `signals`, `faults`, `triage_jobs`, `triage_config_snapshots` and
+  `triage_artifacts`. `triage_artifacts` carries job-level intake facts (`TriggerSignal`,
+  `NeighborSet`, optional `RecurrenceState` and optional `PriorReport`) plus attempt-level
+  `WorkerOutput`, `RetrievedItem` and `ToolResult` artifacts.
+- `008-triage-ledger.sql` provides append-only DB-ordered triage events.
+- `009-triage-reports-minimal.sql` defines grounded `triage_reports` plus `triage_evidence`
+  persistence.
+- `023-action-approvals-outbox.sql` adds immutable post-report approval tuples, closed provenance,
+  `ProposedAction` and `ActionResult` artifacts and constrained action lifecycle events.
+- `024-post-report-action-intents.sql` adds the durable evaluation queue that can create those
+  proposals without becoming another action outbox.
+- `025-external-action-audit-projection.sql` adds an indexed immutable compact projection for
+  confirmed Telegram and GitHub terminal results without changing the released 023/024 migrations.
+  It also replaces the action approval lifecycle trigger function in place, keeping the transition
+  set 023 defined, so the guard running today is the one this migration installed.
 
 ## Memory Worker
 
-Incident memory uses PostgreSQL through `incidentcompass.memory_items` and `incidentcompass.memory_chunks`. File-backed memory sync reads the supported kinds runbook, known incident, operational note, release note and postmortem with optional service/component/release metadata; the repository ships runbook and known-incident corpora only. Within a configured seed owner, source path is the stable identity: changed files update and re-embed one active item, while removed files are deactivated and excluded from search. Each complete corpus is published atomically as an owner-scoped generation, so a divergent owner cannot deactivate another owner's items. API and Worker can sync the same owner concurrently under a corpus database lock. Runtime resync is opt-in, single-flight and cancellation-aware; it persists only timestamps, generation and a sanitized error code by seed tenant and owner for the memory-sync health status, so the API can read the Worker-persisted synchronization snapshot across process boundaries; it is not a Worker liveness probe. The manual `CurrentReleases` map is the single per-service release marker: memory retrieval labels matching evidence as current, stale, unversioned or service-mismatched before it reaches the model. Report publication derives and verifies the stored documentation-fit status from those durable artifacts. The configured embedding model is used by default; the mock embedder is reserved for tests and explicit mock-only checks. The `memory` role is the only shipped role granted `memory_search`; the orchestrator never searches memory directly.
+Incident memory uses PostgreSQL through `incidentcompass.memory_items` and
+`incidentcompass.memory_chunks`. File-backed memory sync reads the supported kinds runbook, known
+incident, operational note, release note and postmortem with optional service/component/release
+metadata; the repository ships runbook and known-incident corpora only.
 
-`memory_search` embeds the worker query once through the tool's configured `EmbeddingRouteId`, then asks PostgreSQL for a bounded vector candidate set of `min(100, TopK * 4)`. Exact tenant, embedding provider, embedding model, embedding dimension and active-item filters apply before vector ordering and the candidate limit. Application-owned ranking applies lexical coverage and fixed metadata rules, then returns the configured final `TopK`. Current evidence for the fault service and its snapshotted `CurrentReleases` marker ranks before stale or wrong-service evidence. Component and evidence-kind boosts require exact normalized query aliases; neither is inferred from model output or accepted as a tool argument. Ties resolve by combined score, vector score and chunk UUID. A model/provider/dimension mismatch returns an honest empty result instead of falling back to fuzzy retrieval. Successful matches are written as attempt-level `RetrievedItem` artifacts with `domain_ref = memory_item:<id>`, and those artifacts commit in the same transaction as the `ToolResult` artifact and ledger event.
+Within a configured seed owner, source path is the stable identity: changed files update and
+re-embed one active item, while removed files are deactivated and excluded from search. Each
+complete corpus is published atomically as an owner-scoped generation, so a divergent owner cannot
+deactivate another owner's items. API and Worker can sync the same owner concurrently under a corpus
+database lock.
+
+Runtime resync is opt-in, single-flight and cancellation-aware. It persists only timestamps,
+generation and a sanitized error code by seed tenant and owner for the memory-sync health status, so
+the API can read the Worker-persisted synchronization snapshot across process boundaries. It is not
+a Worker liveness probe.
+
+The manual `CurrentReleases` map is the single per-service release marker: memory retrieval labels
+matching evidence as current, stale, unversioned or service-mismatched before it reaches the model.
+Report publication derives and verifies the stored documentation-fit status from those durable
+artifacts. The configured embedding model is used by default; the mock embedder is reserved for
+tests and explicit mock-only checks. The `memory` role is the only shipped role granted
+`memory_search`; the orchestrator never searches memory directly.
+
+`memory_search` embeds the worker query once through the tool's configured `EmbeddingRouteId`, then
+asks PostgreSQL for a bounded vector candidate set of `min(100, TopK * 4)`. Exact tenant, embedding
+provider, embedding model, embedding dimension and active-item filters apply before vector ordering
+and the candidate limit.
+
+Ranking is Application-owned rather than delegated to the database. It applies lexical coverage and
+fixed metadata rules, then returns the configured final `TopK`. Current evidence for the fault
+service and its snapshotted `CurrentReleases` marker ranks before stale or wrong-service evidence.
+Component and evidence-kind boosts require exact normalized query aliases; neither is inferred from
+model output or accepted as a tool argument. Ties resolve by combined score, vector score and chunk
+UUID. A model/provider/dimension mismatch returns an honest empty result instead of falling back to
+fuzzy retrieval.
+
+Successful matches are written as attempt-level `RetrievedItem` artifacts with
+`domain_ref = memory_item:<id>`, and those artifacts commit in the same transaction as the
+`ToolResult` artifact and ledger event.
+
 ## Read-only source context
 
 `source_lookup` has an empty model-facing argument object. The backend supplies the redacted trigger
@@ -172,7 +260,24 @@ state, labels, assignees, close/reopen and repository mutation remain outside th
 
 ## Report Lifecycle
 
-`infra/postgres/init/018-report-lifecycle.sql` makes published report rows immutable. Publication serializes on the fault row, inserts a new row with the producing job and an explicit `supersedes_report_id`, and never rewrites prior report content or evidence. `019-retriage-jobs.sql` adds an exactly-once recurrence trigger per source job and constrains its predecessor report to the same fault. When a recurrence escalation finds a prior report anywhere in its recurrence chain, intake creates a pending re-triage job for that reported fault in the same transaction, copies citable recurrence facts, and adds the prior report as an explicitly untrusted `PriorReport` artifact. A re-triage publication must cite `RecurrenceState`; it may independently classify the incident differently. The report detail response exposes predecessor, successor and latest-chain state. `GET /api/v1/faults/{faultId}/triage-report` returns the newest chain head while `GET /api/v1/triage-reports/{id}` continues to retrieve any historical report. `GET /api/v1/triage-reports` returns compact report summaries only, ordered by `(createdAtUtc DESC, reportId DESC)` with a bounded opaque keyset cursor. It supports fault, service, environment, status and classification filters and exposes predecessor, successor and latest-chain fields without evidence payloads. All fault, ledger and report reads are tenant-scoped; out-of-scope objects return `404`.
+`infra/postgres/init/018-report-lifecycle.sql` makes published report rows immutable. Publication
+serializes on the fault row, inserts a new row with the producing job and an explicit
+`supersedes_report_id`, and never rewrites prior report content or evidence.
+
+`019-retriage-jobs.sql` adds an exactly-once recurrence trigger per source job and constrains its
+predecessor report to the same fault. When a recurrence escalation finds a prior report anywhere in
+its recurrence chain, intake creates a pending re-triage job for that reported fault in the same
+transaction, copies citable recurrence facts, and adds the prior report as an explicitly untrusted
+`PriorReport` artifact. A re-triage publication must cite `RecurrenceState`; it may independently
+classify the incident differently.
+
+Report reads follow that chain. The report detail response exposes predecessor, successor and
+latest-chain state. `GET /api/v1/faults/{faultId}/triage-report` returns the newest chain head while
+`GET /api/v1/triage-reports/{id}` continues to retrieve any historical report. `GET /api/v1/triage-reports`
+returns compact report summaries only, ordered by `(createdAtUtc DESC, reportId DESC)` with a bounded
+opaque keyset cursor. It supports fault, service, environment, status and classification filters and
+exposes predecessor, successor and latest-chain fields without evidence payloads. All fault, ledger
+and report reads are tenant-scoped; out-of-scope objects return `404`.
 
 `GET /api/v1/observability/cost-rollups` is a separate authenticated read use case. Application owns
 the UTC-only, inclusive-start/exclusive-end, maximum-31-day window contract and obtains the tenant
@@ -217,6 +322,47 @@ Follow `docs/code-organization.md` for maintainability guardrails. In short: kee
 Worker tools execute within the layered monolith under backend governance. Worker roles receive only registered backend tools that are both configured and granted to that role. Proposed worker calls are recorded as `ToolProposed`, evaluated by the single live `ToolRuleEngine` over current-attempt ledger state by default, recorded as `PolicyDecision`, and successful executions commit a `ToolResult` artifact plus `ToolResult` ledger event atomically. `ToolResult` status and `BudgetEvent` deltas are stored in first-class ledger state, not parsed from rationale text. Configured rule scopes are limited to `attempt` and `job` for the MVP; `fault` scope remains deferred. The shipped immediate read tools are `memory_search`, `source_lookup` and `ticket_search`; synthetic `tool_x`/`tool_y` exist only in integration-test composition for cross-tool governance cases.
 
 ## Post-report Action Approval Boundary
+
+An action approval is one durable row with six states. `023-action-approvals-outbox.sql` defines
+those values and first installs the lifecycle trigger function.
+`025-external-action-audit-projection.sql` then replaces that function with the same transition set,
+so the guard running today, which rejects any state change this diagram does not show, is the one
+migration 025 installed.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Requested: proposal needs approval
+    [*] --> Approved: policy auto-approves this category
+    Requested --> Approved: operator approves the exact payload and approval hashes
+    Requested --> Rejected: operator rejects
+    Requested --> Expired: approval TTL passes with no decision, or a decision commits after it
+    Requested --> Failed: origin report superseded
+    Approved --> Approved: worker claims it and stamps owner, fence and deadline
+    Approved --> Failed: origin report superseded, still unclaimed
+    Approved --> Executed: adapter confirms, or dry run simulates
+    Approved --> Failed: dispatch-time policy re-check refuses the approved action
+    Approved --> Failed: adapter reports a definitive failure, external system not acted on
+    Approved --> Failed: adapter outcome unknown, external system may have acted
+    Approved --> Failed: dispatch deadline passes with the claim unfinished
+    Rejected --> [*]
+    Expired --> [*]
+    Executed --> [*]
+    Failed --> [*]
+```
+
+`Approved` covers two situations the row distinguishes without a separate state value: unclaimed, and
+claimed by a Worker that stamped `dispatch_owner`, `dispatch_fence` and `dispatch_deadline_at`. Only
+an unclaimed row can be failed as superseded. Only the holder of the fence can write a terminal
+state, and only while the deadline is still in the future; after the deadline, recovery closes the
+row as `dispatch_outcome_unknown` instead. A requested row may fail for exactly one reason, a
+superseded origin report. `Rejected`, `Expired`, `Executed` and `Failed` are immutable.
+
+Approval is not the last policy gate: dispatch re-checks tool registration, current configuration,
+mode and approval policy against the approved row and refuses it if any of them tightened in the
+meantime. The at-most-once boundary is the difference between the two adapter failure routes: a
+definitive adapter failure means the external system was not acted on and the row can be closed
+honestly, while `dispatch_outcome_unknown` means the backend cannot tell whether the side effect
+landed, so the row still closes as `Failed` and is never retried.
 
 Successful report publication appends at most one immutable evaluation intent per selected exact
 tool in the same database transaction as the report and `ReportPublished`. Each intent stores only

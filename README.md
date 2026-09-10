@@ -128,16 +128,20 @@ Read [Architecture](docs/architecture.md), [Security model](docs/security-model.
 
 ## Documentation
 
-- [Quickstart](docs/quickstart.md), [Local demo](docs/local-demo.md) and [Integration configuration](docs/integrations.md)
-- [Architecture](docs/architecture.md)
-- [Security model](docs/security-model.md) and [Security policy / vulnerability reporting](SECURITY.md)
-- [Model gateway](docs/model-gateway.md)
-- [Observability](docs/observability.md) and [Cost tracking](docs/cost-tracking.md)
-- [Code organization](docs/code-organization.md) and [Trade-offs](docs/trade-offs.md)
-- [Versioning and release flow](docs/versioning.md) and [Contributing](CONTRIBUTING.md)
-- [Single-host production runbook](docs/single-host-production.md)
-- [Changelog](CHANGELOG.md)
-- Release notes: [0.3.0](docs/release-notes-v0.3.0.md), [0.2.0](docs/release-notes-v0.2.0.md),
+The [documentation index](docs/README.md) states a reading order in three tiers: run it, understand
+it, judge it. The direct routes are:
+
+- Run it: [Quickstart](docs/quickstart.md), [Local demo](docs/local-demo.md),
+  [Integration configuration](docs/integrations.md) and the
+  [single-host production runbook](docs/single-host-production.md)
+- Understand it: [Architecture](docs/architecture.md), [Security model](docs/security-model.md),
+  [Model gateway](docs/model-gateway.md), [Observability](docs/observability.md) and
+  [Cost tracking](docs/cost-tracking.md)
+- Judge it: [Trade-offs](docs/trade-offs.md), [Code organization](docs/code-organization.md),
+  [Versioning and release flow](docs/versioning.md), [Contributing](CONTRIBUTING.md) and the
+  [security policy](SECURITY.md)
+- Reference: [Changelog](CHANGELOG.md) and release notes
+  [0.3.0](docs/release-notes-v0.3.0.md), [0.2.0](docs/release-notes-v0.2.0.md),
   [0.1.1](docs/release-notes-v0.1.1.md) and [0.1.0](docs/release-notes-v0.1.0.md)
 
 ## Origin

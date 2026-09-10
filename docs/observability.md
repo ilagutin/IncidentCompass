@@ -293,7 +293,9 @@ The source uses fixed operation names and a closed `outcome` vocabulary: `claime
 
 ## Later Audit Events
 
-Additional sensitive actions should use durable audit records when implemented:
+The ledger records the action lifecycle that exists today. The events below have no durable audit
+record because the behavior behind them is not implemented; each needs its records added with the
+feature rather than reconstructed from logs afterwards:
 
 - quota exceeded;
 - additional external-action before/after correlation beyond the existing action lifecycle events;
@@ -318,6 +320,9 @@ That log carries the signal kind, the observed record count and the configured l
 record bodies, span names, attributes or resource attributes.
 
 ## Later Options
+
+`IncidentCompass.Runtime` is a telemetry source with no exporter, so making it visible is host work
+this release does not do. These are the obvious next steps, none of which this release provides:
 
 - configurable OTLP exporter wiring and collector examples;
 - metrics endpoint;

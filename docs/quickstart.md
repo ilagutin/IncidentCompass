@@ -1,7 +1,10 @@
 # Quickstart
 
-This guide runs IncidentCompass against OpenAI-compatible model and embedding endpoints. Mock
-providers are reserved for automated tests and explicit `-Mock` checks.
+This is the runnable path. Every command needed to build, configure and run IncidentCompass locally
+is on this page. It runs against OpenAI-compatible model and embedding endpoints; mock providers are
+reserved for automated tests and explicit `-Mock` checks.
+[Local demo walkthrough](local-demo.md) covers what the demo contains and how to read its output,
+and does not repeat these commands.
 
 ## Prerequisites
 
@@ -29,13 +32,11 @@ Run the compose demo:
 powershell -ExecutionPolicy Bypass -File scripts/demo.ps1
 ~~~
 
-The script builds the API, Worker and Tester images, starts PostgreSQL/API/Worker, waits for
-the API health endpoint on its resolved host port, then runs the Tester against the local scenarios. Compose
-health checks also gate API readiness and Worker process startup before the Tester runs. The printed
-table includes FaultId, ReportId, is_mass_issue, Classification, ledger URL, report URL and the check result.
-The fifth scenario parses the exact reviewed injection fixture, waits for its report and fails if a
-bounded readback of that exact fault ledger contains an action proposal, approval decision, dispatch
-start or completion.
+The script builds the API, Worker and Tester images, starts PostgreSQL, the API, the Worker and the
+Collector, waits for the API health endpoint on its resolved host port, then runs the Tester against
+the local scenarios. The printed table includes FaultId, ReportId, is_mass_issue, Classification,
+ledger URL, report URL and the check result. [Local demo walkthrough](local-demo.md) describes the
+service layout, each scenario and what the table means.
 
 Useful variants:
 
@@ -46,11 +47,6 @@ powershell -ExecutionPolicy Bypass -File scripts/demo.ps1 -Mock
 
 `-NoBuild` reuses existing images. `-Mock` adds `compose.mock.yml` and is intended for automated or
 deterministic checks, not for validating the product against an actual model.
-
-The injection row is disabled-policy packaging evidence, not provider-delivery evidence. Tester does
-not call the approval API, enable an action or contact Telegram/GitHub. Mandatory-Docker integration
-coverage separately proves configured-policy and requested-only approval behavior with in-process
-recording handlers and zero external provider calls.
 
 Compose host mappings default to API `5198` and PostgreSQL `5432`. Override collisions in the
 ignored `.env` file without changing container-to-container URLs:
@@ -70,10 +66,34 @@ volume and once with the retained volume. Reset the mock composition only when a
 docker compose -f docker-compose.yml -f compose.mock.yml --profile demo down --volumes
 ~~~
 
+Stop the demo services with:
+
+~~~powershell
+docker compose --profile demo down
+~~~
+
 Host-port overrides do not alter the fixed internal addresses `api:8080`, `postgres:5432` or
-`otel-collector:4318`. The mock override changes only model and embedding providers. GitHub and
-Telegram use fixed production authorities, so their automated doubles are in-process recording
-handlers rather than Compose services or configurable endpoint overrides.
+`otel-collector:4318`. The mock override changes only model and embedding providers.
+
+## How Long A First Run Takes
+
+The numbers below are ceilings, not measurements. This repository does not publish an observed wall
+clock for the real-provider path, because that path is dominated by the speed of the model server
+you point it at.
+
+- Image build and container start come first, and `scripts/demo.ps1` then waits up to 3 minutes for
+  the API health endpoint before failing.
+- The Tester bounds itself at 13 minutes per scenario and 75 minutes for the whole run, which covers
+  the OTLP export plus the five table scenarios.
+- Inside a scenario, one investigation attempt is bounded by the shipped 600-second
+  `Orchestrator.Budget.MaxWallClockSeconds`, and one chat HTTP attempt by the 300-second provider
+  timeout.
+
+`-Mock` swaps in deterministic in-process model and embedding providers, so no model server is
+called and none of the provider latency is present. What remains is image build, PostgreSQL
+initialization and container startup. That makes the mock run the fastest way to see the governed
+path end to end, and the sensible first run when the question is whether the stack is wired
+correctly rather than how a model answers.
 
 ## OTLP Collector Demo
 
@@ -86,13 +106,6 @@ No custom Collector processor synthesizes IncidentCompass fields, and Collector-
 The shipped `Ingestion.Otel` settings default to `ErrorsOnly: true`. Service and severity allow-lists are
 empty by default, meaning they do not filter. Metrics, profiles, compressed payloads and protobuf JSON are
 not accepted by this release.
-
-
-Stop demo services with:
-
-~~~powershell
-docker compose --profile demo down
-~~~
 
 ## Local Configuration
 
