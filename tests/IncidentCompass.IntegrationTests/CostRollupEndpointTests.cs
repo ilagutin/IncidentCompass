@@ -172,12 +172,13 @@ public sealed class CostRollupEndpointTests(PostgresRepositoryFixture postgres)
             {
                 kind = "orchestrator",
                 routeId = "safe-private-route",
-                provider = "private-provider",
+                provider = "openai-compatible",
                 model = "private-model",
                 usageSource = "provider",
                 inputTokens = input,
                 outputTokens = output,
-                totalTokens = total
+                totalTokens = total,
+                providerId = "private-provider"
             })));
 
     private static void AssertHour(string body, long input, long output, long total, decimal amount)
@@ -190,6 +191,11 @@ public sealed class CostRollupEndpointTests(PostgresRepositoryFixture postgres)
         Assert.Equal(total, hour.GetProperty("totalTokens").GetInt64());
         Assert.Equal(1, hour.GetProperty("pricedCallCount").GetInt64());
         Assert.Equal(0, hour.GetProperty("unpricedCallCount").GetInt64());
+
+        // The spend above is provider-reported throughout, and the response says so rather than
+        // leaving a reader to assume it.
+        Assert.Equal(0, hour.GetProperty("estimatedUsageCallCount").GetInt64());
+        Assert.Equal(0, hour.GetProperty("estimatedUsageTotalTokens").GetInt64());
         var spend = Assert.Single(hour.GetProperty("spendTotals").EnumerateArray());
         Assert.Equal("USD", spend.GetProperty("currency").GetString());
         Assert.Equal(amount, spend.GetProperty("amount").GetDecimal());

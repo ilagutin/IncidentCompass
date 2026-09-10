@@ -16,10 +16,19 @@ namespace IncidentCompass.Application.Investigation.Reports;
 /// </para>
 /// <para>
 /// An element is keyed by the whole of <see cref="CallKind"/>, <see cref="Role"/>,
-/// <see cref="RouteId"/>, <see cref="Provider"/> and <see cref="Model"/>, so one role answered by
-/// two models is two elements and the claim survives a later change that lets a role run on more
-/// than one route. <see cref="Provider"/> and <see cref="Model"/> are what the provider reported
-/// as having answered, not what the route asked for, and none of it can be set from model output.
+/// <see cref="RouteId"/>, <see cref="Provider"/>, <see cref="ProviderId"/> and <see cref="Model"/>,
+/// so one role answered by two models is two elements and the claim survives a later change that
+/// lets a role run on more than one route. <see cref="Provider"/> and <see cref="Model"/> are what
+/// the provider reported as having answered, not what the route asked for, and none of it can be
+/// set from model output.
+/// </para>
+/// <para>
+/// <see cref="ProviderId"/> is part of the key because <see cref="Provider"/> alone stopped being
+/// an identity once a host could declare several providers with different endpoints and credentials
+/// behind one adapter: two of them answering the same model name would otherwise collapse into a
+/// single element, and the report would claim one participant where there were two. It is
+/// <see langword="null"/> only for a call whose ledger row does not name a configured provider,
+/// which is a row written before that was recorded.
 /// </para>
 /// <para>
 /// The JSON property names and order are a persisted contract as well as a public response shape:
@@ -34,10 +43,12 @@ namespace IncidentCompass.Application.Investigation.Reports;
 /// <param name="Provider">The adapter identifier that reported the answer.</param>
 /// <param name="Model">The provider model name that reported the answer.</param>
 /// <param name="CallCount">How many calls in the attempt this exact combination answered.</param>
+/// <param name="ProviderId">The configured provider entry the route named, or <see langword="null"/> when the ledger row does not say.</param>
 public sealed record TriageReportModelParticipant(
     [property: JsonPropertyName("callKind"), JsonPropertyOrder(0)] string CallKind,
     [property: JsonPropertyName("role"), JsonPropertyOrder(1)] string? Role,
     [property: JsonPropertyName("routeId"), JsonPropertyOrder(2)] string RouteId,
     [property: JsonPropertyName("provider"), JsonPropertyOrder(3)] string Provider,
     [property: JsonPropertyName("model"), JsonPropertyOrder(4)] string Model,
-    [property: JsonPropertyName("callCount"), JsonPropertyOrder(5)] int CallCount);
+    [property: JsonPropertyName("callCount"), JsonPropertyOrder(5)] int CallCount,
+    [property: JsonPropertyName("providerId"), JsonPropertyOrder(6)] string? ProviderId = null);

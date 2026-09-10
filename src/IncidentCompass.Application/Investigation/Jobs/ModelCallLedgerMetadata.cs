@@ -17,6 +17,17 @@ namespace IncidentCompass.Application.Investigation.Jobs;
 /// fallback route, and <c>FallbackForRouteId</c> names the route it answered for; on every other
 /// call the property is absent, so no already-written row changes shape.
 /// </para>
+/// <para>
+/// <c>Provider</c> and <c>ProviderId</c> are two different facts and both are recorded.
+/// <c>Provider</c> is the adapter that produced the answer, which is one string for every
+/// OpenAI-compatible endpoint the host can reach; <c>ProviderId</c> is the entry in the triage
+/// configuration's provider table that the called route named, which is what has its own endpoint,
+/// its own credential and its own prices. Cost accounting therefore keys on <c>ProviderId</c>: two
+/// configured providers answered by the same adapter are two payers and must not be added together.
+/// The property is absent on a row written before it existed and on a call whose route named no
+/// provider, so no already-written row changes shape and a reader has to decide what to do with a
+/// row that names an adapter but no payer.
+/// </para>
 /// </remarks>
 public sealed record ModelCallLedgerMetadata(
     [property: JsonPropertyName("kind"), JsonPropertyOrder(0)] string Kind,
@@ -33,4 +44,5 @@ public sealed record ModelCallLedgerMetadata(
     [property: JsonPropertyName("outcome"), JsonPropertyOrder(11)] string Outcome,
     [property: JsonPropertyName("errorCode"), JsonPropertyOrder(12)] string? ErrorCode,
     [property: JsonPropertyName("reasoningTokens"), JsonPropertyOrder(13), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? ReasoningTokens = null,
-    [property: JsonPropertyName("fallbackForRouteId"), JsonPropertyOrder(14), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? FallbackForRouteId = null);
+    [property: JsonPropertyName("fallbackForRouteId"), JsonPropertyOrder(14), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? FallbackForRouteId = null,
+    [property: JsonPropertyName("providerId"), JsonPropertyOrder(15), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ProviderId = null);

@@ -10,6 +10,8 @@ internal sealed class MutableCostRollupHour
     public long TotalTokens { get; set; }
     public long PricedCallCount { get; set; }
     public long UnpricedCallCount { get; set; }
+    public long EstimatedUsageCallCount { get; set; }
+    public long EstimatedUsageTotalTokens { get; set; }
     public Dictionary<string, decimal> SpendByCurrency { get; } = new(StringComparer.Ordinal);
 
     public CostRollupHour ToResponse(DateTimeOffset hourUtc) =>
@@ -21,6 +23,8 @@ internal sealed class MutableCostRollupHour
             TotalTokens,
             PricedCallCount,
             UnpricedCallCount,
+            EstimatedUsageCallCount,
+            EstimatedUsageTotalTokens,
             SpendByCurrency
                 .OrderBy(static item => item.Key, StringComparer.Ordinal)
                 .Select(static item => new CostRollupSpend(item.Key, item.Value))

@@ -307,11 +307,12 @@ and report reads are tenant-scoped; out-of-scope objects return `404`.
 `GET /api/v1/observability/cost-rollups` is a separate authenticated read use case. Application owns
 the UTC-only, inclusive-start/exclusive-end, maximum-31-day window contract and obtains the tenant
 only from `IUserContext`. Infrastructure reads `ModelCall` rows through their fault ownership, parses
-bounded metadata fail-closed, matches provider/model identifiers case-sensitively against exactly one
-effective pricing interval and groups safe totals by UTC hour. The response does not expose tenant,
-fault, job, provider, model or logical route identifiers. Missing, malformed or ambiguous pricing is
-reported as an unpriced call, never as zero spend. No alert or price mutation path is coupled to this
-query.
+bounded metadata fail-closed, matches a call's configured provider ID and model case-sensitively
+against exactly one effective pricing interval and groups safe totals by UTC hour. Only
+provider-reported token counts are priced; a locally estimated count is counted and never charged.
+The response does not expose tenant, fault, job, provider, model or logical route identifiers.
+Missing, malformed or ambiguous pricing is reported as an unpriced call, never as zero spend. No
+alert or price mutation path is coupled to this query.
 
 ## API authentication boundary
 

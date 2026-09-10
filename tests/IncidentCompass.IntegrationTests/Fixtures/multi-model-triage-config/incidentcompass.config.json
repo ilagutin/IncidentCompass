@@ -1,12 +1,13 @@
 {
   "$schema": "../../../../config/incidentcompass.schema.json",
   "Providers": {
-    "local-oai": { "Kind": "OpenAICompatible", "Endpoint": "http://localhost:1234/v1", "ApiKeySecretRef": "LOCAL_OAI_KEY" }
+    "mock-primary": { "Kind": "Mock" },
+    "mock-secondary": { "Kind": "Mock" }
   },
   "Routes": {
-    "analysis-chat": { "Kind": "Chat", "ProviderId": "local-oai", "Model": "local-worker-model", "Temperature": 0.1, "MaxOutputTokens": 2000, "ContextWindowTokens": 8192 },
-    "report-chat":   { "Kind": "Chat", "ProviderId": "local-oai", "Model": "local-orchestrator-model", "Temperature": 0.2, "MaxOutputTokens": 8000, "ContextWindowTokens": 8192 },
-    "memory-embed":  { "Kind": "Embedding", "ProviderId": "local-oai", "Model": "mock-memory-embedding-v1" }
+    "analysis-chat": { "Kind": "Chat", "ProviderId": "mock-secondary", "Model": "local-worker-model", "Temperature": 0.1, "MaxOutputTokens": 2000, "ContextWindowTokens": 8192 },
+    "report-chat":   { "Kind": "Chat", "ProviderId": "mock-primary", "Model": "local-orchestrator-model", "Temperature": 0.2, "MaxOutputTokens": 8000, "ContextWindowTokens": 8192 },
+    "memory-embed":  { "Kind": "Embedding", "ProviderId": "mock-primary", "Model": "mock-memory-embedding-v1" }
   },
   "Orchestrator": {
     "Instructions": "ref:../test-triage-config/instructions/orchestrator.md",

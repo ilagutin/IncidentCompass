@@ -83,6 +83,13 @@ public sealed class TriageReportModelProvenanceTests(PostgresRepositoryFixture p
         // behind the route that happened to emit publish_report.
         Assert.NotEqual(orchestrator.Model, worker.Model);
         Assert.Equal(2, stored!.Count);
+
+        // The two routes name two declared providers and one adapter answered both, so the adapter
+        // name alone would say these calls came from the same place. The configured provider is
+        // part of what makes a participant, which is what keeps two payers from collapsing.
+        Assert.Equal("mock-primary", orchestrator.ProviderId);
+        Assert.Equal("mock-secondary", worker.ProviderId);
+        Assert.Equal(orchestrator.Provider, worker.Provider);
     }
 
     [DockerAvailableFact]
@@ -160,7 +167,10 @@ public sealed class TriageReportModelProvenanceTests(PostgresRepositoryFixture p
                 root.GetProperty("routeId").GetString()!,
                 root.GetProperty("provider").GetString()!,
                 root.GetProperty("model").GetString()!,
-                CallCount: 0);
+                CallCount: 0,
+                ProviderId: root.TryGetProperty("providerId", out var providerId)
+                    ? providerId.GetString()
+                    : null);
             var key = JsonSerializer.Serialize(participant);
             if (counts.TryGetValue(key, out var callCount))
             {

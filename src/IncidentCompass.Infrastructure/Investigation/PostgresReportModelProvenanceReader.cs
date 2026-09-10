@@ -84,7 +84,8 @@ internal static class PostgresReportModelProvenanceReader
                 key.RouteId,
                 key.Provider,
                 key.Model,
-                callCounts[key]))
+                callCounts[key],
+                key.ProviderId))
             .ToArray();
     }
 
@@ -98,6 +99,12 @@ internal static class PostgresReportModelProvenanceReader
     /// no longer says what happened, and quietly leaving that call out would publish a report
     /// claiming fewer models than answered it. The failure names the ledger row and nothing from
     /// inside it.
+    /// <para>
+    /// The configured provider id is read as optional. It is what an adapter name cannot be - the
+    /// identity of the declared provider that answered - but a row written before it was recorded
+    /// carries no such claim, and refusing to publish over that would turn a rolling deployment
+    /// into a failed attempt.
+    /// </para>
     /// </remarks>
     private static ModelCallParticipantKey? ReadSuccessfulCall(long ledgerId, string? role, string? rationale)
     {
@@ -113,8 +120,11 @@ internal static class PostgresReportModelProvenanceReader
             throw UnreadableRow(ledgerId);
         }
 
+        var providerId = TryReadIdentity(root, "providerId", out var declaredProviderId)
+            ? declaredProviderId
+            : null;
         return string.Equals(outcome, SuccessOutcome, StringComparison.Ordinal)
-            ? new ModelCallParticipantKey(callKind!, role, routeId!, provider!, model!)
+            ? new ModelCallParticipantKey(callKind!, role, routeId!, provider!, providerId, model!)
             : null;
     }
 

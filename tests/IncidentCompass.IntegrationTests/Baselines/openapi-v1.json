@@ -1224,12 +1224,15 @@
           "totalTokens",
           "pricedCallCount",
           "unpricedCallCount",
+          "estimatedUsageCallCount",
+          "estimatedUsageTotalTokens",
           "spendTotals"
         ],
         "type": "object",
         "properties": {
           "hourUtc": {
             "type": "string",
+            "description": "The start of the UTC hour these totals cover.",
             "format": "date-time"
           },
           "callCount": {
@@ -1238,6 +1241,7 @@
               "integer",
               "string"
             ],
+            "description": "Every durable model-call row in the hour, successful or not.",
             "format": "int64"
           },
           "inputTokens": {
@@ -1246,6 +1250,7 @@
               "integer",
               "string"
             ],
+            "description": "Input tokens across the calls whose usage metadata was valid.",
             "format": "int64"
           },
           "outputTokens": {
@@ -1254,6 +1259,7 @@
               "integer",
               "string"
             ],
+            "description": "Output tokens across the calls whose usage metadata was valid.",
             "format": "int64"
           },
           "totalTokens": {
@@ -1262,6 +1268,7 @@
               "integer",
               "string"
             ],
+            "description": "Total tokens across the calls whose usage metadata was valid.",
             "format": "int64"
           },
           "pricedCallCount": {
@@ -1270,6 +1277,7 @@
               "integer",
               "string"
             ],
+            "description": "Calls that produced spend, all of them provider-reported.",
             "format": "int64"
           },
           "unpricedCallCount": {
@@ -1278,15 +1286,36 @@
               "integer",
               "string"
             ],
+            "description": "Calls that produced no spend, for any reason.",
+            "format": "int64"
+          },
+          "estimatedUsageCallCount": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "description": "Calls whose token counts this system estimated rather than received.",
+            "format": "int64"
+          },
+          "estimatedUsageTotalTokens": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "description": "How many of the hour\u0027s total tokens came from those calls.",
             "format": "int64"
           },
           "spendTotals": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/CostRollupSpend"
-            }
+            },
+            "description": "Exact spend per currency, never converted or combined."
           }
-        }
+        },
+        "description": "One UTC hour of recorded model usage for one tenant."
       },
       "CostRollupResponse": {
         "required": [
@@ -2243,6 +2272,13 @@
             ],
             "description": "How many calls in the attempt this exact combination answered.",
             "format": "int32"
+          },
+          "providerId": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "The configured provider entry the route named, or \u0060null\u0060 when the ledger row does not say."
           }
         },
         "description": "One distinct model that answered during the job attempt that produced a published report."

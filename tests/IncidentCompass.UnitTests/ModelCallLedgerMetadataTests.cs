@@ -93,4 +93,50 @@ public sealed class ModelCallLedgerMetadataTests
         Assert.Equal(expected, JsonSerializer.Serialize(metadata));
         Assert.DoesNotContain("fallbackForRouteId", JsonSerializer.Serialize(Metadata), StringComparison.Ordinal);
     }
+
+    /// <summary>
+    /// The configured provider id is recorded beside the adapter identifier, not instead of it, and
+    /// it is appended after every field an existing row already carries. A row written before the
+    /// field existed omits it entirely, which is what keeps those rows byte-identical and still
+    /// parseable by the readers of this payload.
+    /// </summary>
+    [Fact]
+    public void Serialize_AppendsTheConfiguredProviderIdAfterEveryEarlierField()
+    {
+        var metadata = Metadata with { Provider = "openai-compatible", ProviderId = "local-oai" };
+        const string expected =
+            "{\"kind\":\"orchestrator\",\"routeId\":\"report-chat\",\"model\":\"local-model\"," +
+            "\"provider\":\"openai-compatible\",\"usageSource\":\"provider\",\"inputTokens\":128," +
+            "\"outputTokens\":64,\"totalTokens\":192,\"durationMs\":1234,\"proposedToolCallCount\":1," +
+            "\"callId\":\"11111111-1111-1111-1111-111111111111\",\"outcome\":\"success\"," +
+            "\"errorCode\":null,\"providerId\":\"local-oai\"}";
+
+        Assert.Equal(expected, JsonSerializer.Serialize(metadata));
+        Assert.DoesNotContain("providerId", JsonSerializer.Serialize(Metadata), StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Both late-added optional fields on one call, so the order between them is pinned rather than
+    /// left to whichever was written first.
+    /// </summary>
+    [Fact]
+    public void Serialize_OrdersTheFailOverRouteBeforeTheConfiguredProviderId()
+    {
+        var metadata = Metadata with
+        {
+            RouteId = "backup-chat",
+            FallbackForRouteId = "report-chat",
+            ReasoningTokens = 48,
+            ProviderId = "backup-oai"
+        };
+
+        Assert.Equal(
+            "{\"kind\":\"orchestrator\",\"routeId\":\"backup-chat\",\"model\":\"local-model\"," +
+            "\"provider\":\"local-oai\",\"usageSource\":\"provider\",\"inputTokens\":128," +
+            "\"outputTokens\":64,\"totalTokens\":192,\"durationMs\":1234,\"proposedToolCallCount\":1," +
+            "\"callId\":\"11111111-1111-1111-1111-111111111111\",\"outcome\":\"success\"," +
+            "\"errorCode\":null,\"reasoningTokens\":48,\"fallbackForRouteId\":\"report-chat\"," +
+            "\"providerId\":\"backup-oai\"}",
+            JsonSerializer.Serialize(metadata));
+    }
 }

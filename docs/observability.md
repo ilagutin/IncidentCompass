@@ -76,7 +76,7 @@ leased work was abandoned for an unrequested reason and is reported rather than 
 | 3103 | Error | Attempt exhausted its retry budget and was dead-lettered. |
 | 3104 | Warning | Attempt was delayed because the model provider is unavailable; the attempt budget was not consumed. |
 | 3105 | Error | Attempt failure could not be recorded durably by the runtime repository. |
-| 3201 | Information | Model call completed, with route, call kind, provider, model, usage source, token counts, duration and proposed tool-call count. |
+| 3201 | Information | Model call completed, with route, call kind, provider, configured provider (or `unknown` when the route named none), model, usage source, token counts, duration and proposed tool-call count. |
 | 3202 | Warning | Model call failed with a bounded exception type. |
 | 3203 | Warning | Model call was cancelled because the attempt wall-clock budget ran out. |
 | 3204 | Information | Model call was cancelled by host shutdown. |
@@ -201,7 +201,8 @@ The live model telemetry mechanism is the append-only triage ledger. Each invest
 
 - call kind;
 - route ID;
-- provider;
+- provider, the adapter that answered;
+- nullable configured provider ID (`providerId`), the provider table entry the route named;
 - model;
 - nullable input, output and total token counts;
 - usage source (`provider`, `estimate` or `unknown`);
@@ -227,6 +228,16 @@ therefore appears in the ledger as two `ModelCall` rows: the failed call on the 
 with its own error code and its own `BudgetEvent` charge, and the successful call on the fallback
 route. Neither is refunded, exempted or merged into the other.
 
+`provider` and `providerId` are two different facts and both are recorded. `provider` is the adapter
+that produced the answer, which is one string shared by every endpoint of that kind the host can
+reach; `providerId` names the entry in the triage configuration's provider table that the called
+route used, which is what has its own endpoint, its own credential and its own prices. Cost
+accounting keys on `providerId` (see `docs/cost-tracking.md`), because two configured providers
+answered by one adapter are two payers. The property is absent on a row written before it existed and
+on a call whose route named no provider, so rows written before the field existed are byte-identical
+to rows written after it, and a reader that needs a payer has to decide what to do with a row that
+names only an adapter.
+
 The ledger does not store rendered prompts, full provider responses, document text, provider credentials, API keys, embedding vectors or reasoning text. A numeric provider-reported reasoning token count may be stored in `ModelCall` metadata, but no reasoning text is logged or persisted. Token budget accounting is recorded separately as first-class `BudgetEvent` rows with `tokens_delta` and `workers_delta` columns. Every worker or orchestrator correction turn also writes one bounded `BudgetEvent`. A worker correction uses the `worker_output_reprompt:` rationale prefix, retains the role and is capped at 1,000 characters; it contains safe diagnostics, not validation exception text, model output, prompt or schema.
 
 `ModelCall` rows and token-accounting `BudgetEvent` rows are mirrored by bounded application log events 3201-3206 and 3211-3212 above, while reprompt `BudgetEvent` rows are mirrored by events 3401 and 3402, so live model observability is readable from logs and auditable from the ledger.
@@ -239,10 +250,15 @@ and any reprompt turns - and a role names its own route, so a single attempt can
 several routes, providers and models. There is therefore no single "the model that wrote this
 report", and `triage_reports.model_provenance` holds a list rather than a name.
 
-Each element is one distinct combination of call kind, role, route, provider and model that answered
-during the publishing attempt, with how many calls it answered, in the order each combination first
-answered. Two models used for the same role are two elements, so the claim stays true if a later
-change lets one role run on more than one route. The element shape is the public
+Each element is one distinct combination of call kind, role, route, adapter, configured provider and
+model that answered during the publishing attempt, with how many calls it answered, in the order each
+combination first answered. Two models used for the same role are two elements, so the claim stays
+true if a later change lets one role run on more than one route. The configured provider is part of
+the combination as well as the adapter, because one adapter answers for every provider of its kind a
+host declares: without it, two providers with different endpoints and credentials answering the same
+model name would be reported as one participant. `providerId` is `null` on an element derived from a
+ledger row written before that was recorded, which is not the same claim as naming a provider. The
+element shape is the public
 `TriageReportModelParticipant` record and reaches API callers as `modelProvenance` on
 `GET /api/v1/triage-reports/{id}` and `GET /api/v1/faults/{faultId}/triage-report`.
 
@@ -273,15 +289,25 @@ empty list, which means provenance was derived and the attempt recorded no model
 `GET /api/v1/observability/cost-rollups` reads these durable `ModelCall` rows for the authenticated
 tenant over required `fromUtc` and `toUtc` values. Both boundaries must use a UTC offset. Start is
 inclusive, end is exclusive, and the non-empty window is limited to 31 days. Results contain only UTC
-hour, call count, input/output/total token totals, priced/unpriced call counts and exact spend totals
-separated by currency.
+hour, call count, input/output/total token totals, priced/unpriced call counts, estimated-usage call
+and token counts, and exact spend totals separated by currency.
 
-Each call is priced only when its metadata is valid and exactly one case-sensitive provider/model
-pricing interval contains the call timestamp. Valid calls without a price still contribute token
-totals and increment `unpricedCallCount`. Invalid JSON or types, blank identities, unsafe token
-values and overlapping or tied prices increment the call and unpriced counts but contribute no token
-or spend value. A real configured zero price remains a priced call; missing or ambiguous pricing never
-becomes false zero spend.
+Each call is priced only when its metadata is valid, it names the configured provider that answered,
+exactly one case-sensitive `providerId`/model pricing interval contains the call timestamp, and its
+`usageSource` is `provider`. Valid calls without a price still contribute token totals and increment
+`unpricedCallCount`. Invalid JSON or types, blank identities, unsafe token values and overlapping or
+tied prices increment the call and unpriced counts but contribute no token or spend value. A real
+configured zero price remains a priced call; missing or ambiguous pricing never becomes false zero
+spend.
+
+Locally estimated token counts are never priced, so a spend figure is built only from counts the
+provider itself reported and can be compared against a provider invoice without mixing measurement
+with approximation. `estimatedUsageCallCount` and `estimatedUsageTotalTokens` say how much of the
+hour that excluded; both are subsets of `callCount` and `totalTokens`. A row that names only an
+adapter, which is how rows were written before the configured provider was recorded, counts and
+contributes its tokens but is never priced, because an adapter name is shared by every provider
+behind it. `docs/cost-tracking.md` is the contract for what an operator can and cannot conclude from
+a spend figure.
 
 Every durable `ModelCall` row increments `callCount`, including unsuccessful calls. An unsuccessful
 call with unknown usage has null token fields, increments `unpricedCallCount`, and contributes no

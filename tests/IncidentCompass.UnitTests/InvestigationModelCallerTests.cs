@@ -94,6 +94,61 @@ public sealed class InvestigationModelCallerTests
         Assert.Equal(AiReasoningLevel.Low, model.LastRequest.Reasoning);
     }
 
+    /// <summary>
+    /// The route's configured provider reaches the durable row, and it reaches it beside the
+    /// adapter identifier rather than instead of it. Without this the ledger says only which
+    /// adapter answered, which every declared provider on that adapter shares, and cost accounting
+    /// has nothing to tell two payers apart by.
+    /// </summary>
+    [Fact]
+    public async Task CompleteAsync_SuccessRecordsTheConfiguredProviderBesideTheAnsweringAdapter()
+    {
+        var writer = new RecordingLedgerWriter();
+        var caller = CreateCaller(new StaticModelClient(new AiModelUsage(1, 1, 2)), writer, TimeProvider.System);
+        var context = CreateContext(TimeProvider.System.GetUtcNow(), maxWallClockSeconds: 60);
+
+        await caller.CompleteAsync(
+            context,
+            context.Configuration.Routes[context.RouteId],
+            [new AiChatMessage(AiMessageRole.User, "Investigate.")],
+            tools: null,
+            CancellationToken.None);
+
+        var rationale = Assert
+            .Single(writer.Requests, request => request.EventType == TriageLedgerEventType.ModelCall)
+            .Rationale;
+        using var metadata = JsonDocument.Parse(rationale!);
+        Assert.Equal("test-provider", metadata.RootElement.GetProperty("provider").GetString());
+        Assert.Equal("mock", metadata.RootElement.GetProperty("providerId").GetString());
+    }
+
+    /// <summary>
+    /// A failed call is charged and audited like any other, so it has to name its payer too.
+    /// </summary>
+    [Fact]
+    public async Task CompleteAsync_FailureAccountingAlsoNamesTheConfiguredProvider()
+    {
+        var caller = CreateCaller(
+            new FailingModelClient(new AiModelException(
+                "test-provider",
+                "Provider failed.",
+                failureKind: ProviderFailureKind.OutputLimitReached,
+                usage: new AiModelUsage(1, 1, 2))),
+            new RecordingLedgerWriter(),
+            TimeProvider.System);
+        var context = CreateContext(TimeProvider.System.GetUtcNow(), maxWallClockSeconds: 60);
+
+        var failure = await Assert.ThrowsAsync<InvestigationModelCallFailureException>(() => caller.CompleteAsync(
+            context,
+            context.Configuration.Routes[context.RouteId],
+            [new AiChatMessage(AiMessageRole.User, "Investigate.")],
+            tools: null,
+            CancellationToken.None));
+
+        Assert.Equal("test-provider", failure.Accounting.Metadata.Provider);
+        Assert.Equal("mock", failure.Accounting.Metadata.ProviderId);
+    }
+
     [Theory]
     [InlineData(0)]
     [InlineData(37)]

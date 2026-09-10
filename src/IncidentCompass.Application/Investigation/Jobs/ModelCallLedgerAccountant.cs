@@ -22,6 +22,13 @@ internal sealed partial class ModelCallLedgerAccountant(
     ILogger logger)
 {
     /// <summary>
+    /// What event 3201 prints for <see cref="ModelCallLedgerMetadata.ProviderId"/> when the call's
+    /// route named no configured provider, so the log line reads as a stated fact rather than an
+    /// empty segment between two slashes.
+    /// </summary>
+    private const string UnrecordedProviderId = "unknown";
+
+    /// <summary>
     /// Appends the success accounting row and returns the token count charged to the attempt.
     /// </summary>
     public async Task<int> RecordSuccessAsync(
@@ -55,7 +62,8 @@ internal sealed partial class ModelCallLedgerAccountant(
             Outcome: "success",
             ErrorCode: null,
             ReasoningTokens: response.Usage?.ReasoningTokens,
-            FallbackForRouteId: fallbackForRouteId);
+            FallbackForRouteId: fallbackForRouteId,
+            ProviderId: ConfiguredProviderId(request));
 
         var accounting = new InvestigationModelCallAccounting(
             callId,
@@ -71,6 +79,7 @@ internal sealed partial class ModelCallLedgerAccountant(
             metadata.RouteId,
             metadata.Kind,
             metadata.Provider,
+            metadata.ProviderId ?? UnrecordedProviderId,
             metadata.Model,
             metadata.UsageSource,
             inputTokens,
@@ -112,7 +121,8 @@ internal sealed partial class ModelCallLedgerAccountant(
             Outcome: RuntimeTelemetryOutcome.Failed.ToString().ToLowerInvariant(),
             ErrorCode: errorCode,
             ReasoningTokens: exception.Usage?.ReasoningTokens,
-            FallbackForRouteId: fallbackForRouteId);
+            FallbackForRouteId: fallbackForRouteId,
+            ProviderId: ConfiguredProviderId(request));
         return new InvestigationModelCallAccounting(
             callId,
             context.Role,
@@ -125,10 +135,25 @@ internal sealed partial class ModelCallLedgerAccountant(
         return reportedTokens is > 0 ? reportedTokens.Value : estimatedTokens;
     }
 
+    /// <summary>
+    /// The provider table entry the called route named, which is the identity cost accounting keys
+    /// on. It is recorded beside the adapter identifier rather than instead of it, because a host
+    /// can declare two providers with different endpoints, credentials and prices that one adapter
+    /// answers under a single name.
+    /// </summary>
+    /// <remarks>
+    /// A blank id is recorded as absent rather than as an empty payer: a reader must be able to
+    /// tell a row that names its provider from one that does not.
+    /// </remarks>
+    private static string? ConfiguredProviderId(AiModelRequest request)
+    {
+        return string.IsNullOrWhiteSpace(request.ProviderId) ? null : request.ProviderId;
+    }
+
     [LoggerMessage(
         EventId = 3201,
         Level = LogLevel.Information,
-        Message = "Model call for triage job {JobId} role {Role} route {RouteId} kind {CallKind} completed on {Provider}/{Model} with {UsageSource} usage {InputTokens}/{OutputTokens}/{TotalTokens} tokens in {DurationMs}ms proposing {ProposedToolCallCount} tool calls.")]
+        Message = "Model call for triage job {JobId} role {Role} route {RouteId} kind {CallKind} completed on {Provider}/{ProviderId}/{Model} with {UsageSource} usage {InputTokens}/{OutputTokens}/{TotalTokens} tokens in {DurationMs}ms proposing {ProposedToolCallCount} tool calls.")]
     private static partial void LogModelCallCompleted(
         ILogger logger,
         Guid jobId,
@@ -136,6 +161,7 @@ internal sealed partial class ModelCallLedgerAccountant(
         string routeId,
         string callKind,
         string provider,
+        string providerId,
         string model,
         string usageSource,
         int inputTokens,

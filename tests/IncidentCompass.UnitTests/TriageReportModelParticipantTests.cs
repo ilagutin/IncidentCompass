@@ -18,12 +18,13 @@ public sealed class TriageReportModelParticipantTests
             CallKind: "worker",
             Role: "analysis",
             RouteId: "analysis-chat",
-            Provider: "local-oai",
+            Provider: "openai-compatible",
             Model: "local-worker-model",
-            CallCount: 2);
+            CallCount: 2,
+            ProviderId: "local-oai");
 
         const string expected = """
-            {"callKind":"worker","role":"analysis","routeId":"analysis-chat","provider":"local-oai","model":"local-worker-model","callCount":2}
+            {"callKind":"worker","role":"analysis","routeId":"analysis-chat","provider":"openai-compatible","model":"local-worker-model","callCount":2,"providerId":"local-oai"}
             """;
 
         Assert.Equal(expected, JsonSerializer.Serialize(participant));
@@ -36,15 +37,35 @@ public sealed class TriageReportModelParticipantTests
             CallKind: "orchestrator",
             Role: null,
             RouteId: "report-chat",
-            Provider: "local-oai",
+            Provider: "openai-compatible",
             Model: "local-orchestrator-model",
-            CallCount: 3);
+            CallCount: 3,
+            ProviderId: "local-oai");
 
         const string expected = """
-            {"callKind":"orchestrator","role":null,"routeId":"report-chat","provider":"local-oai","model":"local-orchestrator-model","callCount":3}
+            {"callKind":"orchestrator","role":null,"routeId":"report-chat","provider":"openai-compatible","model":"local-orchestrator-model","callCount":3,"providerId":"local-oai"}
             """;
 
         Assert.Equal(expected, JsonSerializer.Serialize(participant));
+    }
+
+    /// <summary>
+    /// A report published before the configured provider was recorded reads back with that property
+    /// null, which is a different claim from naming a provider and must not become a read failure:
+    /// reports are immutable, so those rows can never be backfilled.
+    /// </summary>
+    [Fact]
+    public void Deserialize_ReadsARowStoredBeforeTheConfiguredProviderWasRecorded()
+    {
+        const string stored = """
+            {"callKind":"orchestrator","role":null,"routeId":"report-chat","provider":"local-oai","model":"local-orchestrator-model","callCount":3}
+            """;
+
+        var participant = JsonSerializer.Deserialize<TriageReportModelParticipant>(stored);
+
+        Assert.Equal("local-oai", participant!.Provider);
+        Assert.Null(participant.ProviderId);
+        Assert.Equal(3, participant.CallCount);
     }
 
     [Fact]
@@ -66,15 +87,21 @@ public sealed class TriageReportModelParticipantTests
     /// <summary>
     /// Two calls that differ only by model, or only by route, are two participants. That is what
     /// keeps the claim true if a later change lets one role run on more than one route.
+    /// <para>
+    /// The configured provider is part of that too, and it is the case the adapter identifier
+    /// cannot cover: two providers a host declared with different endpoints and credentials answer
+    /// under one adapter name, and without this they would be reported as a single participant.
+    /// </para>
     /// </summary>
     [Fact]
-    public void Equality_SeparatesParticipantsThatDifferOnlyByRouteOrModel()
+    public void Equality_SeparatesParticipantsThatDifferOnlyByRouteModelOrConfiguredProvider()
     {
         var baseline = new TriageReportModelParticipant(
-            "worker", "analysis", "analysis-chat", "local-oai", "local-worker-model", 1);
+            "worker", "analysis", "analysis-chat", "openai-compatible", "local-worker-model", 1, "local-oai");
 
         Assert.NotEqual(baseline, baseline with { Model = "other-worker-model" });
         Assert.NotEqual(baseline, baseline with { RouteId = "second-analysis-chat" });
         Assert.NotEqual(baseline, baseline with { Provider = "other-provider" });
+        Assert.NotEqual(baseline, baseline with { ProviderId = "second-local-oai" });
     }
 }
