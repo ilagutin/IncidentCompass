@@ -2,37 +2,7 @@
 
 ## Unreleased
 
-### Fixed
-
-- A `delegate` naming a role the configuration does not hold is now a correctable refusal instead of
-  a silent early return. It costs one bounded reprompt, is durable as an `orchestrator_reprompt:`
-  `BudgetEvent`, and no longer echoes the model-supplied role back into the tool result. Previously
-  the turn skipped the worker-budget check and every ledger append while still counting as a
-  delegation, so a model looping on an unknown role spent the whole turn allowance invisibly.
-- A tool rule's scope has one representation. The engine parses it once and denies a scope it does
-  not evaluate (`unknown_rule_scope`); both fact readers are handed the parsed window instead of the
-  configured string. The two readers previously interpreted an unrecognized scope differently - one
-  narrowed it to the attempt, the other widened it to the job - on the two governance paths the
-  engine exists to unify.
-- The remediation workspace adapter no longer reports a logic defect inside the diff engine as
-  `source_workspace_unavailable`, which also stopped the pass from reprompting. It catches only the
-  filesystem's own answers; resolving the configured roots is guarded where that string work
-  actually happens.
-- A successful read of an existing branch answers `code_publication_branch_read` instead of
-  borrowing the branch-created code, which is logged and persisted.
-- The Telegram action adapter normalizes its transport failures like every other HTTP adapter here.
-  A failure that provably preceded the request is `telegram_unavailable`; anything that may have
-  been delivered stays `dispatch_outcome_unknown`. Previously both escaped into the dispatcher's
-  catch-all as an in-doubt row a person has to settle.
-
-### Changed
-
-- `ProviderException` no longer carries an `HttpStatusCode`. Provider HTTP detail does not belong in
-  an Application contract, and a non-HTTP adapter had no honest value for it; the normalized
-  `ErrorCode` and `ProviderFailureKind` already carry what the status meant. No consumer read it.
-- `ArchitectureTests` now checks `PackageReference` as well as `ProjectReference`, against an exact
-  allowed set for `Domain` (none) and `Application` (FluentValidation plus abstractions-only
-  `Microsoft.Extensions.*`). It also fails on a provider transport type named in either layer.
+- No unreleased changes.
 
 ## 0.4.0 - 2026-09-11
 
@@ -246,6 +216,12 @@
 - Behavior change: the Worker's three named claimed-task-set types are now thin per-pump log-event
   factories over one shared claimed-task set. A cancellation the host did not request is now logged as
   a warning on every pump; two of the three pumps previously swallowed it silently.
+- `ProviderException` no longer carries an `HttpStatusCode`. Provider HTTP detail does not belong in
+  an Application contract, and a non-HTTP adapter had no honest value for it; the normalized
+  `ErrorCode` and `ProviderFailureKind` already carry what the status meant. No consumer read it.
+- `ArchitectureTests` now checks `PackageReference` as well as `ProjectReference`, against an exact
+  allowed set for `Domain` (none) and `Application` (FluentValidation plus abstractions-only
+  `Microsoft.Extensions.*`). It also fails on a provider transport type named in either layer.
 
 ### Fixed
 
@@ -290,6 +266,26 @@
   port check that matched by substring, a helper reporting the wrong violation category for one of its
   callers, Worker types public only because a test project reached for them, and three error codes
   produced but asserted nowhere.
+- A `delegate` naming a role the configuration does not hold is now a correctable refusal instead of
+  a silent early return. It costs one bounded reprompt, is durable as an `orchestrator_reprompt:`
+  `BudgetEvent`, and no longer echoes the model-supplied role back into the tool result. Previously
+  the turn skipped the worker-budget check and every ledger append while still counting as a
+  delegation, so a model looping on an unknown role spent the whole turn allowance invisibly.
+- A tool rule's scope has one representation. The engine parses it once and denies a scope it does
+  not evaluate (`unknown_rule_scope`); both fact readers are handed the parsed window instead of the
+  configured string. The two readers previously interpreted an unrecognized scope differently - one
+  narrowed it to the attempt, the other widened it to the job - on the two governance paths the
+  engine exists to unify.
+- The remediation workspace adapter no longer reports a logic defect inside the diff engine as
+  `source_workspace_unavailable`, which also stopped the pass from reprompting. It catches only the
+  filesystem's own answers; resolving the configured roots is guarded where that string work
+  actually happens.
+- A successful read of an existing branch answers `code_publication_branch_read` instead of
+  borrowing the branch-created code, which is logged and persisted.
+- The Telegram action adapter normalizes its transport failures like every other HTTP adapter here.
+  A failure that provably preceded the request is `telegram_unavailable`; anything that may have
+  been delivered stays `dispatch_outcome_unknown`. Previously both escaped into the dispatcher's
+  catch-all as an in-doubt row a person has to settle.
 
 ## 0.3.0 - 2026-09-06
 

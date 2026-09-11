@@ -241,6 +241,41 @@ digits.
   incomplete were corrected, including the architecture contract's list of Application feature
   folders.
 
+### Defects found in review, before the release shipped
+
+A review pass over the assembled branch found defects that shared a shape: a boundary answering for a
+layer it does not own. All are fixed here.
+
+- A `delegate` naming a role the configuration does not hold was the one place in the codebase that
+  reflected untrusted text. The role name arrives in the model's own tool-call arguments, and the
+  refusal echoed that string back verbatim, of any length and any characters. The same early return
+  skipped the worker-budget check and every ledger append while the turn still counted as a
+  delegation, so a model looping on an unknown role spent the whole turn allowance leaving nothing in
+  the ledger to say why. It is now a correctable refusal on the reprompt path: it costs one bounded
+  reprompt, is durable as an `orchestrator_reprompt:` budget event, names no value back, and fails
+  closed once the allowance is spent.
+- A tool rule's scope had two readings. The two fact readers interpreted an unrecognized scope
+  differently, one narrowing it to the attempt and the other widening it to the job, on the two
+  governance paths `ToolRuleEngine` exists to unify. The engine now parses the scope once, denies one
+  it does not evaluate as `unknown_rule_scope`, and hands both readers the parsed window.
+- The remediation workspace adapter caught `ArgumentException` and `NotSupportedException` one layer
+  above an applier that documents at length why it catches neither, so a logic defect inside the diff
+  engine arrived as `source_workspace_unavailable`, a filesystem failure that had not happened, and,
+  that code not being answer-correctable, was never reprompted. It now catches only the filesystem's
+  own answers; resolving the configured roots is guarded where that string work actually happens.
+- A successful read of an existing branch answers `code_publication_branch_read` instead of borrowing
+  the branch-created code, which is logged and persisted.
+- The Telegram action adapter normalizes its transport failures like every other HTTP adapter here. A
+  failure that provably preceded the request is `telegram_unavailable`; anything that may have been
+  delivered stays `dispatch_outcome_unknown`. Both previously escaped into the dispatcher's catch-all
+  as an in-doubt row a person has to settle.
+- `ProviderException` no longer carries an `HttpStatusCode`. Provider HTTP detail does not belong in
+  an Application contract and a non-HTTP adapter had no honest value for it; the normalized
+  `ErrorCode` and `ProviderFailureKind` already carry what the status meant, and no consumer read it.
+- `ArchitectureTests` now checks `PackageReference` as well as `ProjectReference` against an exact
+  allowed set for `Domain` and `Application`, and fails on a provider transport type named in either
+  layer.
+
 See the full [changelog](../CHANGELOG.md) for everything in this release, including internal
 refactors, test coverage and dependency updates not listed here.
 
@@ -375,7 +410,7 @@ gate. CI additionally builds the three demo container images as a required check
 `build` check fails unless every job under it succeeded.
 
 `dotnet test --solution IncidentCompass.slnx` runs the full suite. On the maintainer's machine with
-Docker available and `INCIDENTCOMPASS_REQUIRE_DOCKER_TESTS` set, that is 1,884 tests: 1,880 passed,
+Docker available and `INCIDENTCOMPASS_REQUIRE_DOCKER_TESTS` set, that is 1,898 tests: 1,894 passed,
 0 failed, 4 skipped. Pull-request and main CI set
 `INCIDENTCOMPASS_REQUIRE_DOCKER_TESTS`, so the PostgreSQL-backed integration coverage is enforced
 there rather than merely attempted. Two kinds of skip are expected and structural rather than
