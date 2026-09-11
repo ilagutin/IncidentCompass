@@ -28,6 +28,7 @@ namespace IncidentCompass.IntegrationTests;
 public sealed class ToolArtifactRedactionWorkerPathTests(PostgresRepositoryFixture postgres)
 {
     // Shaped to match the built-in AWS access-key rule: AKIA plus sixteen upper-case characters.
+    // Kept split so the source literal never matches a secret scanner; the redactor still sees one key.
     private const string SeededSecret = "AKIA" + "REDACTIONE2EPROO";
 
     [DockerAvailableFact]

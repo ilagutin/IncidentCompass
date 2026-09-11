@@ -22,12 +22,14 @@ public sealed class SecretRedactorTests
     [Fact]
     public void RedactText_RedactsAwsAccessKey()
     {
-        const string input = "leaked key AKIAABCDEFGHIJKLMNOP in log line";
+        // Kept split so the source literal never matches a secret scanner; the redactor still sees one key.
+        const string key = "AKIA" + "ABCDEFGHIJKLMNOP";
+        const string input = "leaked key " + key + " in log line";
 
         var result = SecretRedactor.RedactText(input)!;
 
         Assert.Contains("[REDACTED]", result, StringComparison.Ordinal);
-        Assert.DoesNotContain("AKIAABCDEFGHIJKLMNOP", result, StringComparison.Ordinal);
+        Assert.DoesNotContain(key, result, StringComparison.Ordinal);
     }
 
     [Fact]
