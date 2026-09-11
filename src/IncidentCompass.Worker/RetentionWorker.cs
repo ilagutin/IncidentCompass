@@ -3,7 +3,7 @@ using Microsoft.Extensions.Options;
 namespace IncidentCompass.Worker;
 
 /// <summary>
-/// Drives one retention pass per interval. It is the only thing in the system that runs the two
+/// Drives one retention pass per interval. It is the only thing in the system that runs the three
 /// retention operations on a schedule.
 /// </summary>
 /// <remarks>
@@ -62,7 +62,7 @@ internal sealed partial class RetentionWorker(
     [LoggerMessage(
         EventId = 1801,
         Level = LogLevel.Information,
-        Message = "Retention is disabled by {SectionName}:Enabled. No signal payload is compacted and no attempt artifact is reaped by this host.")]
+        Message = "Retention is disabled by {SectionName}:Enabled. No signal payload is compacted, no attempt artifact is reaped and no abandoned remediation workspace is deleted by this host.")]
     private static partial void LogRetentionDisabled(ILogger logger, string sectionName);
 
     [LoggerMessage(

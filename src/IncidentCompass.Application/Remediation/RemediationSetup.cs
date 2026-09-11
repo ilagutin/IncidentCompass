@@ -23,6 +23,12 @@ internal static class RemediationSetup
     public static IServiceCollection AddRemediationCore(this IServiceCollection services)
     {
         services.TryAddScoped<IRemediationWorkspace, UnavailableRemediationWorkspace>();
+
+        // The descriptor is a value, not a port, so it belongs here beside the other backend tool
+        // descriptors: configuration load validation refuses a `remediation_diff` tool entry that
+        // names no registered descriptor, and that validation runs wherever a configuration is
+        // loaded, not only where a pass can run.
+        services.AddSingleton(RemediationDiffToolDescriptor.Descriptor);
         return services;
     }
 }

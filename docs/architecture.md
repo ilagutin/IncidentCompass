@@ -38,8 +38,10 @@ credential travels on an Application contract. See `docs/model-gateway.md`, "Pro
     persistence port.
   - `Remediation/`: the post-report remediation pass. It holds the bounded model request that asks
     for a unified diff over a grounded report and its cited source evidence, the disposable-workspace
-    port that names a base tree and applies one candidate diff to a copy of it, and the durable
-    exact-diff record. Nothing here executes a test or starts a process.
+    port that names a base tree and applies one candidate diff to a copy of it, the durable
+    exact-diff record, the read port that loads one published report's job, fault and cited source
+    evidence, and the post-report workflow that schedules the pass and carries its outcome onto the
+    intent. Nothing here executes a test or starts a process.
   - `SourceContext/`: provider-neutral source lookup contracts, bounded stack-frame extraction and
     the governed `source_lookup` worker tool.
   - `Tickets/`: system-neutral ticket-search, cited-ticket resolution and ticket-action-history
@@ -268,8 +270,22 @@ payload in that column passes a redactor on its way in, and a diff cannot: a red
 longer matches the base and a redacted added line writes a placeholder into source. The diff body lives
 in that table and nowhere else, and it fits by construction, since the parser refuses a diff larger than
 the raw budget the action-payload ceiling leaves for it. Nothing in the pass starts a process, so no
-record carries test evidence and every one of them says so. Worker scheduling and workspace reaping are
-not part of it yet.
+record carries test evidence and every one of them says so.
+
+What schedules a pass is one post-report action workflow on the Worker's existing post-report
+evaluation loop, not a queue of its own. The pass needs a fenced claim, an attempt cap,
+dead-lettering, a closed outcome vocabulary and a lease that survives a multi-minute call, and that
+loop already owns all five; its trigger is also exactly right, since the input to a pass is a
+published report and a published report is what writes an intent. Whether an intent is written is the
+same configuration switch every external action uses, disabled in the shipped file, and it is checked
+again when the intent is claimed. Refusals complete the intent carrying their closed code, because
+nothing about a second pass gives an unconfigured host a checkout; a spent attempt budget and a failed
+model call dead-letter, and the failed call's tokens are written to the ledger before they do.
+
+Leftover workspaces are the Worker retention pass's third bounded operation, beside signal compaction
+and stale-artifact reaping. It ages a directory by the instant its own name states rather than by a
+filesystem timestamp, which is neither portable nor a liveness signal for a directory nothing is
+writing to, and it relies on the invariant that a workspace never outlives one call into the adapter.
 
 ## Read-only ticket context
 

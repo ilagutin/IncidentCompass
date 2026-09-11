@@ -24,7 +24,8 @@
     "memory_search": { "Kind": "internal", "EmbeddingRouteId": "memory-embed", "TopK": 5, "MinScore": 0.25 },
     "source_lookup": { "Kind": "internal" },
     "ticket_search": { "Kind": "internal" },
-    "ticket_create": { "Kind": "external_action", "Category": "ticket_create", "LogicalTargetId": "ticket:configured-repository", "Mode": "disabled" }
+    "ticket_create": { "Kind": "external_action", "Category": "ticket_create", "LogicalTargetId": "ticket:configured-repository", "Mode": "disabled" },
+    "remediation_diff": { "Kind": "external_action", "Category": "code_write", "LogicalTargetId": "source:configured-workspace", "Mode": "disabled" }
   },
   "Rules": [
     { "Type": "rate_cap", "Tool": "*", "Scope": "attempt", "Max": 50 }

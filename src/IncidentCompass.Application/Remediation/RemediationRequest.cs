@@ -17,8 +17,9 @@ namespace IncidentCompass.Application.Remediation;
 /// </param>
 /// <param name="RouteId">Which configured route answers the request.</param>
 /// <param name="Instructions">
-/// The operator-authored system instructions for the pass. Backend text: it never comes from a
-/// model, a signal or a tool.
+/// The system instructions for the pass. Backend text: it never comes from a model, a signal or a
+/// tool. <see cref="RemediationInstructions" /> says why it is a constant rather than a configured
+/// <c>ref:</c> file like the orchestrator and role instructions.
 /// </param>
 /// <param name="ReportId">The grounded report the change is derived from.</param>
 /// <param name="Report">That report's content.</param>

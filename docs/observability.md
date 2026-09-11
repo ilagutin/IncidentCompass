@@ -47,6 +47,11 @@ An id is stable once published. A retired event keeps its id reserved rather tha
 | 1602 | Warning | Post-report action evaluation failed while draining. |
 | 1701 | Warning | Post-report workflow failed after its evaluation lease was lost. |
 | 1702 | Warning | A post-report action intent lost its evaluation lease; the attempt is abandoned without writing a result. |
+| 1801 | Information | Retention is switched off by configuration; this host compacts no payload, reaps no artifact and deletes no abandoned workspace. |
+| 1802 | Warning | A retention pass failed before any of its operations could run; the next pass follows after backoff. |
+| 1901 | Warning | Signal payload compaction failed; the other retention operations still ran and compaction is retried next pass. |
+| 1902 | Warning | Attempt artifact reaping failed; it is retried next pass. |
+| 1903 | Warning | Abandoned remediation workspace reaping failed; it is retried next pass. |
 
 The three "failed after claim" events (1401, 1501, 1601) also cover a cancellation the host did not
 request. Each pump links its per-item cancellation to the host token and removes items from its task
@@ -98,6 +103,9 @@ leased work was abandoned for an unrequested reason and is reported rather than 
 | 3512 | Warning | Post-report action policy denied a proposal. |
 | 3513 | Information | Post-report action policy requires approval for a proposal. |
 | 3601 | Error | A configured redaction pattern exceeded its match timeout; the field was replaced with the timeout marker. Carries the pattern name and field path only, never the field value. |
+| 3701 | Information | Signal payload compaction emptied a bounded number of raw payloads received before its cutoff. |
+| 3702 | Information | Attempt artifact retention reaped a bounded number of artifacts created before its cutoff. |
+| 3703 | Information | Abandoned remediation workspace reaping finished, with its closed outcome code and the counts it examined, deleted, left alone and could not delete. Never a host path. |
 | 3801 | Information | A remediation pass produced a diff, with job, attempt, report and diff ids, the file count, the diff's byte count and the fixed statement that no test was executed. Never the diff itself. |
 | 3802 | Warning | A remediation answer was refused and the model was reprompted, with job, attempt, a bounded reprompt counter and the closed outcome code. Never the answer, a path or a file line. |
 | 3803 | Warning | A remediation pass produced no diff, with job, attempt, report and the closed outcome code it gave up on. |

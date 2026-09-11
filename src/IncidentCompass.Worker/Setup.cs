@@ -3,6 +3,7 @@ using IncidentCompass.Application.Core.Security;
 using IncidentCompass.Application.Governance.PostReportActions;
 using IncidentCompass.Application.Governance.Tools;
 using IncidentCompass.Application.Notifications;
+using IncidentCompass.Application.Remediation;
 using IncidentCompass.Infrastructure.Notifications.Telegram;
 using IncidentCompass.Infrastructure.Tickets;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -55,6 +56,12 @@ public static class Setup
         services.AddSingleton<IPostReportActionWorkflow, TelegramNotificationWorkflow>();
         services.AddSingleton<IPostReportActionWorkflow, TicketCreatePostReportActionWorkflow>();
         services.AddSingleton<IPostReportActionWorkflow, TicketUpdatePostReportActionWorkflow>();
+
+        // The remediation pass is scheduled here and nowhere else: one post-report workflow on the
+        // evaluation loop that already owns fenced claims, attempt caps, dead-lettering and a lease
+        // renewer long calls survive. It runs only where investigation runs, because that is the one
+        // host composed with the model gateway and the workspace adapter it needs.
+        services.AddSingleton<IPostReportActionWorkflow, RemediationPostReportActionWorkflow>();
         services.AddSingleton<TelegramNotificationActionTool>();
         services.AddSingleton<IExternalActionTool>(
             serviceProvider => serviceProvider.GetRequiredService<TelegramNotificationActionTool>());

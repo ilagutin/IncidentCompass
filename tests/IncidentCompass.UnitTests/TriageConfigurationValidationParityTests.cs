@@ -2,6 +2,7 @@ using System.Text.Json.Nodes;
 using IncidentCompass.Application.Governance.Tools;
 using IncidentCompass.Application.Intake.Normalization;
 using IncidentCompass.Application.Notifications;
+using IncidentCompass.Application.Remediation;
 using IncidentCompass.Application.Tickets;
 using IncidentCompass.Infrastructure.Configuration;
 using IncidentCompass.Infrastructure.Intake;
@@ -373,6 +374,7 @@ public sealed class TriageConfigurationValidationParityTests
             new AgentToolDescriptor("ticket_search", AgentToolCapability.ImmediateRead),
             TelegramNotificationToolDescriptor.Value,
             TicketCreateTool.Descriptor,
+            RemediationDiffToolDescriptor.Descriptor,
             new AgentToolDescriptor(
                 "notify_test",
                 AgentToolCapability.ExternalAction,

@@ -93,10 +93,14 @@ persistence port. ModelCall JSON parsing, effective-price ambiguity handling and
 details stay under `Infrastructure/Observability/`; API endpoints remain transport-only.
 `Remediation/` contains the post-report remediation pass: the disposable-workspace port, the answer
 extractor that decides whether a model reply is a unified diff, the prompt builder, the bounded runner
-and the durable diff record with its persistence port. Materialization, tree identity, diff parsing and
-diff application stay in `Infrastructure/SourceContext/`, where the read boundary's own primitives
-already live, and `Infrastructure/Remediation/` holds only the adapter that composes them and the
-PostgreSQL writer. The runner deliberately reaches `Investigation/Jobs/`'s bounded model caller rather
+the durable diff record with its persistence port, the read port that loads one published report's
+job, fault and cited source evidence, and the post-report workflow that schedules a pass and maps its
+outcome onto the intent. Materialization, tree identity, diff parsing, diff application and the
+abandoned-workspace reaper stay in `Infrastructure/SourceContext/`, where the read boundary's own
+primitives and the workspace-root option already live, and `Infrastructure/Remediation/` holds only
+the adapter that composes them and the two PostgreSQL adapters. The workflow is registered from the
+Worker beside the other post-report workflows, not from `AddApplication`: it is a schedule, and the
+Worker is where schedules live. The runner deliberately reaches `Investigation/Jobs/`'s bounded model caller rather
 than owning a call path, so admission, the provider deadline, ledger accounting and route fail-over stay
 in one place; that is the one cross-folder dependency the feature has and it is the point of it.
 `SourceContext/` contains the provider-neutral read port, bounded signal frame extraction and tool;

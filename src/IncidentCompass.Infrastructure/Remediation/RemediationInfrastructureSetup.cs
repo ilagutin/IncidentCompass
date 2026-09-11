@@ -34,6 +34,7 @@ internal static class RemediationInfrastructureSetup
     {
         services.Replace(ServiceDescriptor.Scoped<IRemediationWorkspace, LocalSourceRemediationWorkspace>());
         services.TryAddScoped<IRemediationDiffRepository, PostgresRemediationDiffRepository>();
+        services.TryAddScoped<IRemediationPassContextRepository, PostgresRemediationPassContextRepository>();
         services.TryAddScoped<RemediationDiffRunner>();
         return services;
     }

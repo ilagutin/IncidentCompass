@@ -42,12 +42,12 @@ and the reviewed `CurrentReleases` entry in the triage configuration. This relea
 current GitHub owner, repository and token binding. Remediation commands, branch credentials and pull
 request bindings are deliberately deferred to later v0.4 work.
 
-The remediation diff pass can copy that checkout into a disposable workspace, but only when
+The remediation diff pass copies that checkout into a disposable workspace, but only when
 `IncidentCompass:SourceContext:WorkspaceRoot` names an absolute writable directory. It is unset in
-this release and nothing schedules a pass, so no production host writes a workspace. When it is set
-it must not be the monitored root or sit below it, and the host needs room for a copy of the
-checkout. See `docs/security-model.md`, "Remediation diff boundary", for what the pass does and does
-not prove: no test is executed, so a produced diff is not evidence that a change builds or passes.
+the shipped configuration. When it is set it must not be the monitored root or sit below it, and the
+host needs room for a copy of the checkout. See "Remediation diff pass" below for what it does and
+what it costs, and `docs/security-model.md`, "Remediation diff boundary", for what it does not
+prove: no test is executed, so a produced diff is not evidence that a change builds or passes.
 
 Telegram is disabled by default. If the reviewed triage configuration enables its route, set
 `INCIDENTCOMPASS_TELEGRAM_ENABLED=true` and provide the exact route id, chat id and bot token. Otherwise
@@ -103,8 +103,9 @@ Do not use `down --volumes` for routine shutdown. The named PostgreSQL volume is
 ## Payload retention
 
 The Worker runs payload retention on a timer of its own. Every 15 minutes it makes one pass: one
-bounded run of raw signal payload compaction, then one bounded run of attempt artifact reaping. Both
-are on by default in a running Worker, and the API never runs either.
+bounded run of raw signal payload compaction, then one bounded run of attempt artifact reaping, then
+one bounded run of abandoned remediation-workspace reaping. All three are on by default in a running
+Worker, and the API never runs any of them.
 
 What a pass changes:
 
@@ -116,6 +117,8 @@ What a pass changes:
   than `AttemptArtifactRetentionDays` (7 by default), are deleted. Job-level artifacts, anything a
   report cites, anything an approval or its provenance points at, and the `ProposedAction` and
   `ActionResult` kinds are never candidates.
+- Leftover remediation workspaces under the configured workspace root are deleted, as described in
+  "Abandoned remediation workspaces" below. Nothing under the monitored checkout is touched.
 
 Nothing else is touched. No signal, fault, job, report or ledger row is ever removed, and published
 reports are refused by the database in any case. The full exclusion list and the reasoning behind the
@@ -152,14 +155,99 @@ worker:
 ```
 
 The hosted service still starts and logs, once, that retention is disabled and that this host will
-compact no payload and reap no artifact, so an operator reading a Worker log can tell a switched-off
-retention from a broken one. Nothing accumulates that cannot be drained later: turning it back on
+compact no payload, reap no artifact and delete no abandoned workspace, so an operator reading a
+Worker log can tell a switched-off retention from a broken one. Nothing accumulates that cannot be drained later: turning it back on
 resumes from whatever backlog built up. `IncidentCompass__RetentionSchedule__IntervalMinutes` changes
 the interval and accepts 1 to 1440; a value outside that range fails Worker startup rather than being
 clamped, as an out-of-range retention window does.
 
-A failed pass is a warning in the Worker log, not an outage. The two operations are independent, so
-one failing still lets the other run, and the failed one is retried on the next pass after a backoff.
+A failed pass is a warning in the Worker log, not an outage. The three operations are independent, so
+one failing still lets the others run, and the failed one is retried on the next pass after a backoff.
+
+### Abandoned remediation workspaces
+
+The third operation in the same pass deletes leftover remediation workspaces. A workspace is a
+disposable copy of the monitored checkout that the remediation pass creates, reads or patches, and
+deletes before it returns. Deleting on every terminal path cannot cover the Worker process being
+killed between the copy and the delete, so what a kill leaves behind is a directory under the
+workspace root that nothing will ever come back for. This operation is what removes it.
+
+A directory is deleted only when it is under `IncidentCompass:SourceContext:WorkspaceRoot`, carries
+the `source-workspace-` prefix, states in its own name an instant more than
+`IncidentCompass:SourceWorkspaceRetention:RetentionHours` ago (6 by default), and has not been
+written to inside that window either. Anything else is left alone, including a directory whose name
+this release cannot read. A run deletes at most
+`IncidentCompass:SourceWorkspaceRetention:MaxDirectoriesPerRun` directories, 64 by default, and the
+rest waits for the next pass. Both settings are validated at Worker startup: 1 to 168 hours and 1 to
+10,000 directories, and a value outside either range fails startup rather than being clamped.
+
+Six hours is deliberately far more than a workspace can live. No workspace survives a single call
+into the checkout: the copy is made, identified or patched, and deleted before that call returns, and
+nothing holds one open across a model call. The longest a live workspace can exist is one bounded
+tree copy plus one bounded patch apply, capped at 20,000 files and 128 MB. A leftover that survives
+an extra pass costs disk; a workspace deleted out from under a running pass would turn a working pass
+into a filesystem fault, so the window resolves every ambiguity toward keeping.
+
+On a host that sets no workspace root there is nothing to do: no workspace is ever written, and the
+operation logs that it is not configured rather than failing or sweeping a directory nobody chose. A
+configured root that does not exist yet is reported the same way, because the first pass creates it.
+
+## Remediation diff pass
+
+A remediation pass asks a model for a unified diff that addresses one published report, applies that
+diff to a disposable copy of the monitored checkout to prove it applies whole, and records the diff
+with the base and result tree identities. It changes no file in the monitored checkout, starts no
+process and runs no test. It proposes nothing and dispatches nothing: what it produces is a record
+for a human to read.
+
+**What triggers it.** Publishing a report writes a post-report action intent, and the Worker's
+post-report evaluation loop runs the pass from that intent. That loop already owns the fenced claim,
+the attempt cap, the dead-lettering and the lease renewal a multi-minute model call needs. Nothing
+runs a pass on an API request thread, and no pass runs twice for one report.
+
+**What it costs.** One model call per report on the route the job's own configuration snapshot names
+for the orchestrator, plus up to `Orchestrator.Budget.MaxReprompts` correction turns if the answer is
+not a parseable diff, plus one copy of the checkout per call into the workspace. The tokens are
+charged to the same attempt budget that produced the report, so one incident stays one number; a pass
+whose attempt has no budget left is refused before the call and dead-lettered. Every call is recorded
+as a `ModelCall` ledger row with call kind `remediation`, so `GET /api/v1/observability/model-costs`
+separates the cost of preparing a fix from the cost of producing the report.
+
+**Turning it on.** The pass is off in the shipped configuration and is switched exactly like every
+other external action, in the reviewed triage configuration rather than in host environment
+variables:
+
+```json
+"Tools": {
+  "remediation_diff": {
+    "Kind": "external_action",
+    "Category": "code_write",
+    "LogicalTargetId": "source:configured-workspace",
+    "Mode": "live"
+  }
+},
+"Actions": { "AllowedTools": ["remediation_diff"], "DefaultMode": "live" }
+```
+
+All four have to be true: declared with that exact category and logical target, listed in
+`AllowedTools`, its own `Mode` not `disabled`, and `Actions.DefaultMode` not `disabled`. Setting any
+one of them back to the shipped value switches the pass off. The shipped file declares the tool with
+`"Mode": "disabled"` and an empty `AllowedTools`, so turning it on is a deliberate edit to two
+places.
+
+The switch is read when the report is published and again when the intent is evaluated, so turning it
+off stops passes that were enqueued and not yet run before they spend anything. Because the triage
+configuration is snapshotted per job, turning it on applies to reports published under the new
+snapshot, not to reports already published under the old one.
+
+**A host that never configures a workspace root.** Nothing fails to start, and nothing is silently
+skipped. If the switch is on but `IncidentCompass:SourceContext:WorkspaceRoot` is unset, or the
+faulting service and its `CurrentReleases` entry match no configured source root, the pass refuses
+before it calls a model, spends nothing, and completes the intent carrying
+`remediation_not_configured`. The same is true when the report cites no source evidence
+(`remediation_source_evidence_missing`) or the snapshot names no current release for the service
+(`remediation_release_unavailable`). Each of those is a settled outcome on the intent rather than a
+retry, and each is visible in the Worker log and on the intent row.
 
 ## Model prices
 

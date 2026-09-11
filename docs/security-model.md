@@ -466,15 +466,29 @@ because nothing here runs a test.
 A post-report remediation pass puts the two primitives above behind one bounded operation: it names a
 base, asks a model for a unified diff, applies that diff to a copy of the base, and records what it
 produced. Unlike the primitives it composes, this one is wired: an Application port, a registered
-local adapter, a durable table and a model call. Nothing schedules it yet, so no job reaches it on
-its own, and it stays off entirely unless an operator configures a workspace root.
+local adapter, a durable table, a model call and a trigger.
 
-**What turns it on.** Two host options together, and neither has a default. A monitored root for the
-exact `(service, release)` the fault selects, and `IncidentCompass:SourceContext:WorkspaceRoot`, the
-absolute directory disposable copies are created below. With either missing the pass refuses with
-`remediation_not_configured` and touches no filesystem. There is deliberately no default workspace
-root: a default would make the first host with a monitored checkout start writing copies of it
-somewhere nobody chose.
+**What turns it on, and what runs it.** Publishing a report writes a post-report action intent for
+`remediation_diff`, and the Worker's post-report evaluation loop runs the pass from that intent under
+the fenced claim, attempt cap and dead-lettering that loop already owns. Nothing runs a pass on an
+API request thread. Whether an intent is written at all is the same switch every external action
+uses, in the reviewed triage configuration: the tool declared with category `code_write` and logical
+target `source:configured-workspace`, listed in `Actions.AllowedTools`, and neither its own `Mode`
+nor `Actions.DefaultMode` set to `disabled`. The shipped configuration declares it disabled and
+grants nothing, so no pass runs until an operator changes both. The switch is evaluated twice, once
+when the intent is written and once when it is claimed, so turning it off stops an enqueued pass
+before it spends anything. It is a deliberate governed capability rather than a tool a model may
+call: nothing registers it as an agent tool and no role can be granted it.
+
+**What the host must also supply.** Two host options together, and neither has a default. A monitored
+root for the exact `(service, release)` the fault selects, and
+`IncidentCompass:SourceContext:WorkspaceRoot`, the absolute directory disposable copies are created
+below. With either missing the pass refuses with `remediation_not_configured` before it calls a
+model, touches no filesystem and spends nothing. There is deliberately no default workspace root: a
+default would make the first host with a monitored checkout start writing copies of it somewhere
+nobody chose. The configuration switch and the host options are independent on purpose: a tenant
+decides whether a fix may be prepared, and a host decides whether this machine has a checkout and the
+room to copy it.
 
 **What the model is shown.** The grounded report's classification, confidence, summary, limitations
 and recommended next action, plus the `SourceCode` artifacts the investigation actually cited, each
@@ -537,9 +551,18 @@ checks in its own migration, so claiming a test ran cannot be done quietly. A re
 change that parsed, matched its base and applied. It is **not** evidence that the change builds,
 passes anything, or is correct.
 
-**What is still missing.** Nothing schedules a pass, and nothing reaps a workspace a killed process
-left behind. The pass disposes its own copies on every terminal path, so leftovers need a crash to
-appear, but the operator-configured workspace root is where they would be.
+**What a killed process leaves behind.** The pass disposes its own copy on every terminal path, so a
+leftover needs a crash between the copy and the delete to appear. The Worker's retention pass deletes
+those as a third bounded operation: prefixed directories under the configured workspace root whose
+own name states an instant older than `IncidentCompass:SourceWorkspaceRetention:RetentionHours` and
+which have not been written to since. It deletes nothing else, never touches the monitored checkout,
+and leaves alone any directory it cannot date. The window is six hours by default against a live
+workspace that cannot outlive one bounded copy-and-apply call, because a leftover surviving an extra
+pass costs disk while a workspace deleted under a running pass costs a refusal that looks like a
+filesystem fault.
+
+**What is still missing.** An approval path for a produced diff. A record is a statement for a human
+to read; nothing applies it to the monitored checkout, pushes a branch or opens a pull request.
 
 ## Redaction And Pseudonymization
 
