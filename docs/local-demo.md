@@ -190,7 +190,7 @@ final bounded checkpoint before the evaluator exits with cancellation status.
 
 The result contract contains:
 
-- result `schemaVersion` 2, `corpusVersion`, the evaluated Git HEAD revision, a dirty flag, a Git tree or
+- result `schemaVersion` 3, `corpusVersion`, the evaluated Git HEAD revision, a dirty flag, a Git tree or
   dirty-content hash, and a typed snapshot of every configured route: route id, kind, provider id,
   expanded model, temperature, output-token limit and context-window limit. The snapshot also stores
   the configured orchestrator worker, token, wall-clock and reprompt budgets. Endpoint and API
@@ -200,6 +200,12 @@ The result contract contains:
   criterion results. Terminal state, report publication, model calls and action events are attributed
   only to the exact job id returned by that attempt's intake and its observed current attempt; a newer
   re-triage job on the same fault cannot satisfy the attempt.
+- Beside the observed job status, that job row's last error code and scheduled next attempt. The error
+  code is the backend's own bounded classification of the attempt's last failure, from a closed
+  application-owned vocabulary, and is recorded verbatim: an attempt that published no report says
+  which outcome it reached rather than only that it reached one. Both are `null` when the job row
+  states none, which is every successful job for the code and every terminal job for the next attempt.
+  The evaluator records these codes and does not group, rank or interpret them.
 - A bounded, sanitized report snapshot containing the report id, status, summary, recommended action,
   classification, documentation fit, config hash, limitations and up to 20 evidence identifiers plus safe metadata.
   Evidence quotes and artifact payloads are excluded. Snapshot text removes control characters,
@@ -218,7 +224,12 @@ The result contract contains:
 - End-to-end latency separately from individual and summed model-call latency.
 - Individual `ModelCall` provider/model/route metadata and token usage, aggregate input/output/total
   tokens, and `usageSource`. `BudgetEvent` token deltas are excluded so tokens are not counted twice.
-  Usage missing for a failed call is `unavailable`, never zero.
+  Usage missing for a failed call is `unavailable`, never zero. Each call records `provider`, the
+  adapter that answered, and `providerId`, the configured provider table entry the called route
+  named, as two separate facts, because one adapter can answer for several configured providers with
+  their own endpoints, credentials and prices, and cost belongs to the configured one. `providerId` is
+  `null` when the ledger row states none, and a row that omits it is still counted: an absent optional
+  identity never discards that call's real latency and token counts.
 - Per-case raw pass counts and overall raw small-sample ranges using only minimum, median and maximum.
   There is no p95. Failed attempts remain in every requested-attempt denominator.
 

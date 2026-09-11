@@ -26,7 +26,7 @@ internal static class EvaluationAttemptFailureFactory
             [],
             [],
             null,
-            new EvaluationCompletionResult(false, null, null, false),
+            new EvaluationCompletionResult(false, null, null, null, null, false),
             new EvaluationCriterionResult(false, "not evaluated: " + failure),
             new EvaluationCriterionResult(false, "not evaluated: " + failure),
             new EvaluationCriterionResult(false, "not evaluated: " + failure),

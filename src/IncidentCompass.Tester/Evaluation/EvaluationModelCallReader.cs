@@ -62,6 +62,7 @@ internal static class EvaluationModelCallReader
                 routeId,
                 model,
                 provider,
+                ReadOptionalString(root, "providerId"),
                 usageSource,
                 inputTokens,
                 outputTokens,
@@ -74,6 +75,18 @@ internal static class EvaluationModelCallReader
             return false;
         }
     }
+
+    // An optional identity never makes a row malformed. A ledger row written before the backend
+    // recorded the configured provider id, and a row whose route named no provider, both state no
+    // payer; rejecting either would drop that call's real latency and token counts out of the run's
+    // totals over a field that carries none of them. An unusable value is recorded as absent for the
+    // same reason, because this reader never invents a payer the row did not state.
+    private static string? ReadOptionalString(JsonElement root, string name) =>
+        root.TryGetProperty(name, out var property) &&
+        property.ValueKind == JsonValueKind.String &&
+        !string.IsNullOrWhiteSpace(property.GetString())
+            ? property.GetString()
+            : null;
 
     private static bool TryReadString(JsonElement root, string name, out string value)
     {

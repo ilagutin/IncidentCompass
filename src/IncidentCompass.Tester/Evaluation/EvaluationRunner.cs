@@ -170,6 +170,8 @@ internal sealed class EvaluationRunner(HttpClient client, EvaluationOptions opti
         var completion = new EvaluationCompletionResult(
             succeeded && report is not null && observedFailure is null,
             observedJob?.Status,
+            observedJob?.LastErrorCode,
+            observedJob?.NextAttemptAtUtc,
             reportSnapshot?.Status,
             report is not null);
         var terminalFailure = !completion.Passed;

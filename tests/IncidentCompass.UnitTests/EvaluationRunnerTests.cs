@@ -34,7 +34,7 @@ public sealed class EvaluationRunnerTests
             Assert.True(handler.FaultReads >=
                 handler.IncidentPosts * (DeadlineBoundPollingHandler.TransientReadsPerAttempt + 1));
             using var result = JsonDocument.Parse(await File.ReadAllTextAsync(outputPath, TestContext.Current.CancellationToken));
-            Assert.Equal(2, result.RootElement.GetProperty("schemaVersion").GetInt32());
+            Assert.Equal(3, result.RootElement.GetProperty("schemaVersion").GetInt32());
             var attempts = result.RootElement.GetProperty("attempts").EnumerateArray().ToArray();
             Assert.Equal(handler.IncidentPosts, attempts.Length);
             Assert.All(attempts, static attempt =>

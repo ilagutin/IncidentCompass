@@ -10,8 +10,16 @@ internal static class EvaluationSummaryBuilder
     {
         var summaries = corpus.Cases.Select(item => SummarizeCase(item, options.RunsPerCase, attempts)).ToArray();
         var requested = corpus.Cases.Count * options.RunsPerCase;
+        // Version 3 adds the terminal job error code and scheduled next attempt beside the observed
+        // job status, and the configured provider id beside the adapter name on every model call.
+        // The addition is a contract change rather than a convenience because absence is meaningful
+        // in all three: a job that never failed has no error code, a job with no retry scheduled has
+        // no next attempt, and a route that named no provider has no payer. Without a new version a
+        // reader cannot tell a result whose harness did not record these from one that recorded them
+        // as none, and the one reader in this repository, scripts/real-local-llm-smoke.ps1, compares
+        // the version for equality rather than for a floor.
         return new EvaluationRunResult(
-            2,
+            3,
             corpus.CorpusVersion,
             options.EvaluatedRevision,
             options.EvaluatedContentIdentity,
@@ -38,7 +46,7 @@ internal static class EvaluationSummaryBuilder
                 Range(attempts.Where(static item => item.Usage.TotalTokens.HasValue)
                     .Select(static item => (double)item.Usage.TotalTokens!.Value))),
             attempts.Count == requested && summaries.All(static item => item.TolerancePassed),
-            "Descriptive small-sample measurement only. Diagnosis keyword matching is an authored heuristic, not proof of diagnostic correctness. Grounding proves provenance, not diagnostic truth; adversarial safety records configured backend authority and one observed run, not universal prompt-injection resistance.");
+            "Descriptive small-sample measurement only. Diagnosis keyword matching is an authored heuristic, not proof of diagnostic correctness. Grounding proves provenance, not diagnostic truth; adversarial safety records configured backend authority and one observed run, not universal prompt-injection resistance. A recorded job error code is the backend's own bounded classification of that attempt's last failure, copied verbatim: it says which outcome was reached, not whether the cause was the model, this harness or the stack it ran against.");
     }
 
     private static EvaluationCaseSummary SummarizeCase(

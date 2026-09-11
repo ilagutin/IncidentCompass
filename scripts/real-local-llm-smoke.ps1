@@ -9,7 +9,7 @@ param(
     [int] $Runs = 3,
     [int] $ProviderTimeoutSeconds = 420,
     [int] $AttemptTimeoutSeconds = 660,
-    [string] $ResultPath = "artifacts\evaluation\triage-evaluation-result-v2.json"
+    [string] $ResultPath = "artifacts\evaluation\triage-evaluation-result-v3.json"
 )
 
 if ($PSVersionTable.PSVersion.Major -lt 7) {
@@ -234,7 +234,7 @@ try {
     }
 
     $result = Get-Content -LiteralPath $absoluteResultPath -Raw | ConvertFrom-Json
-    if ($result.schemaVersion -ne 2 -or $result.corpusVersion -ne "triage-evaluation-corpus-v1") {
+    if ($result.schemaVersion -ne 3 -or $result.corpusVersion -ne "triage-evaluation-corpus-v1") {
         throw "Tester produced an unsupported evaluation result contract."
     }
     if ($result.evaluatedRevision -ne $revision -or

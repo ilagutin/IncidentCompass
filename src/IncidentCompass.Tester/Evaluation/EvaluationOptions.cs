@@ -32,7 +32,7 @@ internal sealed record EvaluationOptions(
             PollInterval: TimeSpan.FromSeconds(ReadInt(args, "--poll-interval-seconds", "INCIDENTCOMPASS_TESTER_POLL_INTERVAL_SECONDS", 2)),
             CorpusPath: corpus,
             ConfigurationPath: configurationPath,
-            OutputPath: Read(args, "--evaluation-output", "INCIDENTCOMPASS_TESTER_EVALUATION_OUTPUT") ?? "/artifacts/triage-evaluation-result-v2.json",
+            OutputPath: Read(args, "--evaluation-output", "INCIDENTCOMPASS_TESTER_EVALUATION_OUTPUT") ?? "/artifacts/triage-evaluation-result-v3.json",
             RunsPerCase: runs,
             EvaluatedRevision: Read(args, "--evaluation-revision", "INCIDENTCOMPASS_TESTER_EVALUATION_REVISION") ?? "unknown",
             EvaluatedContentIdentity: Read(args, "--evaluation-content-identity", "INCIDENTCOMPASS_TESTER_EVALUATION_CONTENT_IDENTITY") ?? "unknown",
