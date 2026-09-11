@@ -49,5 +49,6 @@ You are deciding whether the engineering is any good.
 
 - [Project README](../README.md) for scope, the investigation diagram and the stated limits.
 - [Changelog](../CHANGELOG.md).
-- Release notes: [0.3.0](release-notes-v0.3.0.md), [0.2.0](release-notes-v0.2.0.md),
-  [0.1.1](release-notes-v0.1.1.md) and [0.1.0](release-notes-v0.1.0.md).
+- Release notes: [0.4.0](release-notes-v0.4.0.md), [0.3.0](release-notes-v0.3.0.md),
+  [0.2.0](release-notes-v0.2.0.md), [0.1.1](release-notes-v0.1.1.md) and
+  [0.1.0](release-notes-v0.1.0.md).

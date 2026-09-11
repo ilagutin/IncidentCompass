@@ -1,5 +1,12 @@
 # IncidentCompass 0.1.0 - first public reference release
 
+> Historical record, partly superseded (2026-09-11): the demo runs five scenarios since 0.3.0, which
+> also added optional API-key authentication, two more read tools and governed external actions; and
+> 0.4.0 removed the prompt-logging setting named below in favour of a guarantee, because no code path
+> writes that material anywhere. The local smoke rates at the end describe the 0.1.0 build and no
+> longer describe this one; 0.4.0 publishes a measured run instead. See
+> [0.4.0](release-notes-v0.4.0.md) for current behaviour.
+
 IncidentCompass is a governed incident-triage agent backend, built as a **reference-quality
 implementation** - not a production system and not a stable framework. An incident signal from any
 supported source is normalized deterministically, a governed AI investigation runs under configured

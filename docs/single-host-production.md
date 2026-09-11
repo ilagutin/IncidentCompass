@@ -39,8 +39,12 @@ triage configuration, logs or release evidence.
 `INCIDENTCOMPASS_SOURCE_ROOT` must be an existing absolute host directory. It is mounted read-only at
 `/monitored-source`. The service and release in the environment file must match the host-owned mapping
 and the reviewed `CurrentReleases` entry in the triage configuration. This release also requires the
-current GitHub owner, repository and token binding. Remediation commands, branch credentials and pull
-request bindings are deliberately deferred to later v0.4 work.
+current GitHub owner, repository and token binding. Code publication reuses that same binding and
+adds one setting, `INCIDENTCOMPASS_GITHUB_BASE_BRANCH`, which is empty in the sample: leave it empty
+unless `branch_push` and `pr_create` are enabled, because empty means code publication is not
+configured on this host and every call refuses. Setting it widens what the shared token needs, to
+write access on repository contents and pull requests. No test command is run anywhere in this
+release, so there is nothing to configure for one.
 
 The remediation diff pass copies that checkout into a disposable workspace, but only when
 `IncidentCompass:SourceContext:WorkspaceRoot` names an absolute writable directory. It is unset in

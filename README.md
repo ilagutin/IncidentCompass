@@ -9,9 +9,12 @@ A .NET 10 backend that turns an incident signal into a reviewable, evidence-back
 The model chooses investigation steps and proposes tool calls. The backend owns credentials, tool
 grants, budgets, evidence checks, approvals and external actions.
 
-Version **0.3.0** supports read-only source and GitHub context, a host-managed API-key tenant
-boundary, governed Telegram/GitHub actions and model-cost rollups.
-See the [release notes](docs/release-notes-v0.3.0.md) for changes and verification.
+Version **0.4.0** adds a governed remediation chain from a report to a prepared diff, a human-approved
+code write, a branch, a pull request and a ticket backlink; per-provider endpoints and credentials
+with one-hop route fail-over; scheduled payload retention; working cost accounting; and an opt-in
+evaluation harness with one measured run committed to this repository. Every external write is
+separately approved, nothing merges, no test command is executed and the whole chain ships disabled.
+See the [release notes](docs/release-notes-v0.4.0.md) for changes and verification.
 
 ## One investigation
 
@@ -20,7 +23,10 @@ See the [release notes](docs/release-notes-v0.3.0.md) for changes and verificati
 3. Publish a report only after the backend resolves its evidence against allowed stored artifacts.
 4. When configured, propose a Telegram notification or GitHub issue action. The backend selects the
    target and freezes the payload; GitHub writes require operator approval.
-5. Inspect the report, policy decisions, model usage and action outcomes through the API and durable ledger.
+5. When configured, prepare a diff against a named base tree, then freeze it into a code write, a
+   branch, a pull request and a comment back on the cited ticket. Each is a separate approval a person
+   grants, nothing merges, and no test command runs, so a diff is untested by construction.
+6. Inspect the report, policy decisions, model usage and action outcomes through the API and durable ledger.
 
 ```mermaid
 flowchart TD
@@ -133,10 +139,23 @@ are in [Integration configuration](docs/integrations.md).
   disabled-action configuration; separate integration tests exercise configured policy and approval.
 - Full rendered prompt/body logging stays disabled by default.
 
-This is reference-quality software for local review. Demo authentication and Compose defaults are
-local-only. Source lookup and external integrations require explicit host configuration; external
-actions ship disabled. The project does not provide enterprise identity/RBAC, a UI, general incident
-correlation, automated code fixes or a production incident platform.
+One deployment envelope is supported: **one trusted machine, one trusted operator, one host-owned
+monitored checkout, one configured repository and one PostgreSQL database under Docker Compose, with
+the API and PostgreSQL bound to loopback.** The
+[single-host production runbook](docs/single-host-production.md) is that envelope, with preflight
+that refuses demo credentials, bounded backup, a real fresh-volume restore and rollback. Reaching the
+API from another machine means putting an authenticated TLS reverse proxy and a host firewall in
+front of the loopback port, not rebinding it. Demo authentication and the demo Compose defaults are
+local-only. Source lookup and external integrations require explicit host configuration, and every
+external action ships disabled.
+
+Outside that envelope, and not provided: high availability or failover, multi-team role-based access,
+enterprise identity, a managed secret store (the host owns a protected environment file), more than
+one source repository or an arbitrary one, a UI, general cross-fault incident correlation, and
+exactly-once external delivery. No process is started anywhere in the product, so nothing here runs a
+test, a build or a deployment: a prepared diff is untested by construction and approving one approves
+an untested change. And a grounded report is not a correct report; evidence checks prove provenance,
+not truth.
 
 ## Explore the implementation
 
@@ -167,8 +186,9 @@ it, judge it. The direct routes are:
   [Versioning and release flow](docs/versioning.md), [Contributing](CONTRIBUTING.md) and the
   [security policy](SECURITY.md)
 - Reference: [Changelog](CHANGELOG.md) and release notes
-  [0.3.0](docs/release-notes-v0.3.0.md), [0.2.0](docs/release-notes-v0.2.0.md),
-  [0.1.1](docs/release-notes-v0.1.1.md) and [0.1.0](docs/release-notes-v0.1.0.md)
+  [0.4.0](docs/release-notes-v0.4.0.md), [0.3.0](docs/release-notes-v0.3.0.md),
+  [0.2.0](docs/release-notes-v0.2.0.md), [0.1.1](docs/release-notes-v0.1.1.md) and
+  [0.1.0](docs/release-notes-v0.1.0.md)
 
 ## Origin
 
