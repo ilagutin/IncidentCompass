@@ -1972,7 +1972,7 @@
             "format": "date-time"
           }
         },
-        "description": "The metadata-only view of one owner\u0027s memory corpus: what route it is configured to use, what\r\nroute actually built it, how much of it there is, and whether those agree."
+        "description": "The metadata-only view of one owner\u0027s memory corpus: what route it is configured to use, what\nroute actually built it, how much of it there is, and whether those agree."
       },
       "MemorySeedSyncSnapshot": {
         "required": [
