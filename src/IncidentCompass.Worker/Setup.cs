@@ -5,6 +5,7 @@ using IncidentCompass.Application.Governance.Tools;
 using IncidentCompass.Application.Notifications;
 using IncidentCompass.Application.Remediation;
 using IncidentCompass.Infrastructure.Notifications.Telegram;
+using IncidentCompass.Infrastructure.Remediation;
 using IncidentCompass.Infrastructure.Tickets;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
@@ -62,6 +63,14 @@ public static class Setup
         // renewer long calls survive. It runs only where investigation runs, because that is the one
         // host composed with the model gateway and the workspace adapter it needs.
         services.AddSingleton<IPostReportActionWorkflow, RemediationPostReportActionWorkflow>();
+
+        // The approval half of the same feature. It is registered where the other external-action
+        // adapters are, and only here, because this is the one host that both proposes an approved
+        // code write and dispatches it; the Api composes neither. Its descriptor is registered from
+        // AddApplication instead, since a configuration naming the tool has to validate everywhere.
+        services.AddScoped<RemediationApplyActionTool>();
+        services.AddScoped<IExternalActionTool>(
+            serviceProvider => serviceProvider.GetRequiredService<RemediationApplyActionTool>());
         services.AddSingleton<TelegramNotificationActionTool>();
         services.AddSingleton<IExternalActionTool>(
             serviceProvider => serviceProvider.GetRequiredService<TelegramNotificationActionTool>());

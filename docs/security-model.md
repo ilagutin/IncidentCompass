@@ -561,8 +561,98 @@ workspace that cannot outlive one bounded copy-and-apply call, because a leftove
 pass costs disk while a workspace deleted under a running pass costs a refusal that looks like a
 filesystem fault.
 
-**What is still missing.** An approval path for a produced diff. A record is a statement for a human
-to read; nothing applies it to the monitored checkout, pushes a branch or opens a pull request.
+## Remediation approval boundary
+
+A recorded diff is not a thing anyone may act on. What makes it actionable is a second governed
+capability, `remediation_apply`, which freezes one diff into a `code_write` action proposal that a
+person has to approve. It is a separate tool entry from `remediation_diff` on purpose: preparing
+diffs for review and allowing one to be acted on are different decisions with different blast radii,
+and an operator has to be able to make either without making the other.
+
+**Where each ungovernable field comes from.** None of them is reachable from model text.
+
+| Field | Source |
+| --- | --- |
+| Which checkout | The fault's `service_name`, recorded by intake, plus the release the job's own configuration snapshot names in `CurrentReleases`. A host maps that pair to a directory; nothing above the workspace port knows what the directory is. |
+| Branch, remote, credentials | No such field exists anywhere on this path. Nothing in the product reads git, and the frozen payload has no property that could name one. |
+| Action type | The compiled `AgentToolDescriptor` in the backend tool registry, matched against the reviewed configuration's declared category and logical target at proposal time and again at dispatch. |
+| Approval state | `ActionGovernanceDefaults.AutoApprovableCategory`, which names `notification` and nothing else, so a `code_write` proposal is always created `requested`. Configuration can tighten that and has no way to widen it. |
+| Diff bytes | The `remediation_diffs` row the backend wrote after parsing the answer, naming the base, applying it to a disposable copy and recomputing the resulting tree. |
+
+The model on the pass is called with no tool surface at all, and no `IImmediateAgentTool` exists for
+either remediation tool, so there is no turn a model may take that reaches any of the above.
+
+**What the frozen payload carries.** Fourteen fields of canonical JSON: the exact diff and its byte
+count, the base tree identity it applies to, the result tree identity it produced, the files-changed
+count, the service and release that select the checkout, a digest over the cited source artifacts the
+change was derived from with their count, the origin report id, a schema version, and the three test
+fields below. The host binding is not in the payload; it is the `adapter_binding_fingerprint` column
+on the action, which hashes the configured workspace root and the resolved monitored roots, so
+repointing a root turns an outstanding approval into `adapter_binding_changed` rather than into a
+change applied to a tree nobody approved.
+
+**What the approval hash covers, and why that set.** `ComputeApprovalSha256` is taken over the origin
+report id, the tool id, the category, the execution mode, the logical target, the adapter binding
+fingerprint, the payload digest, the canonical payload itself and the provenance digest, each length
+prefixed under a domain separator. That is every byte that can decide the resulting tree: the diff
+and the base are in the payload, which checkout the base belongs to is in the payload and the
+binding, and what the change was derived from is in the payload digest and the provenance digest.
+Deliberately outside it are the `remediation_diffs` row id, the timestamps, and the route and model
+that wrote the diff. None of them can change `base + patch`, and including the row id would be
+actively wrong: two passes that derived the same change would freeze two different payloads, so an
+idempotent proposal would become one proposal per pass. Approving echoes both the payload digest and
+the approval digest back, and a mismatch on either is a conflict rather than an approval.
+
+**What a person is told about testing, and why it cannot be missed.** Nothing runs a test, so every
+diff carries `not_executed`. The payload states that three ways: `testOutcome` is the literal
+`not_executed`, `testCommandId` is `null`, and `testStatement` spells it out in a sentence that ends
+"Approving it approves an untested change." All three are inside the bytes the approval hash covers,
+so the claim cannot be edited out from under an approval that was already given, and the review
+summary a reviewer sees in the approval list begins with `UNTESTED CHANGE`. A tested artifact cannot
+be confused with an untested one, because a diff row whose `test_outcome` is anything but
+`not_executed` is refused with `remediation_diff_unsupported` before a proposal is built, and a
+payload whose test fields say anything else cannot be read back at all. A release that runs a test
+therefore has to extend this shape deliberately, exactly as it has to relax the table's own checks.
+
+**What creates no approvable proposal.** Four states, each refused before the proposal command is
+dispatched, so nothing is written and there is nothing to approve by mistake.
+
+- *Missing*: no diff is recorded for this tenant and report (`remediation_diff_missing`). The read is
+  scoped by both, so another tenant's or another report's diff is absent rather than filtered, and a
+  foreign artifact reaches the same answer.
+- *Stale*: the origin is no longer the fault's current completed published report, which the existing
+  proposal grounder refuses; or the monitored checkout no longer holds the tree the diff was prepared
+  against (`remediation_base_stale`).
+- *Foreign*: the recorded diff names a different job, attempt, service or release than the origin
+  report's own (`remediation_diff_foreign`).
+- *Ambiguous*: the report has more than one recorded diff (`remediation_diff_ambiguous`). Durable
+  state then names no single change, and picking the newest would mean the thing approved and the
+  thing most recently produced could differ with nothing saying so.
+
+**One report, one diff, one proposal.** The workflow proposes before it prepares. It reads the diff
+table first; a recorded diff is frozen without calling a model at all, and only a report with no
+recorded diff runs a pass. An evaluation retried after a failed write therefore spends nothing and
+cannot write a second row, which is what keeps durable state unambiguous in the first place. The
+idempotency key is the report's, `post-report:v1:<report>:remediation_apply`, so a second dispatch is
+a replay of the one proposal rather than a second one.
+
+**What approving authorizes.** The backend re-materializes the configured checkout, refuses unless
+the copy is the tree the approval named, applies the frozen diff to that copy, recomputes the
+resulting tree identity and compares it with the approved one, and then discards the copy. Nothing is
+landed: no branch is pushed, no pull request is opened, nothing is merged and no test is run, and the
+recorded result says so in those words with `"landed": false` beside it. The workspace port has no
+landing operation, so there is nothing for a defect to reach.
+
+**What base drift produces.** The base is compared twice, because a checkout can move in the days an
+approval waits. Before the proposal, drift refuses with `remediation_base_stale` and no action row is
+created. After the approval, the dispatch fails closed with `remediation_base_mismatch`, the approval
+ends in `failed` with that code on it, and nothing was written to any copy. There is no re-approval
+of a failed action: the honest recovery is a fresh investigation, because the source evidence the old
+diff was derived from came from the old tree too.
+
+**What is still missing.** Branch push and pull-request publication. An approved and executed
+proposal proves the change still applies to the tree it was approved against; nothing carries it into
+the monitored checkout, pushes a branch, opens a pull request or merges anything.
 
 ## Redaction And Pseudonymization
 

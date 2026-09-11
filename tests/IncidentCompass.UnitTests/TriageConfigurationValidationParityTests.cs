@@ -375,6 +375,7 @@ public sealed class TriageConfigurationValidationParityTests
             TelegramNotificationToolDescriptor.Value,
             TicketCreateTool.Descriptor,
             RemediationDiffToolDescriptor.Descriptor,
+            RemediationApplyToolDescriptor.Descriptor,
             new AgentToolDescriptor(
                 "notify_test",
                 AgentToolCapability.ExternalAction,

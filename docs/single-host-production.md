@@ -249,6 +249,62 @@ before it calls a model, spends nothing, and completes the intent carrying
 (`remediation_release_unavailable`). Each of those is a settled outcome on the intent rather than a
 retry, and each is visible in the Worker log and on the intent row.
 
+**Approving a prepared fix.** A recorded diff is a statement, not an action. Turning one into
+something a person may act on is a second capability, `remediation_apply`, switched on the same four
+ways in the same file:
+
+```json
+"Tools": {
+  "remediation_apply": {
+    "Kind": "external_action",
+    "Category": "code_write",
+    "LogicalTargetId": "source:configured-workspace",
+    "Mode": "live"
+  }
+},
+"Actions": { "AllowedTools": ["remediation_diff", "remediation_apply"], "DefaultMode": "live" }
+```
+
+Both entries are declared and disabled in the shipped file, and they are independent: preparing
+diffs for review while allowing none of them to be acted on is a perfectly reasonable state and is
+what you get by turning on only the first.
+
+With both on, a pass that produces a diff also creates one `code_write` approval per report, in state
+`requested`. It never auto-approves: `code_write` is not an auto-approvable category, so
+`Actions.RequireApprovalForAll` makes no difference here. The approval is visible through
+`GET /api/v1/action-approvals`, and approving it means echoing both its payload digest and its
+approval digest back, which is what binds the decision to the exact bytes that were reviewed.
+
+**What a reviewer sees, and what approving means.** The review summary begins with `UNTESTED CHANGE`,
+and the frozen payload says the same thing three ways: `"testOutcome": "not_executed"`,
+`"testCommandId": null`, and a `testStatement` sentence ending "Approving it approves an untested
+change." That is literal. Nothing in this release starts a process or runs a test command, so no diff
+carries any evidence that it compiles, passes anything or is correct. The payload also carries the
+exact diff, the base tree identity it applies to, the tree it produced, the service and release, and
+a digest over the cited source excerpts it was derived from.
+
+Approving authorizes exactly one thing: re-applying those bytes to a fresh disposable copy of the
+approved base and recording the resulting tree identity. It does not push a branch, open a pull
+request or merge anything, and the recorded result says so with `"landed": false` beside it.
+
+**When the checkout moved.** The base is checked twice. Before the proposal, a moved checkout refuses
+with `remediation_base_stale` and no approval is created. After the approval, the dispatch fails with
+`remediation_base_mismatch` and the approval ends in `failed` with that code on it. There is no
+re-approval of a failed action, and that is deliberate: the source excerpts the diff was derived from
+came from the tree that moved, so the honest recovery is a fresh investigation of the recurrence, not
+a fresh diff against the old evidence.
+
+**Other refusals you may see on the intent.** `remediation_diff_missing` (nothing was recorded for
+that report), `remediation_diff_ambiguous` (the report has more than one recorded diff, so durable
+state names no single change), `remediation_diff_foreign` (the recorded diff names a different job,
+attempt, service or release than the report's own) and `remediation_diff_unsupported` (the row does
+not carry the one shape this release can freeze). All four create nothing.
+
+**Repointing a monitored root.** The adapter's binding fingerprint hashes the workspace root together
+with the resolved monitored roots. Changing either while an approval is outstanding fails its
+dispatch with `adapter_binding_changed` rather than applying an approved diff to a directory nobody
+approved. Expect to re-run triage after such a move.
+
 ## Model prices
 
 `incidentcompass.ai_model_pricing` is the only table an operator is expected to write by hand. There

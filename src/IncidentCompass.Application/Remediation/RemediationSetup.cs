@@ -29,6 +29,12 @@ internal static class RemediationSetup
         // names no registered descriptor, and that validation runs wherever a configuration is
         // loaded, not only where a pass can run.
         services.AddSingleton(RemediationDiffToolDescriptor.Descriptor);
+
+        // The approval half is a second descriptor for the same reason: configuration load
+        // validation refuses a `remediation_apply` tool entry that names no registered descriptor,
+        // and that validation runs wherever a configuration is loaded, not only where a pass or a
+        // dispatch can run. The adapter behind it is registered by the host that can execute one.
+        services.AddSingleton(RemediationApplyToolDescriptor.Descriptor);
         return services;
     }
 }

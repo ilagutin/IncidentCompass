@@ -36,6 +36,12 @@ internal static class RemediationInfrastructureSetup
         services.TryAddScoped<IRemediationDiffRepository, PostgresRemediationDiffRepository>();
         services.TryAddScoped<IRemediationPassContextRepository, PostgresRemediationPassContextRepository>();
         services.TryAddScoped<RemediationDiffRunner>();
+
+        // The publisher is bound here for the same reason as the runner: it is an Application type
+        // that cannot be constructed without IRemediationDiffRepository, which only this method
+        // registers. The adapter it proposes through is not bound here, because a host that cannot
+        // dispatch an approved action has no business declaring one it could execute.
+        services.TryAddScoped<RemediationProposalPublisher>();
         return services;
     }
 }

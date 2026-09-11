@@ -732,3 +732,28 @@ default, so the quickstart, demo and runbook commands reach it two ways: the lay
 explicitly with `-f`, and the bare ones rely on the default. A rename would have to update both
 kinds of command across the documentation and the scripts, to buy consistency in a file listing and
 nothing at runtime. The inconsistency is cosmetic and stays.
+
+## An Untested Diff Is Approvable, Loudly
+
+The backlog item this approval step comes from asks that an untested artifact create no approvable
+proposal. That criterion was written on the assumption that something would run a test. Nothing in
+this release does: no process is started anywhere in the product, and the architecture test that
+fails the build when process I/O appears in the Application project is unchanged. Read literally, the
+criterion would mean the feature ships with no reachable path at all, since every diff carries
+`not_executed`.
+
+What shipped instead is the honest equivalent with test execution deferred. A proposal is created,
+and the frozen payload states in three places that no test ran: `testOutcome` is the literal
+`not_executed`, `testCommandId` is `null`, and `testStatement` is a sentence ending "Approving it
+approves an untested change." All three are inside the bytes the approval hash covers, and the review
+summary a person sees in the approval list begins with `UNTESTED CHANGE`. A human who approves one of
+these is knowingly approving an unverified change; what the criterion forbids, and what does not
+happen, is that this occurs silently.
+
+The part of the criterion that is enforced exactly is the other half. A diff row whose `test_outcome`
+says anything other than `not_executed`, or that names a test command, is refused with
+`remediation_diff_unsupported` and creates nothing, and a payload whose test fields say anything else
+cannot be read back at all. So the day a release runs a test, it cannot reuse this payload shape by
+accident: the artifact that ran one and the artifact that did not can never be confused, and saying
+that a test passed will take a deliberate change to the payload contract, the same way it already
+takes a deliberate migration to relax the table's own checks.

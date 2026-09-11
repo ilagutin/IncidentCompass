@@ -41,7 +41,9 @@ credential travels on an Application contract. See `docs/model-gateway.md`, "Pro
     port that names a base tree and applies one candidate diff to a copy of it, the durable
     exact-diff record, the read port that loads one published report's job, fault and cited source
     evidence, and the post-report workflow that schedules the pass and carries its outcome onto the
-    intent. Nothing here executes a test or starts a process.
+    intent. It also holds the approval half: the second backend action descriptor, the frozen
+    `code_write` payload shape a person approves and the publisher that turns one recorded diff into
+    one proposal. Nothing here executes a test or starts a process.
   - `SourceContext/`: provider-neutral source lookup contracts, bounded stack-frame extraction and
     the governed `source_lookup` worker tool.
   - `Tickets/`: system-neutral ticket-search, cited-ticket resolution and ticket-action-history
@@ -286,6 +288,34 @@ Leftover workspaces are the Worker retention pass's third bounded operation, bes
 and stale-artifact reaping. It ages a directory by the instant its own name states rather than by a
 filesystem timestamp, which is neither portable nor a liveness signal for a directory nothing is
 writing to, and it relies on the invariant that a workspace never outlives one call into the adapter.
+
+## Remediation approval
+
+A recorded diff becomes actionable only through a second governed capability, `remediation_apply`,
+which freezes one diff into a `code_write` action proposal on the same approval contract that already
+carries ticket creation and notification. It is a separate tool entry and a separate idempotency key
+from `remediation_diff`, because preparing a diff for review and allowing one to be acted on are
+different decisions and the contract keys a proposal by tool id.
+
+The step reuses the existing proposal path rather than adding one. Publication eligibility, the fault
+lock, evidence grounding, the rule engine, the approval and provenance digests and the outbox are the
+ones every external action already goes through; what this feature adds is an `IExternalActionTool`
+that validates the governed facts, builds the canonical payload and, when an approved action is
+dispatched, re-applies the frozen diff to a fresh copy of the approved base. `code_write` is not an
+auto-approvable category, so the proposal is always created `requested`.
+
+The proposal step runs before the pass rather than after it. The workflow reads the diff table first
+and freezes what is already recorded without calling a model; only a report with no recorded diff
+runs a pass. That ordering is what makes the feature idempotent: an evaluation retried after a failed
+write spends nothing and cannot write a second diff row, so one report keeps one diff and one diff
+keeps one proposal. A report that nevertheless holds two rows is refused as ambiguous rather than
+resolved by picking one.
+
+The adapter's binding fingerprint hashes the configured workspace root together with the resolved
+monitored roots, so repointing a root invalidates an outstanding approval instead of quietly moving
+what it applies to. Nothing on this path lands a change: the workspace port has no landing operation,
+no process is started, and branch push and pull-request publication are separate categories this
+release does not implement.
 
 ## Read-only ticket context
 

@@ -137,6 +137,24 @@ public sealed class RemediationPostReportActionWorkflow(
         return await RunAsync(scope.ServiceProvider, intent, configuration, context, cancellationToken);
     }
 
+    /// <summary>
+    /// Proposes from what durable state already holds, and only prepares a diff when it holds
+    /// nothing.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The order is the point. Asking for the proposal first makes an evaluation that is retried
+    /// after the pass already recorded a diff cost nothing: it proposes from that diff instead of
+    /// spending a second model call, and more importantly it cannot write a second diff for the same
+    /// report. One report keeps one diff, one diff keeps one proposal, and the ambiguity that two
+    /// rows would create never arises from this path.
+    /// </para>
+    /// <para>
+    /// <c>DiffMissing</c> is therefore not only a refusal code here; it is the answer that means the
+    /// pass has not run yet. Every other code the publisher returns is settled, so the pass runs for
+    /// exactly one of the states it can be in.
+    /// </para>
+    /// </remarks>
     private async Task<PostReportActionWorkflowResult> RunAsync(
         IServiceProvider services,
         PostReportActionIntent intent,
@@ -144,6 +162,14 @@ public sealed class RemediationPostReportActionWorkflow(
         RemediationPassContext context,
         CancellationToken cancellationToken)
     {
+        var publisher = services.GetRequiredService<RemediationProposalPublisher>();
+        var existing = await publisher.PublishAsync(
+            intent.TenantId, intent.OriginReportId, context, configuration, cancellationToken);
+        if (!string.Equals(existing, RemediationProposalCodes.DiffMissing, StringComparison.Ordinal))
+        {
+            return PostReportActionWorkflowResult.Completed(existing);
+        }
+
         var request = new RemediationRequest(
             context.Job,
             context.Fault,
@@ -164,7 +190,10 @@ public sealed class RemediationPostReportActionWorkflow(
         {
             var result = await services.GetRequiredService<RemediationDiffRunner>()
                 .RunAsync(request, cancellationToken);
-            return PostReportActionWorkflowResult.Completed(result.Code);
+            return PostReportActionWorkflowResult.Completed(result.IsProduced
+                ? await publisher.PublishAsync(
+                    intent.TenantId, intent.OriginReportId, context, configuration, cancellationToken)
+                : result.Code);
         }
         catch (TriageBudgetExhaustedException)
         {

@@ -109,6 +109,10 @@ leased work was abandoned for an unrequested reason and is reported rather than 
 | 3801 | Information | A remediation pass produced a diff, with job, attempt, report and diff ids, the file count, the diff's byte count and the fixed statement that no test was executed. Never the diff itself. |
 | 3802 | Warning | A remediation answer was refused and the model was reprompted, with job, attempt, a bounded reprompt counter and the closed outcome code. Never the answer, a path or a file line. |
 | 3803 | Warning | A remediation pass produced no diff, with job, attempt, report and the closed outcome code it gave up on. |
+| 3804 | Information | A recorded remediation diff was frozen into a `code_write` proposal waiting for human approval, with job, report, the diff's byte count, the base tree identity and whether the proposal already existed. Never the diff itself. |
+| 3805 | Warning | A recorded remediation diff produced no approvable proposal, with job, report and the closed outcome code. Never a path, a file line or a byte of the diff. |
+| 3806 | Error | A remediation proposal was created already approved, which no shipped policy allows for a `code_write` action. Carries job and report only. |
+| 3807 | Warning | An approved remediation action was refused before anything was changed, with the action id and the closed outcome code. A moved checkout arrives here. |
 
 ### API host (4000-4999)
 

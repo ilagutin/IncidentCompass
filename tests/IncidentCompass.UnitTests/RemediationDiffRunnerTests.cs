@@ -488,6 +488,18 @@ public sealed class RemediationDiffRunnerTests : IDisposable
             Added.Add(diff);
             return Task.CompletedTask;
         }
+
+        public Task<IReadOnlyList<RemediationDiff>> FindForReportAsync(
+            string tenantId,
+            Guid reportId,
+            int maximum,
+            CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<RemediationDiff>>(Added
+                .Where(diff =>
+                    string.Equals(diff.TenantId, tenantId, StringComparison.Ordinal) &&
+                    diff.ReportId == reportId)
+                .Take(maximum)
+                .ToArray());
     }
 
     private sealed class StaticLedgerReader : ITriageLedgerReader
