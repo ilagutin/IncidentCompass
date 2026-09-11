@@ -35,11 +35,14 @@ You are deciding whether the engineering is any good.
 
 1. [Trade-offs](trade-offs.md) is the most direct answer: every intentional compromise with its
    cost, including the unflattering ones.
-2. [Code organization](code-organization.md) states the maintainability rules the code is held to,
+2. [Measured evaluation run](evaluation-evidence.md) is the numbers: one pinned real-model run with
+   its per-attempt record committed, the misses shown attempt by attempt, and an explicit list of
+   what the metrics do not establish.
+3. [Code organization](code-organization.md) states the maintainability rules the code is held to,
    and a repository gate enforces part of it.
-3. [Versioning and release flow](versioning.md) covers SemVer, the API and database contracts,
+4. [Versioning and release flow](versioning.md) covers SemVer, the API and database contracts,
    dependency lock files and the migration checksum guard.
-4. [Contributing](../CONTRIBUTING.md) and the [Security policy](../SECURITY.md) describe how a
+5. [Contributing](../CONTRIBUTING.md) and the [Security policy](../SECURITY.md) describe how a
    change lands and how to report a vulnerability.
 
 ## Reference

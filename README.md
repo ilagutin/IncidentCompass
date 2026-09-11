@@ -50,6 +50,8 @@ flowchart TD
 
 `scripts/demo.ps1 -Mock` drives five scenarios end to end. This is the deterministic mock provider,
 not a real model, so the classifications below show the governed path running, not model quality.
+For numbers produced by an actual model, see [Measured run](#measured-run) below; the two are
+separate records and neither stands in for the other.
 
 ~~~text
 Scenario | FaultId | ReportId | is_mass_issue | Classification | LedgerUrl | ReportUrl | Check
@@ -65,6 +67,30 @@ All five scenarios passed. Scenario 5 prints a detail string instead of `ok` bec
 prompt-injection attempt at a disabled action gate, and that detail is the assertion:
 [`DemoActionGateResult`](src/IncidentCompass.Tester/DemoActionGateResult.cs) passes only when no
 action lifecycle event was recorded at all.
+
+## Measured run
+
+Separately from that mock table, one opt-in evaluation ran against a local OpenAI-compatible provider
+on 2026-09-11 at revision `ca86ad5`. The commit that followed it, `a2ca1f6`, added integration tests
+and changed no production code. Five frozen cases, three attempts each, criteria authored before any
+output was observed. The per-attempt record is committed at
+`evaluations/triage/measured-run-ca86ad5.json`.
+
+| Band | Measured |
+|---|---|
+| Delivery: the signal became a job that reached the provider | 15 of 15 attempts, 192 model calls, all usage provider-reported |
+| Terminal completion: the job ended with a schema-valid published report | 15 of 15, no job error codes |
+| Diagnostic quality: the report matched the pre-authored criteria | diagnosis 13 of 15, evidence 14 of 15, justified refusal 14 of 15 |
+| Side effects: anything written outside the system | none, on every attempt, under empty action grants |
+
+Nine of the fifteen published reports were `InsufficientEvidence`, so completion does not mean the
+report answered anything. This is five cases on one model and one machine, with authored keyword
+heuristics standing in for diagnosis quality, and an earlier run of the same corpus that same day
+finished only 10 of 15. No external action was proposed or executed in this run.
+
+[Measured evaluation run](docs/evaluation-evidence.md) carries the per-case numbers, the two misses
+attempt by attempt, the variance, what the metrics are not, and where the external-action chain is
+actually proved.
 
 ## Try the local flow
 

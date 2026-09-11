@@ -96,6 +96,10 @@ reproduce these rates. Read the numbers only as reach rates for the terminal ste
 date named above - not as a release gate, not as a measure of report quality, and not as a
 comparison between the two models.
 
+For a current-line measurement with its per-attempt record committed, see
+[Measured evaluation run](evaluation-evidence.md). It uses a different corpus, a different model and
+a different set of criteria, so its numbers do not continue this table.
+
 ## Test Fault Seams Live In Production Code
 
 Five interfaces exist in `src` for one reason: integration tests need to crash the process at an

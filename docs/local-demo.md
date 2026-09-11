@@ -153,6 +153,10 @@ known, unknown, insufficient, stale and adversarial. Each case fixes its input a
 diagnosis, evidence, justified-refusal and tolerance criteria before any provider output is observed.
 Version 1 also fixes three attempts per case.
 
+One run of this contract is published with its per-attempt record:
+[Measured evaluation run](evaluation-evidence.md) pins the revision, the model and the numbers it
+produced, and states what they do not establish.
+
 Run the evaluator against a host-side OpenAI-compatible chat and embedding provider with:
 
 ~~~powershell
