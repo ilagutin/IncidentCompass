@@ -1,8 +1,10 @@
 name: publish-release
 
 on:
-  # Primary path: a squash merge of a release PR updates VERSION on main.
+  # Primary path: merging a release PR updates VERSION on main.
   # The workflow reads VERSION, tags the current main HEAD and publishes the release.
+  # After a rebase merge that HEAD is the last commit of the PR, which is not
+  # necessarily the commit that changed VERSION.
   push:
     branches:
       - main

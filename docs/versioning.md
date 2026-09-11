@@ -14,11 +14,12 @@ This project versions more than releases. Model-backed behavior depends on code,
 The public repository treats `main` as release-ready history. A public pull request should be ready to become a GitHub Release as soon as it is merged.
 
 - Public changes land through pull requests into protected `main`.
-- Squash merge is the expected public merge strategy: one merged PR becomes one public release commit.
+- Merge commits are disabled, so `main` stays linear. Rebase and merge is the strategy for a pull request that carries several commits, which keeps one logical change per public commit; squash merge is for a pull request that is already a single commit. `v0.2.0` landed as one squashed commit and `v0.3.0` landed as its own granular history.
 - Release PRs update `VERSION` with SemVer without a leading `v`, for example `0.2.0`.
 - Release PRs also update `CHANGELOG.md` and add `docs/release-notes-v<version>.md`, for example `docs/release-notes-v0.2.0.md`.
 - After a release PR that changes `VERSION` is merged to `main`, the `publish-release` workflow runs automatically on that `main` push.
 - The workflow reads `VERSION`, builds the tag name (`v0.2.0`), verifies the matching release-notes file, reruns the release gate, tags that event SHA and creates the GitHub Release.
+- That event SHA is the new `main` tip, which after a rebase merge is the last commit of the pull request rather than the commit that changed `VERSION`. The two are the same only when the `VERSION` change is the final commit.
 - Non-release PRs must not change `VERSION`; their merges do not run `publish-release`.
 - If the tag already exists at the same `main` commit, the workflow can resume publishing. If the tag exists at another commit, the workflow fails instead of moving history.
 - Normal releases do not require pressing `Run workflow`; the `VERSION`-changing merge to `main` is the release trigger.
