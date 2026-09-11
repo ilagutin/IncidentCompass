@@ -1,4 +1,3 @@
-using System.Net;
 using System.Text.Json;
 using IncidentCompass.Application.Core.Errors;
 using IncidentCompass.Application.Core.ModelClients;
@@ -419,7 +418,7 @@ public sealed class OpenAiCompatibleModelClientTests
 
         Assert.Equal("invalid_request", exception.ErrorCode);
         Assert.Equal("raw_provider_code", exception.ProviderErrorCode);
-        Assert.Equal(HttpStatusCode.BadRequest, exception.StatusCode);
+        Assert.Equal(ProviderFailureKind.RejectedRequest, exception.FailureKind);
     }
 
     [Fact]

@@ -23,4 +23,11 @@ internal static class ToolPolicyDenialReasons
     internal const string PreconditionUnsatisfied = "precondition_unsatisfied";
     internal const string PreconditionMissingPrerequisite = "precondition_missing_prerequisite";
     internal const string UnknownRuleType = "unknown_rule_type";
+
+    /// <summary>
+    /// The rule names a window this backend does not evaluate. It denies rather than being read as
+    /// the nearest window, because the two fact readers behind the two governance paths would not
+    /// have picked the same nearest window.
+    /// </summary>
+    internal const string UnknownRuleScope = "unknown_rule_scope";
 }

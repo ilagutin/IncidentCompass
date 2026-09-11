@@ -18,7 +18,17 @@ flowchart LR
 Application contracts carry a provider *identity* only. `AiModelRequest.ProviderId` and
 `EmbeddingRequest.ProviderId` name the configured provider a route resolved to; turning that name
 into an endpoint and a credential happens inside Infrastructure, so no endpoint URL and no
-credential travels on an Application contract. See `docs/model-gateway.md`, "Providers".
+credential travels on an Application contract. A provider *failure* is shaped the same way:
+`ProviderException` carries a normalized `ErrorCode`, a `ProviderFailureKind` and the provider's own
+error string, and no transport type, so a non-HTTP adapter has no field it would have to invent a
+value for. See `docs/model-gateway.md`, "Providers".
+
+`ArchitectureTests` checks both halves of what a layer depends on. It reads each project's
+`ProjectReference` list against an approved matrix, and, for `Domain` and `Application`, its
+`PackageReference` list against an exact allowed set: none at all for `Domain`, and for
+`Application` only FluentValidation and the abstractions-only `Microsoft.Extensions.*` packages the
+dispatcher, typed options and `ILogger<T>` need. Adding a driver, a client or a provider SDK to
+either inner layer fails the test rather than passing because only project references were read.
 
 ## Projects
 
@@ -346,7 +356,10 @@ reference update, a reference delete, a merge, an automatic merge or a repositor
 Blobs, trees and commits are content-addressed and so idempotent by
 construction, and the commit's author and committer dates are pinned by the approval, which leaves the
 reference create as the only operation whose repetition would mean anything. It is a compare-and-swap:
-a name that is taken is read back, never overwritten.
+a name that is taken is read back, never overwritten. The two are also distinguishable after the
+fact: a read of an existing branch answers `code_publication_branch_read`, never the code that says
+a branch was created, because the code is logged and persisted on an action row and the difference
+between creating a reference and looking at one is the whole at-most-once story.
 
 **Where it is bound.** The owner, repository and credential are the ones
 `IncidentCompass:Tickets:GitHub` already carries; `IncidentCompass:Publication:GitHub:BaseBranch` adds
@@ -647,6 +660,15 @@ notification denies a successor, and a database-clock 30-minute cooldown measure
 dispatch start follows confirmed live success or `dispatch_outcome_unknown`. Dry-run, requested,
 rejected, expired and definitive
 pre-mutation failure do not start that cooldown.
+
+The Telegram adapter draws the same at-most-once line the GitHub adapters draw, and draws it itself
+rather than leaving it to the dispatcher's catch-all. A send is a write, so only a transport failure
+that provably preceded the request - name resolution, TLS handshake, proxy tunnel, or a socket that
+never connected - is the definitive `telegram_unavailable` result. Anything else the transport can do
+after the request is on the wire stays `dispatch_outcome_unknown`, because the notification may have
+arrived with only its answer lost. One classifier in Infrastructure answers "did this leave the
+process" for every HTTP adapter here, so the model gateway, the Git Data sender and this adapter
+cannot disagree about it.
 
 `/api/v1/action-approvals` exposes compact tenant-scoped lists, immutable review details, approve and
 reject. Review details are reconstructed from tuple and provenance rows, not the `ProposedAction`

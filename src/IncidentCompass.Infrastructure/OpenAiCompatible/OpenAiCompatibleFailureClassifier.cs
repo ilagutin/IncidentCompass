@@ -1,6 +1,6 @@
 using System.Net;
-using System.Net.Sockets;
 using IncidentCompass.Application.Core.Errors;
+using IncidentCompass.Infrastructure.Http;
 
 namespace IncidentCompass.Infrastructure.OpenAiCompatible;
 
@@ -63,49 +63,19 @@ internal static class OpenAiCompatibleFailureClassifier
             : ProviderFailureKind.Unavailable;
     }
 
-    public static bool IsSafePreDispatchFailure(HttpRequestException exception)
-    {
-        ArgumentNullException.ThrowIfNull(exception);
-
-        if (exception.HttpRequestError is
-            HttpRequestError.NameResolutionError or
-            HttpRequestError.SecureConnectionError or
-            HttpRequestError.ProxyTunnelError)
-        {
-            return true;
-        }
-
-        if (exception.HttpRequestError != HttpRequestError.ConnectionError)
-        {
-            return false;
-        }
-
-        return FindSocketError(exception) is
-            SocketError.ConnectionRefused or
-            SocketError.TimedOut or
-            SocketError.HostUnreachable or
-            SocketError.NetworkUnreachable or
-            SocketError.HostNotFound or
-            SocketError.AddressNotAvailable;
-    }
+    /// <summary>
+    /// Whether the request never left this process. The rule itself lives in
+    /// <see cref="HttpTransportFailureClassifier" />, because every HTTP adapter in this assembly
+    /// has to draw the same line between "nothing was sent" and "the answer was lost", and two
+    /// copies of that line would eventually disagree.
+    /// </summary>
+    public static bool IsSafePreDispatchFailure(HttpRequestException exception) =>
+        HttpTransportFailureClassifier.IsSafePreDispatchFailure(exception);
 
     public static ProviderFailureKind Classify(HttpRequestException exception)
     {
         return IsSafePreDispatchFailure(exception)
             ? ProviderFailureKind.Unavailable
             : ProviderFailureKind.AmbiguousInterruption;
-    }
-
-    private static SocketError? FindSocketError(Exception exception)
-    {
-        for (Exception? current = exception; current is not null; current = current.InnerException)
-        {
-            if (current is SocketException socketException)
-            {
-                return socketException.SocketErrorCode;
-            }
-        }
-
-        return null;
     }
 }

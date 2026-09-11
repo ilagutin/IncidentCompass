@@ -4,6 +4,7 @@ using System.Text.Json.Nodes;
 using IncidentCompass.Application.Core.ModelClients;
 using IncidentCompass.Application.Core.Serialization;
 using IncidentCompass.Application.Governance.Ledger;
+using IncidentCompass.Application.Governance.Tools;
 using IncidentCompass.Application.Intake.Configuration;
 using IncidentCompass.Application.Investigation.Jobs;
 using IncidentCompass.Application.Investigation.Reports;
@@ -508,11 +509,11 @@ public sealed class RemediationDiffRunnerTests : IDisposable
             Task.FromResult(new TriageBudgetLedgerUsage(TokensSpent: 0, WorkerCalls: 0));
 
         public Task<int> CountPolicyDecisionsAsync(
-            TriageJob job, string toolName, string scope, TriageLedgerDecision decision,
+            TriageJob job, string toolName, ToolRuleScope scope, TriageLedgerDecision decision,
             CancellationToken cancellationToken) => Task.FromResult(0);
 
         public Task<bool> HasSuccessfulToolResultAsync(
-            TriageJob job, string toolName, string scope, CancellationToken cancellationToken) =>
+            TriageJob job, string toolName, ToolRuleScope scope, CancellationToken cancellationToken) =>
             Task.FromResult(true);
 
         public Task<IReadOnlyList<FaultLedgerEntry>> ReadByFaultIdAsync(

@@ -536,7 +536,11 @@ prefix. The correction carries the closed outcome code and nothing else: no path
 the diff the model sent and no byte of a file. A refusal about the environment, a base that moved, a
 filesystem error or a rollback that failed, is not reprompted, because no answer fixes it. The
 adapter decides which is which; a caller guessing from the shape of a code string would guess wrong
-the first time the vocabulary grew.
+the first time the vocabulary grew. What the adapter calls an environment refusal is narrow on
+purpose: only the filesystem's own answers, a full disk or a revoked permission, become
+`source_workspace_unavailable`. An exception about arguments this code chose is a defect in it, and a
+defect surfaces as a defect rather than as a disk problem that never happened, which would otherwise
+be recorded as not the model's fault and spend nothing correcting it.
 
 **The base obligation, discharged.** The previous section states it as the caller's: a hunk that
 consumes no base line matches at its offset in any file, so an insert-only diff binds to no tree and
@@ -1060,7 +1064,13 @@ risky tools require approval or must be rejected, and the LLM must not receive i
 credentials.
 
 The investigation loop gives the orchestrator only backend-owned `delegate` and `publish_report`
-actions; `delegate.role` is generated from configuration and validated again before execution.
+actions; `delegate.role` is generated from configuration and validated again before execution. A
+`delegate` naming a role the configuration does not hold is refused on the same path as a `delegate`
+missing its `role` string: it costs one bounded reprompt, is durable as an `orchestrator_reprompt:`
+`BudgetEvent`, delegates nothing and appends no `Delegated` entry, and fails the attempt closed once
+the allowance is spent. The diagnostic it hands back is a fixed backend-authored string and never
+repeats the role the model named; the closed enum of configured roles is already in the `delegate`
+tool schema, so naming the rejected value would add nothing but a reflected string.
 Worker-tool proposals are recorded as `ToolProposed`, checked against role grants and ledger-backed
 rules, recorded as `PolicyDecision`, and only allowed backend calls execute.
 
@@ -1068,9 +1078,14 @@ The shared rule engine also fails closed on the rules themselves rather than ski
 evaluate:
 
 - a rule whose type it does not recognise is denied (`unknown_rule_type`);
+- a rule whose scope it does not evaluate is denied (`unknown_rule_scope`);
 - a `precondition` rule that names no prerequisite tool is denied
   (`precondition_missing_prerequisite`);
 - a `rate_cap` rule without a positive maximum is denied (`rate_cap_missing_max`).
+
+A rule's scope is parsed once, by the engine, before either path's fact reader is reached. The
+readers are handed the parsed window rather than the configured string, so neither of them decides
+what an unrecognised scope means and the two cannot answer it differently.
 
 Every denial names its cause the same way: a stable reason code, optionally followed by `: ` and a
 human detail, with the code always the leading token of the recorded reason. The post-report denial

@@ -149,7 +149,6 @@ public sealed class OpenAiCompatibleEmbeddingClientTests
 
         Assert.Equal("openai-compatible", exception.Provider);
         Assert.Equal(expectedErrorCode, exception.ErrorCode);
-        Assert.Equal((HttpStatusCode)statusCodeValue, exception.StatusCode);
         Assert.Equal("raw_provider_code", exception.ProviderErrorCode);
         Assert.Equal(expectedFailureKind, exception.FailureKind);
         var expectedOutage = expectedFailureKind == ProviderFailureKind.Unavailable;
@@ -172,7 +171,6 @@ public sealed class OpenAiCompatibleEmbeddingClientTests
                 TestContext.Current.CancellationToken));
 
         Assert.Equal("configuration_error", exception.ErrorCode);
-        Assert.Null(exception.StatusCode);
         Assert.Equal(ProviderFailureKind.RejectedRequest, exception.FailureKind);
     }
 
@@ -193,7 +191,6 @@ public sealed class OpenAiCompatibleEmbeddingClientTests
                 TestContext.Current.CancellationToken));
 
         Assert.Equal("configuration_error", exception.ErrorCode);
-        Assert.Null(exception.StatusCode);
         Assert.Equal(ProviderFailureKind.RejectedRequest, exception.FailureKind);
     }
 
@@ -215,7 +212,6 @@ public sealed class OpenAiCompatibleEmbeddingClientTests
                 TestContext.Current.CancellationToken));
 
         Assert.Equal("invalid_json", exception.ErrorCode);
-        Assert.Null(exception.StatusCode);
         Assert.Equal(ProviderFailureKind.InvalidResponse, exception.FailureKind);
     }
 
@@ -251,7 +247,6 @@ public sealed class OpenAiCompatibleEmbeddingClientTests
                 TestContext.Current.CancellationToken));
 
         Assert.Equal("empty_embedding", exception.ErrorCode);
-        Assert.Null(exception.StatusCode);
         Assert.Equal(ProviderFailureKind.InvalidResponse, exception.FailureKind);
     }
 
@@ -308,7 +303,6 @@ public sealed class OpenAiCompatibleEmbeddingClientTests
                 TestContext.Current.CancellationToken));
 
         Assert.Equal("timeout", exception.ErrorCode);
-        Assert.Null(exception.StatusCode);
         Assert.Equal(ProviderFailureKind.GenerationTimeout, exception.FailureKind);
     }
 

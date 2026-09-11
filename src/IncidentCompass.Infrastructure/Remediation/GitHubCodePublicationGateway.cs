@@ -144,7 +144,7 @@ public sealed class GitHubCodePublicationGateway : ICodePublicationGateway, IDis
             }
 
             return GitHubGitDataParser.TryReadObjectSha(document.RootElement) is { } sha
-                ? new CodePublicationRefResult(CodePublicationCodes.BranchCreated, sha)
+                ? new CodePublicationRefResult(CodePublicationCodes.BranchRead, sha)
                 : CodePublicationRefResult.Refused(CodePublicationCodes.ResponseMalformed);
         }
     }

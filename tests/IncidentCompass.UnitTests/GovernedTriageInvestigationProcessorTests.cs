@@ -246,6 +246,62 @@ public sealed class GovernedTriageInvestigationProcessorTests
                 rationale.StartsWith("orchestrator_reprompt:", StringComparison.Ordinal));
     }
 
+    /// <summary>
+    /// A delegate call naming a role the configuration does not hold is a correctable refusal that
+    /// costs a reprompt, and the value it named never leaves the backend.
+    /// </summary>
+    /// <remarks>
+    /// Both halves used to be wrong in the same early return. The role came out of model-supplied
+    /// tool-call arguments and went straight back into the tool result, which made it the one place
+    /// in this codebase that reflected untrusted text. And the return skipped the worker-budget
+    /// check and every ledger append, while the loop still counted the turn as delegated, so a model
+    /// looping on an unknown role spent the whole turn allowance and left nothing in the ledger to
+    /// explain it.
+    /// </remarks>
+    [Fact]
+    public async Task ProcessAsync_UnknownDelegateRoleCostsARepromptAndNeverEchoesTheRoleItRefused()
+    {
+        const string hostileRole = "UNKNOWN_ROLE_MODEL_TEXT_MUST_NOT_ESCAPE";
+        var model = new ScriptedOrchestratorModel(refusedFirstDelegateRole: hostileRole);
+        var harness = CreateHarness(model);
+
+        await harness.ProcessAsync();
+
+        // The turn was charged as a correction and is durable under its own reprompt reason.
+        var log = harness.Logger.Single(3401);
+        Assert.Contains("delegate_validation_failed", log.Message, StringComparison.Ordinal);
+        Assert.Contains(AnalysisDelegateExecutor.UnknownRoleMessage, log.Message, StringComparison.Ordinal);
+        Assert.Contains("1/1", log.Message, StringComparison.Ordinal);
+        var repromptEvent = Assert.Single(
+            harness.LedgerWriter.Requests,
+            request => request.EventType == TriageLedgerEventType.BudgetEvent &&
+                request.Rationale is { } rationale &&
+                rationale.StartsWith("orchestrator_reprompt:", StringComparison.Ordinal));
+        Assert.Equal("orchestrator", repromptEvent.Role);
+        Assert.Contains("delegate_validation_failed", repromptEvent.Rationale, StringComparison.Ordinal);
+
+        // The refused turn delegated nothing, so only the corrected turn is on the ledger as one.
+        var delegated = Assert.Single(
+            harness.LedgerWriter.Requests,
+            request => request.EventType == TriageLedgerEventType.Delegated);
+        Assert.Equal("analysis", delegated.Role);
+
+        // The role the model invented reaches neither the ledger, nor the log, nor the model again.
+        Assert.DoesNotContain(
+            harness.LedgerWriter.Requests,
+            request => (request.Rationale ?? string.Empty).Contains(hostileRole, StringComparison.Ordinal) ||
+                (request.Role ?? string.Empty).Contains(hostileRole, StringComparison.Ordinal));
+        Assert.DoesNotContain(hostileRole, log.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            model.RequestMessages,
+            message => (message ?? string.Empty).Contains(hostileRole, StringComparison.Ordinal));
+
+        // The correction was correctable: the loop carried on and finished the investigation.
+        Assert.Equal(3, model.OrchestratorCalls);
+        Assert.Equal(1, model.WorkerCalls);
+        Assert.Single(harness.Reports.Published);
+    }
+
     private static ProcessorHarness CreateHarness(
         IAiModelClient model,
         string orchestratorRouteId = "report-chat",
@@ -360,7 +416,15 @@ public sealed class GovernedTriageInvestigationProcessorTests
     /// Answers an orchestrator turn (the request carries the orchestrator tool surface) with delegate
     /// first and publish_report second, and any worker turn with schema-valid output.
     /// </summary>
-    private sealed class ScriptedOrchestratorModel(string workerOutput = WorkerOutput) : IAiModelClient
+    /// <param name="workerOutput">The text every worker turn answers with.</param>
+    /// <param name="refusedFirstDelegateRole">
+    /// When set, the first orchestrator turn delegates to this role instead of <c>analysis</c>, and
+    /// the real delegate turn moves to second place. It is how a turn the backend must refuse is
+    /// scripted without changing what every other test here sees.
+    /// </param>
+    private sealed class ScriptedOrchestratorModel(
+        string workerOutput = WorkerOutput,
+        string? refusedFirstDelegateRole = null) : IAiModelClient
     {
         public int OrchestratorCalls { get; private set; }
 
@@ -383,20 +447,35 @@ public sealed class GovernedTriageInvestigationProcessorTests
             }
 
             OrchestratorCalls++;
-            return Task.FromResult(OrchestratorCalls == 1
-                ? Response("Delegate analysis.", [new AiToolCall(
-                    "call-delegate",
-                    OrchestratorToolNames.Delegate,
-                    "v1",
-                    Arguments("""{"role":"analysis","task":"Analyze the checkout timeout."}"""))])
-                : Response("Publish the report.", [new AiToolCall(
-                    "call-publish",
-                    OrchestratorToolNames.PublishReport,
-                    "v1",
-                    Arguments("""
-                        {"report_json":{"status":"Completed","summary":"Delegated analysis completed.","classification":"SimpleKnownError","confidence":"Medium","documentationFit":"Missing","evidence":[{"referenceId":"artifact:trigger-signal"}],"limitations":[],"recommendedNextAction":"Review the checkout logs."}}
-                        """))]));
+            if (refusedFirstDelegateRole is not null && OrchestratorCalls == 1)
+            {
+                return Task.FromResult(DelegateTurn(refusedFirstDelegateRole));
+            }
+
+            var delegateTurn = refusedFirstDelegateRole is null ? 1 : 2;
+            return Task.FromResult(
+                OrchestratorCalls == delegateTurn ? DelegateTurn("analysis") : PublishTurn());
         }
+
+        private static AiModelResponse DelegateTurn(string role) =>
+            Response("Delegate analysis.", [new AiToolCall(
+                "call-delegate",
+                OrchestratorToolNames.Delegate,
+                "v1",
+                Arguments(JsonSerializer.Serialize(new
+                {
+                    role,
+                    task = "Analyze the checkout timeout."
+                })))]);
+
+        private static AiModelResponse PublishTurn() =>
+            Response("Publish the report.", [new AiToolCall(
+                "call-publish",
+                OrchestratorToolNames.PublishReport,
+                "v1",
+                Arguments("""
+                    {"report_json":{"status":"Completed","summary":"Delegated analysis completed.","classification":"SimpleKnownError","confidence":"Medium","documentationFit":"Missing","evidence":[{"referenceId":"artifact:trigger-signal"}],"limitations":[],"recommendedNextAction":"Review the checkout logs."}}
+                    """))]);
 
         private static AiModelResponse Response(string content, IReadOnlyList<AiToolCall> toolCalls) =>
             new(content, "test-model", "test-provider", new AiModelUsage(1, 1, 2), "correlation", toolCalls);
@@ -480,11 +559,11 @@ public sealed class GovernedTriageInvestigationProcessorTests
             Task.FromResult(new TriageBudgetLedgerUsage(0, 0));
 
         public Task<int> CountPolicyDecisionsAsync(
-            TriageJob job, string toolName, string scope, TriageLedgerDecision decision,
+            TriageJob job, string toolName, ToolRuleScope scope, TriageLedgerDecision decision,
             CancellationToken cancellationToken) => Task.FromResult(0);
 
         public Task<bool> HasSuccessfulToolResultAsync(
-            TriageJob job, string toolName, string scope, CancellationToken cancellationToken) =>
+            TriageJob job, string toolName, ToolRuleScope scope, CancellationToken cancellationToken) =>
             Task.FromResult(true);
 
         public Task<IReadOnlyList<FaultLedgerEntry>> ReadByFaultIdAsync(

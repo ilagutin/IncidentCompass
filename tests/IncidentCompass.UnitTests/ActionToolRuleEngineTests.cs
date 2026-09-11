@@ -195,7 +195,7 @@ public sealed class ActionToolRuleEngineTests
         public int AcceptedUseCountCalls { get; private set; }
 
         public Task<int> CountPolicyDecisionsAsync(
-            TriageJob job, string toolName, string scope, TriageLedgerDecision decision,
+            TriageJob job, string toolName, ToolRuleScope scope, TriageLedgerDecision decision,
             CancellationToken cancellationToken)
         {
             PolicyDecisionCountCalls++;
@@ -203,18 +203,18 @@ public sealed class ActionToolRuleEngineTests
         }
 
         public Task<bool> HasSuccessfulToolResultAsync(
-            TriageJob job, string toolName, string scope, CancellationToken cancellationToken) =>
+            TriageJob job, string toolName, ToolRuleScope scope, CancellationToken cancellationToken) =>
             Task.FromResult(true);
 
         public Task<int> CountAcceptedUsesAsync(
-            string toolName, string scope, CancellationToken cancellationToken)
+            string toolName, ToolRuleScope scope, CancellationToken cancellationToken)
         {
             AcceptedUseCountCalls++;
             return Task.FromResult(0);
         }
 
         public Task<bool> HasSuccessfulToolResultAsync(
-            string toolName, string scope, CancellationToken cancellationToken) =>
+            string toolName, ToolRuleScope scope, CancellationToken cancellationToken) =>
             Task.FromResult(true);
 
         public Task<TriageBudgetLedgerUsage> ReadBudgetUsageAsync(

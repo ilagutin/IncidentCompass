@@ -34,18 +34,23 @@ internal sealed class SourceWorkspaceMaterializer(string workspaceRoot, SourceWo
             return SourceWorkspaceResult.Refused(SourceWorkspaceCodes.RootUnavailable);
         }
 
-        var canonicalRoot = ResolveRoot(Path.GetFullPath(sourceRoot));
-        var resolvedWorkspaceRoot = Path.GetFullPath(workspaceRoot);
-        if (IsSameOrBelow(resolvedWorkspaceRoot, canonicalRoot))
-        {
-            // A workspace below the monitored root would copy itself, and the copy would then be
-            // part of the tree its own identity describes.
-            return SourceWorkspaceResult.Refused(SourceWorkspaceCodes.WorkspaceRootRejected);
-        }
-
         string? workspacePath = null;
         try
         {
+            // Canonicalizing the two configured roots sits inside the guard rather than above it.
+            // Both strings are host configuration, and a malformed one is refused here as an
+            // unavailable workspace instead of leaving an ArgumentException for a caller to catch:
+            // a caller wide enough to catch it is also wide enough to catch the diff engine's own
+            // defects, which must not be turned into a filesystem story.
+            var canonicalRoot = ResolveRoot(Path.GetFullPath(sourceRoot));
+            var resolvedWorkspaceRoot = Path.GetFullPath(workspaceRoot);
+            if (IsSameOrBelow(resolvedWorkspaceRoot, canonicalRoot))
+            {
+                // A workspace below the monitored root would copy itself, and the copy would then be
+                // part of the tree its own identity describes.
+                return SourceWorkspaceResult.Refused(SourceWorkspaceCodes.WorkspaceRootRejected);
+            }
+
             Directory.CreateDirectory(resolvedWorkspaceRoot);
             workspacePath = SourceWorkspaceDirectory.Create(resolvedWorkspaceRoot);
             return await CopyAsync(canonicalRoot, workspacePath, cancellationToken);

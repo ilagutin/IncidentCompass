@@ -120,6 +120,17 @@ internal sealed partial class ToolRuleEngine(
         var reasons = new List<string>();
         foreach (var rule in MatchingRules(configuredRules, toolName))
         {
+            // The scope is parsed once, here, for both governance paths. A window this backend does
+            // not evaluate denies for the same reason an unknown rule type does: a rule that cannot
+            // be applied must not be applied by guessing at what it meant. Doing it before the
+            // switch also means no fact reader is ever handed a scope nobody decided.
+            if (!ToolRuleScopes.TryParse(rule.Scope, out var scope))
+            {
+                return ToolRulePolicyResult.Denied(
+                    ToolPolicyDenialReasons.UnknownRuleScope,
+                    $"'{rule.Scope}' configured for {toolName}");
+            }
+
             switch (rule.Type)
             {
                 case TriageRuleTypes.RateCap:
@@ -132,7 +143,7 @@ internal sealed partial class ToolRuleEngine(
 
                     var max = rule.Max.Value;
                     var count = await factReader.CountAcceptedUsesAsync(
-                        toolName, rule.Scope, cancellationToken);
+                        toolName, scope, cancellationToken);
                     if (count >= max)
                     {
                         return ToolRulePolicyResult.Denied(
@@ -152,7 +163,7 @@ internal sealed partial class ToolRuleEngine(
                     }
 
                     if (!await factReader.HasSuccessfulToolResultAsync(
-                            prerequisite, rule.Scope, cancellationToken))
+                            prerequisite, scope, cancellationToken))
                     {
                         return ToolRulePolicyResult.Denied(
                             ToolPolicyDenialReasons.PreconditionUnsatisfied,

@@ -16,12 +16,17 @@ internal static class OrchestratorRepromptDiagnostics
             ? exception.Message
             : UnknownReportValidationFailure;
 
+    /// <summary>
+    /// The unknown-role case names the shared constant rather than repeating its text, so the
+    /// message the executor throws and the message this allowlist admits cannot drift apart.
+    /// </summary>
     public static string ForDelegateValidation(DelegateToolCallValidationException exception) =>
         exception.Message switch
         {
             "delegate arguments must be an object." => exception.Message,
             "delegate is missing string role." => exception.Message,
             "delegate is missing string task." => exception.Message,
+            AnalysisDelegateExecutor.UnknownRoleMessage => exception.Message,
             _ => "delegate failed backend validation."
         };
 

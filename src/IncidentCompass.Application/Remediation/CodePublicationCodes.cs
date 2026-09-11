@@ -17,6 +17,14 @@ public static class CodePublicationCodes
     public const string BranchCreated = "code_publication_branch_created";
 
     /// <summary>
+    /// The branch exists and the commit it points at was read. Only ever an answer to a read: a read
+    /// creates nothing, so it must not borrow <see cref="BranchCreated" />. The code is logged and
+    /// persisted on an action row, where the difference between "this dispatch created a reference"
+    /// and "this dispatch looked at one" is the whole at-most-once story.
+    /// </summary>
+    public const string BranchRead = "code_publication_branch_read";
+
+    /// <summary>
     /// The branch already points at exactly the commit this dispatch derived, so the push had
     /// already happened and nothing was written. This is the replay answer, not a failure.
     /// </summary>

@@ -62,7 +62,13 @@ public interface ICodePublicationGateway
         string? pinnedCommitSha,
         CancellationToken cancellationToken);
 
-    /// <summary>Reads one branch reference without changing anything.</summary>
+    /// <summary>
+    /// Reads one branch reference without changing anything. It answers
+    /// <see cref="CodePublicationCodes.BranchRead" /> with the commit, or
+    /// <see cref="CodePublicationCodes.BranchAbsent" /> with no commit, and never
+    /// <see cref="CodePublicationCodes.BranchCreated" />: a read creates nothing, and the code it
+    /// returns is logged and persisted.
+    /// </summary>
     Task<CodePublicationRefResult> ReadBranchAsync(string branchName, CancellationToken cancellationToken);
 
     /// <summary>

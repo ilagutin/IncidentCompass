@@ -8,7 +8,14 @@ namespace IncidentCompass.Infrastructure.Intake;
 internal static class TriageRuleLoadValidator
 {
     private static readonly HashSet<string> RuleTypes = new(TriageRuleTypes.All, StringComparer.Ordinal);
-    private static readonly HashSet<string> RuleScopes = new(["attempt", "job"], StringComparer.Ordinal);
+    /// <summary>
+    /// The scopes a configuration may name, taken from the same constants the rule engine parses
+    /// with rather than spelled again here. The loader is the first boundary and the engine is the
+    /// second: a rehydrated attempt snapshot reaches the engine without passing this validator, so
+    /// both have to exist, but only one of them gets to say what the words are.
+    /// </summary>
+    private static readonly HashSet<string> RuleScopes =
+        new([ToolRuleScopes.AttemptName, ToolRuleScopes.JobName], StringComparer.Ordinal);
 
     public static void Validate(
         IReadOnlyDictionary<string, TriageToolSettings> tools,
@@ -19,7 +26,10 @@ internal static class TriageRuleLoadValidator
             RequireKnown("Rules.Type", rule.Type, RuleTypes);
             if (!RuleScopes.Contains(rule.Scope))
             {
-                throw Invalid("Rules." + rule.Type + ".Scope", rule.Scope, "one of: attempt, job");
+                throw Invalid(
+                    "Rules." + rule.Type + ".Scope",
+                    rule.Scope,
+                    "one of: " + ToolRuleScopes.AttemptName + ", " + ToolRuleScopes.JobName);
             }
 
             if (!string.Equals(rule.Tool, "*", StringComparison.Ordinal) && !tools.ContainsKey(rule.Tool))

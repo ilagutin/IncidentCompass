@@ -1,5 +1,6 @@
 using System.Globalization;
 using IncidentCompass.Application.Governance.Ledger;
+using IncidentCompass.Application.Governance.Tools;
 using IncidentCompass.Domain.Incidents;
 using IncidentCompass.Domain.Incidents.Statuses;
 using IncidentCompass.Infrastructure.Postgres;
@@ -24,9 +25,9 @@ internal sealed class PostgresTriageLedgerReader(PostgresDataSourceProvider data
             SELECT COALESCE(SUM(tokens_delta), 0), COALESCE(SUM(workers_delta), 0)
             FROM incidentcompass.triage_ledger
             WHERE event_type = 'BudgetEvent'
-            """ + ScopePredicate("attempt") + ";",
+            """ + ScopePredicate(ToolRuleScope.Attempt) + ";",
             connection);
-        AddScopeParameters(command, job, "attempt");
+        AddScopeParameters(command, job, ToolRuleScope.Attempt);
 
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken))
@@ -40,7 +41,7 @@ internal sealed class PostgresTriageLedgerReader(PostgresDataSourceProvider data
     public Task<int> CountPolicyDecisionsAsync(
         TriageJob job,
         string toolName,
-        string scope,
+        ToolRuleScope scope,
         TriageLedgerDecision decision,
         CancellationToken cancellationToken) =>
         PostgresOperation.ExecuteAsync(
@@ -50,7 +51,7 @@ internal sealed class PostgresTriageLedgerReader(PostgresDataSourceProvider data
     private async Task<int> CountPolicyDecisionsCoreAsync(
         TriageJob job,
         string toolName,
-        string scope,
+        ToolRuleScope scope,
         TriageLedgerDecision decision,
         CancellationToken cancellationToken)
     {
@@ -74,7 +75,7 @@ internal sealed class PostgresTriageLedgerReader(PostgresDataSourceProvider data
     public Task<bool> HasSuccessfulToolResultAsync(
         TriageJob job,
         string toolName,
-        string scope,
+        ToolRuleScope scope,
         CancellationToken cancellationToken) =>
         PostgresOperation.ExecuteAsync(
             "read successful tool result",
@@ -83,7 +84,7 @@ internal sealed class PostgresTriageLedgerReader(PostgresDataSourceProvider data
     private async Task<bool> HasSuccessfulToolResultCoreAsync(
         TriageJob job,
         string toolName,
-        string scope,
+        ToolRuleScope scope,
         CancellationToken cancellationToken)
     {
         await using var connection = await dataSourceProvider.OpenConnectionAsync(cancellationToken);
@@ -187,28 +188,26 @@ internal sealed class PostgresTriageLedgerReader(PostgresDataSourceProvider data
         return entries;
     }
 
-    private static string ScopePredicate(string scope)
+    /// <summary>
+    /// The scope predicate, derived from the one answer rather than from a switch of its own.
+    /// </summary>
+    /// <remarks>
+    /// This used to switch on the configured string, which meant it also decided what an
+    /// unrecognized scope meant - it narrowed to the attempt, while the post-report action reader
+    /// widened to the job for the same input - and carried a <c>fault</c> branch nothing could
+    /// reach. The engine now parses once and denies a window it does not evaluate, so what is left
+    /// here is the single question <see cref="ToolRuleScopes.NarrowsToAttempt" /> answers for every
+    /// reader.
+    /// </remarks>
+    private static string ScopePredicate(ToolRuleScope scope) =>
+        ToolRuleScopes.NarrowsToAttempt(scope)
+            ? " AND job_id = @job_id AND attempt = @attempt"
+            : " AND job_id = @job_id";
+
+    private static void AddScopeParameters(NpgsqlCommand command, TriageJob job, ToolRuleScope scope)
     {
-        return scope switch
-        {
-            "attempt" => " AND job_id = @job_id AND attempt = @attempt",
-            "job" => " AND job_id = @job_id",
-            "fault" => " AND fault_id = @fault_id",
-            _ => " AND job_id = @job_id AND attempt = @attempt"
-        };
-    }
-
-
-    private static void AddScopeParameters(NpgsqlCommand command, TriageJob job, string scope)
-    {
-        if (scope == "fault")
-        {
-            command.AddParameter("fault_id", job.FaultId);
-            return;
-        }
-
         command.AddParameter("job_id", job.Id);
-        if (scope != "job")
+        if (ToolRuleScopes.NarrowsToAttempt(scope))
         {
             command.AddParameter("attempt", job.Attempt);
         }

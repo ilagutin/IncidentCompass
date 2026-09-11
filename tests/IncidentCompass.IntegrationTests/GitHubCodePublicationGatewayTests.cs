@@ -173,6 +173,25 @@ public sealed class GitHubCodePublicationGatewayTests
         Assert.Null(result.CommitSha);
     }
 
+    /// <summary>
+    /// A read creates nothing, so it must not answer with the code that says a branch was created.
+    /// The code is logged and persisted on an action row, and callers only ever test the commit for
+    /// null, so a borrowed code would never be caught by the paths that consume this result.
+    /// </summary>
+    [Fact]
+    public async Task ReadingAnExistingBranchAnswersThatItWasReadAndNeverThatItWasCreated()
+    {
+        var handler = new RecordingHandler(Standard(NewCommit));
+        using var gateway = CreateGateway(handler);
+
+        var result = await gateway.ReadBranchAsync(BranchName, TestContext.Current.CancellationToken);
+
+        Assert.Equal(CodePublicationCodes.BranchRead, result.Code);
+        Assert.NotEqual(CodePublicationCodes.BranchCreated, result.Code);
+        Assert.Equal(NewCommit, result.CommitSha);
+        Assert.All(handler.Methods, method => Assert.Equal(HttpMethod.Get, method));
+    }
+
     [Fact]
     public async Task ReadingAnAbsentBranchIsItsOwnAnswerAndNotAFailure()
     {

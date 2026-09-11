@@ -18,6 +18,37 @@ internal sealed class AnalysisDelegateExecutor(
     WorkerRoleRunner workerRoleRunner,
     TimeProvider timeProvider)
 {
+    /// <summary>
+    /// The diagnostic an unknown role is refused with. It is one fixed string and it does not name
+    /// the value that was rejected.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Nothing model-authored is echoed.</b> <c>role</c> arrives in the tool call's arguments, so
+    /// it is model text that a model steered by attacker-influenced incident data chose, of any
+    /// length and any characters. The earlier form put that string back into the tool result
+    /// verbatim, which made this the one place in the codebase that reflected untrusted text: the
+    /// report path runs a closed allowlist through <c>OrchestratorRepromptDiagnostics</c> and the
+    /// remediation path promises not to return a path, a line or a byte of a diff. Naming the role
+    /// also buys nothing, because the delegate tool schema already hands the model the closed enum of
+    /// configured role names, so the model is being told a value is not in a list it was given.
+    /// </para>
+    /// <para>
+    /// <b>It is a correctable refusal, not a silent early return.</b> Leaving through
+    /// <see cref="DelegateToolCallValidationException" /> puts an unknown role on the same path as a
+    /// delegate call missing its <c>role</c> string, which is the same kind of mistake: a tool call
+    /// that did not honour a schema the model was given. That path charges the turn against the
+    /// bounded reprompt allowance, writes the durable <c>orchestrator_reprompt:</c> budget event and
+    /// log 3401, and fails the attempt closed under
+    /// <c>TriageBudgetExhaustedException.OrchestratorRepromptLimitReachedCode</c> once the allowance
+    /// is spent. The early return did none of that: it skipped the worker-budget check and every
+    /// ledger append below, and the loop still classified the turn as delegated, so a model looping
+    /// on an unknown role burned the whole turn allowance leaving nothing in the ledger to say why.
+    /// </para>
+    /// </remarks>
+    internal const string UnknownRoleMessage =
+        "delegate role is not one of the configured roles the delegate tool offers.";
+
     public async Task<string> ExecuteAsync(
         TriageJob job,
         TriageConfiguration configuration,
@@ -29,7 +60,7 @@ internal sealed class AnalysisDelegateExecutor(
         var (roleName, task) = ReadDelegateArguments(toolCall.Arguments);
         if (!configuration.Roles.TryGetValue(roleName, out var role))
         {
-            return JsonSerializer.Serialize(new { errorCode = "unknown_role", role = roleName });
+            throw CreateException(UnknownRoleMessage);
         }
 
         await EnsureWorkerBudgetAsync(job, configuration, roleName, cancellationToken);

@@ -86,6 +86,47 @@ public sealed partial class ArchitectureTests
         ["IncidentCompass.Tester"] = []
     };
 
+    /// <summary>
+    /// The exact package set each inner layer may declare in its own csproj.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Domain: none.</b> It is simple records and enums with no behaviour that needs a library,
+    /// and <c>CLAUDE.md</c> forbids it depending on provider SDKs or persistence libraries. Zero is
+    /// both what it has today and the only line that needs no case-by-case argument.
+    /// </para>
+    /// <para>
+    /// <b>Application: abstractions and the documented validation library.</b> Every entry is
+    /// contract-only. The four <c>Microsoft.Extensions.*</c> packages are the hosting seams the
+    /// layer is composed and observed through - <c>AddApplication</c> needs the dependency-injection
+    /// abstractions, typed options need the configuration and options abstractions, and
+    /// <c>ILogger&lt;T&gt;</c> is how the documented observability model reaches this layer. None of
+    /// them carries an implementation: no host, no configuration provider, no logging sink.
+    /// FluentValidation and its dependency-injection extension are the validation choice
+    /// <c>CLAUDE.md</c> names, and validators run in the dispatcher pipeline that lives here.
+    /// </para>
+    /// <para>
+    /// What is deliberately absent is the whole point: no Npgsql or other driver, no
+    /// <c>System.Net.Http</c>-shaped client package, no provider SDK, no serialization format
+    /// binding. Adding one fails this test rather than passing quietly, and widening the list means
+    /// writing the argument for it here.
+    /// </para>
+    /// </remarks>
+    private static readonly Dictionary<string, string[]> AllowedInnerLayerPackages =
+        new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["IncidentCompass.Domain"] = [],
+            ["IncidentCompass.Application"] =
+                [
+                    "FluentValidation",
+                    "FluentValidation.DependencyInjectionExtensions",
+                    "Microsoft.Extensions.Configuration.Abstractions",
+                    "Microsoft.Extensions.DependencyInjection.Abstractions",
+                    "Microsoft.Extensions.Logging.Abstractions",
+                    "Microsoft.Extensions.Options.ConfigurationExtensions"
+                ]
+        };
+
     [Fact]
     public void SourceProjects_UseOnlyAllowedProjectReferences()
     {
@@ -394,6 +435,84 @@ public sealed partial class ArchitectureTests
         Assert.Empty(failures);
     }
 
+    /// <summary>
+    /// Provider HTTP detail must not leak into an Application contract. The base of every provider
+    /// error the Application layer declares once carried the provider's <c>HttpStatusCode</c>, which
+    /// a non-HTTP provider adapter has no honest value for; what the status meant belongs in the
+    /// normalized <c>ErrorCode</c> and the <c>ProviderFailureKind</c> enum instead. The transport
+    /// namespace is matched in both of its written forms, plus the message types by name because
+    /// <c>ImplicitUsings</c> puts <c>System.Net.Http</c> in every project's global usings, so a file
+    /// can name them without writing a using directive at all. The bare word
+    /// <c>HttpStatusCode</c> is deliberately not a marker: <c>Intake/Normalization</c> carries an
+    /// <c>httpStatusCode</c> signal attribute as a plain <c>int?</c>, which is an observed property
+    /// of an incident and not a dependency on a transport type.
+    /// </summary>
+    [Fact]
+    public void ProviderTransportTypes_DoNotLeakIntoApplicationOrDomain()
+    {
+        var forbiddenMarkers = new[]
+        {
+            "using System.Net;",
+            "System.Net.",
+            "HttpRequestMessage",
+            "HttpResponseMessage",
+            "HttpRequestException",
+            "HttpClient"
+        };
+        var failures = new List<string>();
+
+        foreach (var projectName in new[] { "IncidentCompass.Application", "IncidentCompass.Domain" })
+        {
+            var projectDirectory = Path.Combine(RepositoryRootLocator.Find(), "src", projectName);
+            foreach (var sourcePath in EnumerateSourceFiles(projectDirectory))
+            {
+                AddForbiddenMarkers(
+                    failures,
+                    "provider transport",
+                    Path.GetRelativePath(RepositoryRootLocator.Find(), sourcePath),
+                    File.ReadAllText(sourcePath),
+                    forbiddenMarkers);
+            }
+        }
+
+        Assert.Empty(failures);
+    }
+
+    /// <summary>
+    /// The layer boundary is a claim about dependencies, and a <c>PackageReference</c> is a
+    /// dependency exactly as much as a <c>ProjectReference</c> is. Reading only project references
+    /// left the two inner layers open: a persistence driver, an HTTP client or a provider SDK added
+    /// to Domain passed every architecture test. Both lists are exact rather than a denylist,
+    /// because the set of packages that would be wrong here is open-ended and the set that is right
+    /// is small enough to write down and argue for.
+    /// </summary>
+    [Fact]
+    public void InnerLayerProjects_UseOnlyAllowedPackageReferences()
+    {
+        var projects = LoadSourceProjects();
+        var failures = new List<string>();
+
+        foreach (var (projectName, allowedPackages) in AllowedInnerLayerPackages)
+        {
+            if (!projects.TryGetValue(projectName, out var project))
+            {
+                failures.Add($"{projectName} was not found under src.");
+                continue;
+            }
+
+            var expected = allowedPackages.Order(StringComparer.OrdinalIgnoreCase).ToArray();
+            var actual = project.PackageReferences.Order(StringComparer.OrdinalIgnoreCase).ToArray();
+            if (!expected.SequenceEqual(actual, StringComparer.OrdinalIgnoreCase))
+            {
+                failures.Add(
+                    $"{projectName} references packages [{string.Join(", ", actual)}], " +
+                    $"expected [{string.Join(", ", expected)}].");
+            }
+        }
+
+        Assert.Empty(failures);
+    }
+
     private static Dictionary<string, SourceProject> LoadSourceProjects()
     {
         var sourceDirectory = Path.Combine(RepositoryRootLocator.Find(), "src");
@@ -421,7 +540,19 @@ public sealed partial class ArchitectureTests
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
-        return new SourceProject(Path.GetFileNameWithoutExtension(projectPath), projectDirectory, references);
+        // Central package management means a PackageReference here carries no Version attribute;
+        // the identity that matters for the layer boundary is the Include name either way.
+        var packages = document
+            .Descendants()
+            .Where(element => element.Name.LocalName == "PackageReference")
+            .Select(element => element.Attribute("Include")?.Value)
+            .Where(include => !string.IsNullOrWhiteSpace(include))
+            .Select(include => include!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        return new SourceProject(
+            Path.GetFileNameWithoutExtension(projectPath), projectDirectory, references, packages);
     }
 
     private static IReadOnlyList<ModuleMembershipRule> ModuleMembershipRules() =>
@@ -631,7 +762,11 @@ public sealed partial class ArchitectureTests
         return remainder.ToString();
     }
 
-    private sealed record SourceProject(string Name, string Directory, string[] ProjectReferences);
+    private sealed record SourceProject(
+        string Name,
+        string Directory,
+        string[] ProjectReferences,
+        string[] PackageReferences);
 
     private sealed record ModuleMembershipRule(
         string ProjectName,

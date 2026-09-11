@@ -106,11 +106,11 @@ public sealed class TicketToolSurfaceTests
             throw new NotSupportedException();
 
         public Task<int> CountPolicyDecisionsAsync(
-            TriageJob job, string toolName, string scope, TriageLedgerDecision decision, CancellationToken cancellationToken) =>
+            TriageJob job, string toolName, ToolRuleScope scope, TriageLedgerDecision decision, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
         public Task<bool> HasSuccessfulToolResultAsync(
-            TriageJob job, string toolName, string scope, CancellationToken cancellationToken) =>
+            TriageJob job, string toolName, ToolRuleScope scope, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
         public Task<IReadOnlyList<FaultLedgerEntry>> ReadByFaultIdAsync(

@@ -9,6 +9,7 @@ using IncidentCompass.Application.Core.Serialization;
 using IncidentCompass.Application.Governance.ActionApprovals.Propose;
 using IncidentCompass.Application.Governance.Ledger;
 using IncidentCompass.Application.Governance.PostReportActions;
+using IncidentCompass.Application.Governance.Tools;
 using IncidentCompass.Application.Intake.Configuration;
 using IncidentCompass.Application.Investigation.Jobs;
 using IncidentCompass.Application.Investigation.Reports;
@@ -729,14 +730,14 @@ public sealed class RemediationTriggerTests
         public Task<int> CountPolicyDecisionsAsync(
             TriageJob job,
             string toolName,
-            string scope,
+            ToolRuleScope scope,
             TriageLedgerDecision decision,
             CancellationToken cancellationToken) => Task.FromResult(0);
 
         public Task<bool> HasSuccessfulToolResultAsync(
             TriageJob job,
             string toolName,
-            string scope,
+            ToolRuleScope scope,
             CancellationToken cancellationToken) => Task.FromResult(false);
 
         public Task<IReadOnlyList<FaultLedgerEntry>> ReadByFaultIdAsync(

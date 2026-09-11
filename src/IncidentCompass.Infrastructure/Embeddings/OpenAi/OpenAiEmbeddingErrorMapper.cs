@@ -17,7 +17,6 @@ internal sealed class OpenAiEmbeddingErrorMapper
             OpenAiEmbeddingProvider.Name,
             $"Embedding provider returned HTTP {(int)statusCode}.",
             OpenAiCompatibleErrorMapper.NormalizeProviderErrorCode(statusCode),
-            statusCode,
             providerError?.Error?.Code,
             failureKind: OpenAiCompatibleFailureClassifier.ClassifyEmbedding(statusCode));
     }
@@ -50,7 +49,6 @@ internal sealed class OpenAiEmbeddingErrorMapper
             errorCode: safePreDispatchFailure
                 ? "provider_unavailable"
                 : "transport_error",
-            statusCode: exception.StatusCode,
             innerException: exception,
             failureKind: safePreDispatchFailure
                 ? ProviderFailureKind.Unavailable

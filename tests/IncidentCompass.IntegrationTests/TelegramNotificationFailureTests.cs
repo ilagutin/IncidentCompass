@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Sockets;
 using System.Text;
 using IncidentCompass.Application.Notifications;
 using IncidentCompass.Infrastructure.Notifications.Telegram;
@@ -64,6 +65,53 @@ public sealed class TelegramNotificationFailureTests
 
         Assert.False(result.Succeeded);
         Assert.Equal("dispatch_outcome_unknown", result.FailureCode);
+    }
+
+    /// <summary>
+    /// A connection this host never opened is not an in-doubt dispatch. Every other HTTP adapter
+    /// here turns a transport fault into a code; this one used to let the exception escape into the
+    /// dispatcher's catch-all, which records the action as an unknown outcome - a durable state a
+    /// person has to resolve - for a notification that provably never left the process.
+    /// </summary>
+    [Fact]
+    public async Task AConnectionRefusedBeforeAnyByteIsSentIsUnavailableAndNotAnUnknownOutcome()
+    {
+        using var tool = new TelegramNotificationActionTool(
+            Options.Create(TelegramOptionsFixture.Valid()),
+            new ThrowingTelegramHandler(new HttpRequestException(
+                HttpRequestError.ConnectionError,
+                "connection refused",
+                new SocketException((int)SocketError.ConnectionRefused))));
+        var payload = TelegramNotificationPayloadFactory.Create(
+            new TelegramNotificationWorkflowInput(Guid.NewGuid(), "telegram_ops"));
+
+        var result = await tool.ExecuteAsync(
+            Guid.NewGuid(), payload.CanonicalPayload, TestContext.Current.CancellationToken);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(TelegramNotificationActionTool.UnavailableCode, result.FailureCode);
+        Assert.NotEqual(TelegramNotificationActionTool.OutcomeUnknownCode, result.FailureCode);
+    }
+
+    /// <summary>
+    /// The other half of the same rule: a send is a write, so a transport fault that cannot be shown
+    /// to precede the request stays in doubt rather than being flattened into "unavailable".
+    /// </summary>
+    [Fact]
+    public async Task ATransportFaultThatMayHaveBeenDeliveredStaysAnUnknownOutcome()
+    {
+        using var tool = new TelegramNotificationActionTool(
+            Options.Create(TelegramOptionsFixture.Valid()),
+            new ThrowingTelegramHandler(new HttpRequestException(
+                HttpRequestError.ResponseEnded, "the response ended prematurely")));
+        var payload = TelegramNotificationPayloadFactory.Create(
+            new TelegramNotificationWorkflowInput(Guid.NewGuid(), "telegram_ops"));
+
+        var result = await tool.ExecuteAsync(
+            Guid.NewGuid(), payload.CanonicalPayload, TestContext.Current.CancellationToken);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(TelegramNotificationActionTool.OutcomeUnknownCode, result.FailureCode);
     }
 
     [Fact]
@@ -170,6 +218,14 @@ public sealed class TelegramNotificationFailureTests
             }
         }
     }
+}
+
+internal sealed class ThrowingTelegramHandler(Exception failure) : HttpMessageHandler
+{
+    protected override Task<HttpResponseMessage> SendAsync(
+        HttpRequestMessage request,
+        CancellationToken cancellationToken) =>
+        Task.FromException<HttpResponseMessage>(failure);
 }
 
 internal sealed class BlockingTelegramHandler : HttpMessageHandler

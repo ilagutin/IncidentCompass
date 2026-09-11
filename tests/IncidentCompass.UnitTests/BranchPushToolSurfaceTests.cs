@@ -139,7 +139,7 @@ public sealed class BranchPushToolSurfaceTests
         public Task<int> CountPolicyDecisionsAsync(
             TriageJob job,
             string toolName,
-            string scope,
+            ToolRuleScope scope,
             TriageLedgerDecision decision,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
@@ -147,7 +147,7 @@ public sealed class BranchPushToolSurfaceTests
         public Task<bool> HasSuccessfulToolResultAsync(
             TriageJob job,
             string toolName,
-            string scope,
+            ToolRuleScope scope,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 

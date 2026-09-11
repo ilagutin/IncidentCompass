@@ -372,11 +372,11 @@ public sealed class WorkerFailClosedPropagationTests
             Task.FromResult(new TriageBudgetLedgerUsage(spentTokens, workerCalls));
 
         public Task<int> CountPolicyDecisionsAsync(
-            TriageJob job, string toolName, string scope, TriageLedgerDecision decision,
+            TriageJob job, string toolName, ToolRuleScope scope, TriageLedgerDecision decision,
             CancellationToken cancellationToken) => Task.FromResult(0);
 
         public Task<bool> HasSuccessfulToolResultAsync(
-            TriageJob job, string toolName, string scope, CancellationToken cancellationToken) =>
+            TriageJob job, string toolName, ToolRuleScope scope, CancellationToken cancellationToken) =>
             Task.FromResult(true);
 
         public Task<IReadOnlyList<FaultLedgerEntry>> ReadByFaultIdAsync(

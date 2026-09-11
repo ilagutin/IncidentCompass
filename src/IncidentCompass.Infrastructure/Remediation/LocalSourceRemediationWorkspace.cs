@@ -205,6 +205,30 @@ internal sealed class LocalSourceRemediationWorkspace(IOptions<SourceContextOpti
     private static bool IsAnswerCorrectable(string code) =>
         code is not (SourcePatchCodes.Unavailable or SourcePatchCodes.RollbackFailed);
 
+    /// <summary>
+    /// Whether an exception is the filesystem refusing, as opposed to this code asking wrongly.
+    /// </summary>
+    /// <remarks>
+    /// The line is the one <c>SourcePatchApplier.IsFilesystemFailure</c> draws, and it is the same
+    /// line for the same reason: <see cref="IOException" /> and
+    /// <see cref="UnauthorizedAccessException" /> are the filesystem's answers, while
+    /// <see cref="ArgumentException" /> and <see cref="NotSupportedException" /> are answers about
+    /// arguments this code chose, so they are its own defects.
+    /// <para>
+    /// This used to catch all four, one layer above an applier that deliberately catches two, which
+    /// undid that argument at the boundary: every logic defect inside the diff engine arrived here
+    /// and left as <c>source_workspace_unavailable</c>, a code whose own documentation says a
+    /// filesystem error ended the attempt - and, because that code is not answer-correctable, the
+    /// pass then treated the defect as not the model's fault and did not reprompt. An index computed
+    /// out of range became a disk problem that had not happened, silently.
+    /// </para>
+    /// <para>
+    /// What the two wider catches were actually for is resolving the configured roots, which is
+    /// string work on host configuration rather than on a diff. That now happens inside
+    /// <c>SourceWorkspaceMaterializer</c>'s own guard, which refuses a malformed configured path as
+    /// an unavailable workspace, so narrowing here loses no coverage.
+    /// </para>
+    /// </remarks>
     private static bool IsAdapterFailure(Exception exception) =>
-        exception is IOException or UnauthorizedAccessException or NotSupportedException or ArgumentException;
+        exception is IOException or UnauthorizedAccessException;
 }

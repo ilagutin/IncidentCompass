@@ -6,6 +6,7 @@ using IncidentCompass.Application.Governance.Tools;
 using IncidentCompass.Application.Governance.Validation;
 using IncidentCompass.Application.Notifications;
 using IncidentCompass.Domain.Incidents.Actions;
+using IncidentCompass.Infrastructure.Http;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -14,6 +15,19 @@ namespace IncidentCompass.Infrastructure.Notifications.Telegram;
 
 public sealed partial class TelegramNotificationActionTool : IExternalActionTool, IDisposable
 {
+    /// <summary>
+    /// The provider could not be reached and the notification was never sent. Safe to settle by
+    /// proposing the action again.
+    /// </summary>
+    internal const string UnavailableCode = "telegram_unavailable";
+
+    /// <summary>
+    /// The request was on the wire and its answer never arrived, so whether the chat received the
+    /// notification is not known. Durable, never automatically repeated, settled by a person. It is
+    /// the same string the response parser already uses for the answers it cannot trust.
+    /// </summary>
+    internal const string OutcomeUnknownCode = "dispatch_outcome_unknown";
+
     public static readonly Uri Authority = new("https://api.telegram.org", UriKind.Absolute);
     private readonly TelegramOptions options;
     private readonly HttpClient client;
@@ -109,27 +123,73 @@ public sealed partial class TelegramNotificationActionTool : IExternalActionTool
         using (var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
         {
             deadline.CancelAfter(TimeSpan.FromSeconds(options.TimeoutSeconds));
-            using var response = await client.SendAsync(
-                request, HttpCompletionOption.ResponseHeadersRead, deadline.Token);
-            var result = await TelegramNotificationResponseParser.ParseAsync(response, deadline.Token);
-            if (!result.Succeeded)
+            try
             {
-                LogProviderFailure(logger, result.FailureCode ?? "telegram_failure");
-            }
+                using var response = await client.SendAsync(
+                    request, HttpCompletionOption.ResponseHeadersRead, deadline.Token);
+                var result = await TelegramNotificationResponseParser.ParseAsync(response, deadline.Token);
+                if (!result.Succeeded)
+                {
+                    LogProviderFailure(logger, result.FailureCode ?? "telegram_failure");
+                }
 
-            return result;
+                return result;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                // Shutdown, not a provider fault. The dispatcher owns what a cancelled dispatch means
+                // and the existing coverage pins that this still propagates.
+                throw;
+            }
+            catch (Exception exception) when (exception is HttpRequestException or IOException or OperationCanceledException)
+            {
+                var code = TransportFailureCode(exception);
+                LogProviderFailure(logger, code);
+                return NotDelivered(code);
+            }
         }
     }
 
     public void Dispose() => client.Dispose();
 
+    /// <summary>
+    /// The code a transport fault gets, which is entirely a question of whether the notification may
+    /// already have been delivered.
+    /// </summary>
+    /// <remarks>
+    /// A send is a write, so this is not free to call every transport fault an unavailability the way
+    /// a read adapter can. Only a failure that happened before any request byte left this process
+    /// proves nothing was sent, and <see cref="HttpTransportFailureClassifier" /> is the single place
+    /// that decides that for every HTTP adapter here. Everything else - a mid-flight reset, a stream
+    /// fault, this adapter's own deadline expiring after the request was on the wire - may have been
+    /// delivered with only its answer lost, and stays the durable in-doubt state a person settles.
+    /// Before this existed none of it was mapped at all: the exception escaped into the dispatcher's
+    /// catch-all, so a connection this host never opened was recorded exactly like a message that may
+    /// have reached the chat.
+    /// </remarks>
+    private static string TransportFailureCode(Exception exception) =>
+        exception is HttpRequestException transport &&
+        HttpTransportFailureClassifier.IsSafePreDispatchFailure(transport)
+            ? UnavailableCode
+            : OutcomeUnknownCode;
+
     private static ExternalActionExecutionResult Failure(string code)
+    {
+        return Result(code, "Telegram dispatch was rejected before sending.");
+    }
+
+    private static ExternalActionExecutionResult NotDelivered(string code)
+    {
+        return Result(code, "Telegram did not confirm delivery.");
+    }
+
+    private static ExternalActionExecutionResult Result(string code, string summary)
     {
         var payload = new JsonObject { ["code"] = code, ["provider"] = "telegram" };
         return new ExternalActionExecutionResult(
             false,
             System.Text.Encoding.UTF8.GetBytes(CanonicalJsonSerializer.Canonicalize(payload)),
-            "Telegram dispatch was rejected before sending.",
+            summary,
             code);
     }
 

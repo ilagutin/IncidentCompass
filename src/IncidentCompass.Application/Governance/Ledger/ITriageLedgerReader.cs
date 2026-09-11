@@ -1,3 +1,4 @@
+using IncidentCompass.Application.Governance.Tools;
 using IncidentCompass.Domain.Incidents;
 using IncidentCompass.Domain.Incidents.Statuses;
 
@@ -9,17 +10,23 @@ public interface ITriageLedgerReader
         TriageJob job,
         CancellationToken cancellationToken);
 
+    /// <remarks>
+    /// The scope is the parsed <see cref="ToolRuleScope" /> rather than the configured string, so an
+    /// adapter cannot invent a window for a value it does not recognize. See
+    /// <see cref="ToolRuleScopes" />.
+    /// </remarks>
     Task<int> CountPolicyDecisionsAsync(
         TriageJob job,
         string toolName,
-        string scope,
+        ToolRuleScope scope,
         TriageLedgerDecision decision,
         CancellationToken cancellationToken);
 
+    /// <inheritdoc cref="CountPolicyDecisionsAsync" />
     Task<bool> HasSuccessfulToolResultAsync(
         TriageJob job,
         string toolName,
-        string scope,
+        ToolRuleScope scope,
         CancellationToken cancellationToken);
 
     /// <summary>

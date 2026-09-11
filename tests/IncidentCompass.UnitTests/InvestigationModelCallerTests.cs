@@ -6,6 +6,7 @@ using IncidentCompass.Application.Core.ModelGateway;
 using IncidentCompass.Application.Core.Observability;
 using IncidentCompass.Application.Core.Resilience;
 using IncidentCompass.Application.Governance.Ledger;
+using IncidentCompass.Application.Governance.Tools;
 using IncidentCompass.Application.Intake.Configuration;
 using IncidentCompass.Application.Investigation.Jobs;
 using IncidentCompass.Domain.Incidents;
@@ -615,14 +616,14 @@ public sealed class InvestigationModelCallerTests
         public Task<int> CountPolicyDecisionsAsync(
             TriageJob job,
             string toolName,
-            string scope,
+            ToolRuleScope scope,
             TriageLedgerDecision decision,
             CancellationToken cancellationToken) => Task.FromResult(0);
 
         public Task<bool> HasSuccessfulToolResultAsync(
             TriageJob job,
             string toolName,
-            string scope,
+            ToolRuleScope scope,
             CancellationToken cancellationToken) => Task.FromResult(false);
 
         public Task<IReadOnlyList<FaultLedgerEntry>> ReadByFaultIdAsync(Guid faultId, string tenantId, CancellationToken cancellationToken) =>

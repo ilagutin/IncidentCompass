@@ -196,7 +196,6 @@ public sealed class FaultDelayReasonEndpointTests(PostgresRepositoryFixture post
                 ProviderName,
                 ProviderMessage,
                 ProviderAuthoredErrorCode,
-                HttpStatusCode.ServiceUnavailable,
                 RawProviderErrorCode,
                 failureKind: ProviderFailureKind.Unavailable);
         }

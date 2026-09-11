@@ -18,7 +18,6 @@ internal static class OpenAiModelErrorMapper
             OpenAiModelProvider.Name,
             $"Model provider returned HTTP {(int)statusCode}.",
             OpenAiCompatibleErrorMapper.NormalizeModelErrorCode(statusCode),
-            statusCode,
             providerError?.Error?.Code,
             failureKind: OpenAiCompatibleFailureClassifier.Classify(statusCode));
     }
@@ -41,7 +40,6 @@ internal static class OpenAiModelErrorMapper
             errorCode: OpenAiCompatibleFailureClassifier.IsSafePreDispatchFailure(exception)
                 ? "provider_unavailable"
                 : "provider_dispatch_outcome_unknown",
-            statusCode: exception.StatusCode,
             innerException: exception,
             failureKind: OpenAiCompatibleFailureClassifier.Classify(exception));
     }

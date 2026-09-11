@@ -343,7 +343,7 @@ public sealed class BranchPushActionToolTests
             return Task.FromResult(ExistingBranchCommit is null
                 ? CodePublicationRefResult.Refused(CodePublicationCodes.BranchAbsent)
                 : new CodePublicationRefResult(
-                    CodePublicationCodes.BranchCreated, ExistingBranchCommit));
+                    CodePublicationCodes.BranchRead, ExistingBranchCommit));
         }
 
         public Task<CodePublicationRefResult> PushAsync(

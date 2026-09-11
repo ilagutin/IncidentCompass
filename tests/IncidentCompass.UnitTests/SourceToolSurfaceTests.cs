@@ -91,14 +91,14 @@ public sealed class SourceToolSurfaceTests
         public Task<int> CountPolicyDecisionsAsync(
             TriageJob job,
             string toolName,
-            string scope,
+            ToolRuleScope scope,
             TriageLedgerDecision decision,
             CancellationToken cancellationToken) => throw new NotSupportedException();
 
         public Task<bool> HasSuccessfulToolResultAsync(
             TriageJob job,
             string toolName,
-            string scope,
+            ToolRuleScope scope,
             CancellationToken cancellationToken) => throw new NotSupportedException();
 
         public Task<IReadOnlyList<FaultLedgerEntry>> ReadByFaultIdAsync(

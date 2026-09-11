@@ -1,4 +1,3 @@
-using System.Net;
 using IncidentCompass.Application.Core.Embeddings;
 using IncidentCompass.Application.Core.Errors;
 using IncidentCompass.Application.Core.ModelClients;
@@ -220,7 +219,8 @@ public sealed class MultiProviderModelGatewayTests
                 CreateChatRequest("remote-oai"),
                 TestContext.Current.CancellationToken));
 
-        Assert.Equal(HttpStatusCode.BadRequest, exception.StatusCode);
+        Assert.Equal("invalid_request", exception.ErrorCode);
+        Assert.Equal(ProviderFailureKind.RejectedRequest, exception.FailureKind);
         AssertNoCredential(exception.ToString());
     }
 
