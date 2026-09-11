@@ -1,12 +1,25 @@
 # Measured Evaluation Run
 
-One opt-in evaluation run against a local OpenAI-compatible provider, pinned to a revision, with the
-per-attempt record kept in this repository so the numbers below can be checked rather than believed.
+One opt-in evaluation run against a local OpenAI-compatible provider, pinned to an exact working
+tree, with the per-attempt record kept in this repository so the numbers below can be checked rather
+than believed.
 
-- Revision: `ca86ad5bdf70c4693877e889b02e75451539e49c`
+- Content identity: git tree `4a7feace870c4897fcfe60efd5eafcc6b1876768`, which the run recorded for
+  itself as `evaluatedContentIdentity`
+- Published in the `v0.4.0` release, so that tag is where the tree is reachable
 - Started `2026-09-11T16:09:02Z`, finished `2026-09-11T16:52:05Z`, 43 minutes of wall clock
-- Retained record: `evaluations/triage/measured-run-ca86ad5.json`
-- The commit that followed it, `a2ca1f6`, added integration tests and changed no production code
+- Retained record: `evaluations/triage/measured-run-tree-4a7feac.json`
+- The change committed immediately after the run, and shipped in the same release, added integration
+  tests and changed no production code
+
+**Why a tree hash and not a commit id.** Every release in this repository lands by rebase, which
+rewrites the commit ids a release branch carried. The id this run recorded for itself,
+`ca86ad5bdf70c4693877e889b02e75451539e49c`, therefore resolves on the machine that produced the run
+and nowhere else. It is kept verbatim in the record because it is what the run observed, and it is
+not what this page asks anyone to check. A git tree hash is computed over content, so rewriting every
+commit leaves it untouched: the tree named above is the same tree before and after the rebase, it is
+reachable from the published tag, and [Reproducing It](#reproducing-it) is where you turn it back
+into a checkout.
 
 This page is not about the demo table in the [project README](../README.md). That table is the
 deterministic mock provider and prints fixed classifications by construction. Nothing here comes from
@@ -42,6 +55,14 @@ One machine, one provider, one model, one afternoon. Every criterion was authore
 output was observed, and the corpus file is in the repository, so a reader can see that the bar was
 set first rather than fitted afterwards.
 
+**Why that model.** `qwen3.8-27b-uncensored` is a community build whose safety training has been
+removed, and it was picked for what the adversarial case has to isolate. A model that declines a
+hostile instruction on its own makes that case unreadable: it would pass whether the backend refused
+or the model simply chose not to comply, and nothing in the record could separate the two. Taking the
+model's own refusal out of the picture leaves the backend's refusal as the only thing that can
+produce a pass. Claim nothing further from it. This is one model on one machine, the adversarial case
+is a single fixed prompt, and this run's action grants were empty in any event.
+
 ## Reproducing It
 
 You need Docker Compose, PowerShell 7 (`pwsh`, not Windows PowerShell), the .NET 10 SDK, and a
@@ -49,9 +70,18 @@ host-side OpenAI-compatible server exposing both a chat completions endpoint and
 endpoint.
 
 ~~~powershell
-git checkout ca86ad5bdf70c4693877e889b02e75451539e49c
+git fetch --tags
+$measured = (git log v0.4.0 --format="%T %H" |
+  Select-String "^4a7feace870c4897fcfe60efd5eafcc6b1876768 ").Line.Split(" ")[1]
+git checkout $measured
+git rev-parse "HEAD^{tree}"
 pwsh -NoProfile -File scripts/real-local-llm-smoke.ps1 -BaseUrl http://host.docker.internal:1234 -Model qwen3.8-27b-uncensored -EmbeddingBaseUrl http://host.docker.internal:1234 -EmbeddingModel text-embedding-nomic-embed-text-v1.5-embedding
 ~~~
+
+Everything before `git rev-parse` searches the published history for the commit whose tree is the
+tree this run executed, whatever id the rebase gave it, and checks that commit out. `git rev-parse`
+is the check: it must print `4a7feace870c4897fcfe60efd5eafcc6b1876768`, and when it does, the files
+on disk are byte for byte the files that produced every number below.
 
 The script starts an isolated Compose project, runs all 15 attempts, writes its result under the
 ignored `artifacts/evaluation/` directory and tears its own stack down.
@@ -69,7 +99,7 @@ and 305 seconds, so budget roughly an hour for the full run.
 A single pass rate would blur four different questions. The evaluator keeps them separate, and so
 does this page.
 
-| Band | The question it answers | Measured at `ca86ad5` |
+| Band | The question it answers | Measured at tree `4a7feac` |
 |---|---|---|
 | Delivery | Did the signal become a job that actually reached the provider? | 15 of 15 attempts ingested and recorded; 192 model calls, all with provider-reported usage; 0 malformed usage rows; 0 attempts with incomplete usage |
 | Terminal completion | Did the job reach a terminal state with a schema-valid published report? | 15 of 15 jobs `Succeeded`; 15 of 15 reports published and schema-valid; no job recorded a last error code; 0 failed attempts |
@@ -122,18 +152,18 @@ returned true. The keyword half of the check passed on a report the classificati
 Read the keyword match as a smoke test on wording, never as a measure of correctness.
 
 Both misses sit in the retained record with their verdict strings, in
-`evaluations/triage/measured-run-ca86ad5.json`.
+`evaluations/triage/measured-run-tree-4a7feac.json`.
 
 ## Three Runs, Three Revisions, One Day
 
 Three runs of the same corpus, the same model and the same machine happened on 2026-09-11. They are
 **not** three samples of one build. Each ran at a different revision.
 
-| Revision | Started (UTC) | Attempts reaching a terminal report | Diagnosis | Evidence | Refusal | Safety | Cases clearing tolerance |
+| Run | Started (UTC) | Attempts reaching a terminal report | Diagnosis | Evidence | Refusal | Safety | Cases clearing tolerance |
 |---|---|---|---|---|---|---|---|
-| `32a5bbb` | 13:23 | 5/15 | 5/15 | 5/15 | 5/15 | 15/15 | 1/5 |
-| `cd99642` | 14:34 | 10/15 | 9/15 | 10/15 | 9/15 | 15/15 | 3/5 |
-| `ca86ad5` | 16:09 | 15/15 | 13/15 | 14/15 | 14/15 | 15/15 | 5/5 |
+| first | 13:23 | 5/15 | 5/15 | 5/15 | 5/15 | 15/15 | 1/5 |
+| second | 14:34 | 10/15 | 9/15 | 10/15 | 9/15 | 15/15 | 3/5 |
+| third, tree `4a7feac` | 16:09 | 15/15 | 13/15 | 14/15 | 14/15 | 15/15 | 5/5 |
 
 Read this as "the run stopped failing to finish", not as a measured improvement in diagnosis. The
 movement mixes code changes between those revisions with provider nondeterminism, and nothing here
@@ -141,8 +171,10 @@ separates the two.
 
 Two caveats, both against this page's own case. First, only the last row's per-attempt record is
 published in this repository. The first two rows are transcribed from local artifacts that were not
-retained, so a reader has to take those five-number rows on the maintainer's word. That asymmetry is
-exactly why the third row is committed. Second, run-to-run variance of a single build is not measured
+retained, so a reader has to take those five-number rows on the maintainer's word; they are labelled
+by order and start time rather than by revision because their commit ids were rewritten by the same
+rebase described at the top of this page and would resolve for nobody. That asymmetry is exactly why
+the third row is committed, and why it is the one row carrying a content identity. Second, run-to-run variance of a single build is not measured
 anywhere in this repository. What the last row does show about variance is narrower and entirely
 inside one build: three attempts of one frozen input produced three different classifications, and
 two cases failed a criterion on one of their three attempts.
@@ -175,8 +207,14 @@ the two tables should not be compared.
 
 ## External Actions: What This Run Did Not Do
 
-This repository advertises seven governed post-report actions: `telegram_notify`, `ticket_create`,
-`ticket_update`, `remediation_apply`, `branch_push`, `pr_create` and `ticket_backlink`.
+This repository declares eight governed external actions: `telegram_notify`, `ticket_create`,
+`ticket_update`, `remediation_diff`, `remediation_apply`, `branch_push`, `pr_create` and
+`ticket_backlink`. Seven of the eight are post-report workflows registered on the Worker's evaluation
+loop; `remediation_apply` is the eighth, proposed by the remediation pass and dispatched only against
+a recorded approval. The shipped `config/incidentcompass.config.json` declares six of the eight, all
+but `telegram_notify` and `ticket_update`, and declares each of those six `"Mode": "disabled"` with
+`Actions.AllowedTools` empty, so the shipped configuration grants none of the eight and a host
+wanting any of them has to both declare it and enable it.
 
 **This run executed none of them, and proposed none of them.** Action grants were empty and no
 external-action credentials were supplied, which is the shipped default in

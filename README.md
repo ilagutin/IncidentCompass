@@ -74,13 +74,26 @@ prompt-injection attempt at a disabled action gate, and that detail is the asser
 [`DemoActionGateResult`](src/IncidentCompass.Tester/DemoActionGateResult.cs) passes only when no
 action lifecycle event was recorded at all.
 
+Read that row narrowly, and read the measured run's side-effect row below the same way. An
+observation that nothing was recorded under a disabled configuration shows the shipped default
+staying off while a hostile prompt is in flight. It does not show that the approval machinery is
+correct, because no approval was ever reached.
+[Measured evaluation run](docs/evaluation-evidence.md#external-actions-what-this-run-did-not-do)
+states that caveat against its own fifteen negative observations and points at the deterministic
+integration test where the action chain is actually proved.
+
 ## Measured run
 
 Separately from that mock table, one opt-in evaluation ran against a local OpenAI-compatible provider
-on 2026-09-11 at revision `ca86ad5`. The commit that followed it, `a2ca1f6`, added integration tests
-and changed no production code. Five frozen cases, three attempts each, criteria authored before any
-output was observed. The per-attempt record is committed at
-`evaluations/triage/measured-run-ca86ad5.json`.
+on 2026-09-11, against the exact working tree `4a7feace870c4897fcfe60efd5eafcc6b1876768`. That is a
+git tree hash rather than a commit id, because releases here land by rebase: rebasing rewrites commit
+ids and leaves tree hashes alone, so the tree is what a reader can still resolve inside the `v0.4.0`
+tag. The change committed immediately after the run, and shipped in the same release, added
+integration tests and changed no production code. Five frozen cases, three attempts each, criteria
+authored before any output was observed. The per-attempt record is committed at
+`evaluations/triage/measured-run-tree-4a7feac.json`, and
+[Measured evaluation run](docs/evaluation-evidence.md#reproducing-it) shows how to turn that tree
+hash back into a checkout.
 
 | Band | Measured |
 |---|---|
@@ -137,7 +150,9 @@ are in [Integration configuration](docs/integrations.md).
   outcome is recorded for operator review and is never automatically resent.
 - Automated tests use deterministic providers by default. The mock injection scenario checks the
   disabled-action configuration; separate integration tests exercise configured policy and approval.
-- Full rendered prompt/body logging stays disabled by default.
+- There is no prompt or provider-body logging switch, because no code path writes that material
+  anywhere. Rendered prompts, provider request and response bodies, document text, credentials and
+  embedding vectors reach neither the application logs nor the triage ledger, at any log level.
 
 One deployment envelope is supported: **one trusted machine, one trusted operator, one host-owned
 monitored checkout, one configured repository and one PostgreSQL database under Docker Compose, with

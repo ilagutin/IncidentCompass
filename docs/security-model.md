@@ -235,8 +235,15 @@ excerpt is redacted before it is stored like every other tool payload.
 ## Source workspace boundary
 
 Beside the excerpt reader, the same monitored checkout can be copied into a disposable workspace so
-that a later change can be prepared against a fixed base. The copy is a filesystem primitive with no
-host wiring yet: nothing registers it, no tool exposes it and no model input reaches it.
+that a later change can be prepared against a fixed base. As of v0.4.0 this is wired. The registered
+`IRemediationWorkspace` adapter materializes a copy twice on the remediation path: once when the
+Worker's post-report pass asks a model for a diff against a fixed base, and once again when an
+approved change is prepared for publication. No model input reaches the copy itself. The monitored
+root is chosen by the backend from the fault's own service and release, the workspace root comes from
+host options with no default, and the walk, the bounds and the admission rules below are fixed here,
+so a model names no path that this opens. Nothing registers the workspace as an agent tool and no
+role can be granted it. Model output does reach the patch applied inside the copy, which the next
+boundary covers.
 
 **What it reads.** Only the configured monitored root, and only for reading. The checkout is never
 opened for write, moved or renamed, and the production mount stays a read-only bind. The walk
@@ -278,11 +285,25 @@ vocabulary and nothing else.
 
 ## Source patch boundary
 
-A unified diff can be parsed, validated and applied inside one of those workspaces. Like the
-workspace itself this is a primitive with no host wiring yet: nothing registers it, no tool exposes
-it, and no model output reaches it. It is written for the day one does, so it treats the diff as
-hostile input: a patch is model text, and the model that wrote it was shown incident data an
-attacker may influence.
+A unified diff can be parsed, validated and applied inside one of those workspaces. As of v0.4.0 this
+is wired, and model output does reach it. The registered `IRemediationWorkspace` adapter constructs
+the applier on two paths. On the post-report remediation pass the patch text is a diff a model just
+wrote, reviewed by nobody. On publication it is the diff a human approved, parsed and applied again
+to a fresh copy, so that the files a push carries are produced here rather than carried over from the
+pass that proposed them. Nothing registers the applier as an agent tool and no role can be granted
+it, so a model cannot call it: the diff text is the whole of what a model contributes, and this
+treats that text as hostile input, because a patch is model text and the model that wrote it was
+shown incident data an attacker may influence.
+
+**What bounds it.** Four things, and not one of them is the model. The patch is applied only inside a
+disposable copy, never in the monitored checkout. Every refusal listed below is made before a byte is
+written, and the writes that follow are all or nothing. The caller must compare the workspace's tree
+identity against the identity the patch was approved for, which the remediation adapter does on both
+paths before it parses anything. And the capability ships off: `remediation_diff` and
+`remediation_apply` are both declared `"Mode": "disabled"` in `config/incidentcompass.config.json`
+with `Actions.AllowedTools` empty, and the monitored root and
+`IncidentCompass:SourceContext:WorkspaceRoot` have no defaults, so no diff reaches this until an
+operator turns on both the configuration switch and the host options.
 
 **Nothing is executed.** No process is started, no file in the workspace is opened again after it is
 written, and no command, script or hook in the tree is run. The architecture test that fails the
@@ -465,8 +486,9 @@ because nothing here runs a test.
 
 A post-report remediation pass puts the two primitives above behind one bounded operation: it names a
 base, asks a model for a unified diff, applies that diff to a copy of the base, and records what it
-produced. Unlike the primitives it composes, this one is wired: an Application port, a registered
-local adapter, a durable table, a model call and a trigger.
+produced. It is the reason the two primitives above are wired at all, and it is the only thing that
+reaches them: an Application port, a registered local adapter, a durable table, a model call and a
+trigger.
 
 **What turns it on, and what runs it.** Publishing a report writes a post-report action intent for
 `remediation_diff`, and the Worker's post-report evaluation loop runs the pass from that intent under
