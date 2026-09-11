@@ -42,6 +42,13 @@ and the reviewed `CurrentReleases` entry in the triage configuration. This relea
 current GitHub owner, repository and token binding. Remediation commands, branch credentials and pull
 request bindings are deliberately deferred to later v0.4 work.
 
+The remediation diff pass can copy that checkout into a disposable workspace, but only when
+`IncidentCompass:SourceContext:WorkspaceRoot` names an absolute writable directory. It is unset in
+this release and nothing schedules a pass, so no production host writes a workspace. When it is set
+it must not be the monitored root or sit below it, and the host needs room for a copy of the
+checkout. See `docs/security-model.md`, "Remediation diff boundary", for what the pass does and does
+not prove: no test is executed, so a produced diff is not evidence that a change builds or passes.
+
 Telegram is disabled by default. If the reviewed triage configuration enables its route, set
 `INCIDENTCOMPASS_TELEGRAM_ENABLED=true` and provide the exact route id, chat id and bot token. Otherwise
 leave all three binding values empty.

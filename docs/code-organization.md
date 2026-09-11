@@ -72,8 +72,8 @@ IncidentCompass.Application/
 ```
 
 `Core/`, `Governance/`, `Intake/`, `Investigation/`, `Memory/`, `Notifications/`, `Observability/`,
-`SourceContext/` and `Tickets/` are the current folders, and `ArchitectureTests` enforces exactly
-that list. `Governance/` contains the common worker-tool contract, validation primitives, triage
+`Remediation/`, `SourceContext/` and `Tickets/` are the current folders, and `ArchitectureTests`
+enforces exactly that list. `Governance/` contains the common worker-tool contract, validation primitives, triage
 ledger ports and post-report action approval contracts/use cases, including the deterministic approved
 action dispatcher. PostgreSQL action approval, provenance, claim, recovery and terminal-transition
 implementations stay under `Infrastructure/Governance/ActionApprovals/`.
@@ -91,6 +91,14 @@ in the matching `Infrastructure/` folder.
 `Observability/CostRollup/` contains the tenant-scoped read request, validator, response and
 persistence port. ModelCall JSON parsing, effective-price ambiguity handling and PostgreSQL query
 details stay under `Infrastructure/Observability/`; API endpoints remain transport-only.
+`Remediation/` contains the post-report remediation pass: the disposable-workspace port, the answer
+extractor that decides whether a model reply is a unified diff, the prompt builder, the bounded runner
+and the durable diff record with its persistence port. Materialization, tree identity, diff parsing and
+diff application stay in `Infrastructure/SourceContext/`, where the read boundary's own primitives
+already live, and `Infrastructure/Remediation/` holds only the adapter that composes them and the
+PostgreSQL writer. The runner deliberately reaches `Investigation/Jobs/`'s bounded model caller rather
+than owning a call path, so admission, the provider deadline, ledger accounting and route fail-over stay
+in one place; that is the one cross-folder dependency the feature has and it is the point of it.
 `SourceContext/` contains the provider-neutral read port, bounded signal frame extraction and tool;
 filesystem roots, canonicalization and file reads stay in Infrastructure. Report-level context
 outcome contracts and backend limitation policy live under `Investigation/Reports/Context/`.

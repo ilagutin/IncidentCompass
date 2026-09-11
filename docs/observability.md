@@ -98,6 +98,9 @@ leased work was abandoned for an unrequested reason and is reported rather than 
 | 3512 | Warning | Post-report action policy denied a proposal. |
 | 3513 | Information | Post-report action policy requires approval for a proposal. |
 | 3601 | Error | A configured redaction pattern exceeded its match timeout; the field was replaced with the timeout marker. Carries the pattern name and field path only, never the field value. |
+| 3801 | Information | A remediation pass produced a diff, with job, attempt, report and diff ids, the file count, the diff's byte count and the fixed statement that no test was executed. Never the diff itself. |
+| 3802 | Warning | A remediation answer was refused and the model was reprompted, with job, attempt, a bounded reprompt counter and the closed outcome code. Never the answer, a path or a file line. |
+| 3803 | Warning | A remediation pass produced no diff, with job, attempt, report and the closed outcome code it gave up on. |
 
 ### API host (4000-4999)
 
@@ -238,9 +241,18 @@ on a call whose route named no provider, so rows written before the field existe
 to rows written after it, and a reader that needs a payer has to decide what to do with a row that
 names only an adapter.
 
-The ledger does not store rendered prompts, full provider responses, document text, provider credentials, API keys, embedding vectors or reasoning text. A numeric provider-reported reasoning token count may be stored in `ModelCall` metadata, but no reasoning text is logged or persisted. Token budget accounting is recorded separately as first-class `BudgetEvent` rows with `tokens_delta` and `workers_delta` columns. Every worker or orchestrator correction turn also writes one bounded `BudgetEvent`. A worker correction uses the `worker_output_reprompt:` rationale prefix, retains the role and is capped at 1,000 characters; it contains safe diagnostics, not validation exception text, model output, prompt or schema.
+The ledger does not store rendered prompts, full provider responses, document text, provider credentials, API keys, embedding vectors or reasoning text. A numeric provider-reported reasoning token count may be stored in `ModelCall` metadata, but no reasoning text is logged or persisted. Token budget accounting is recorded separately as first-class `BudgetEvent` rows with `tokens_delta` and `workers_delta` columns. Every worker or orchestrator correction turn also writes one bounded `BudgetEvent`. A worker correction uses the `worker_output_reprompt:` rationale prefix, retains the role and is capped at 1,000 characters; it contains safe diagnostics, not validation exception text, model output, prompt or schema. A
+post-report remediation correction writes the same kind of row under the `remediation_patch_reprompt:`
+prefix with the role `remediation`, and carries only the closed outcome code that caused it: never the
+diff the model sent, a path, or a line of a file.
 
-`ModelCall` rows and token-accounting `BudgetEvent` rows are mirrored by bounded application log events 3201-3206 and 3211-3212 above, while reprompt `BudgetEvent` rows are mirrored by events 3401 and 3402, so live model observability is readable from logs and auditable from the ledger.
+`ModelCall` rows carry a `kind` naming what the call was for. `orchestrator` and `worker` are the
+investigation kinds; `remediation` is the post-report call that asks for a unified diff. The
+remediation call runs on the same bounded caller, so it is admitted, deadlined, charged and accounted
+exactly as the others are, and cost roll-ups can separate what an incident spent producing its report
+from what it spent proposing a change by grouping on that one field.
+
+`ModelCall` rows and token-accounting `BudgetEvent` rows are mirrored by bounded application log events 3201-3206 and 3211-3212 above, while reprompt `BudgetEvent` rows are mirrored by events 3401, 3402 and 3802, so live model observability is readable from logs and auditable from the ledger.
 
 ### Report Model Provenance
 

@@ -29,8 +29,9 @@ Before making non-trivial changes, read the relevant public docs:
   boundaries are by convention + `ArchitectureTests`, not enforced module assemblies).
 - `Domain` must not depend on `Application`, `Infrastructure`, `Api`, `Worker`, provider SDKs or persistence libraries.
 - `Application` is a single project with populated feature folders: `Core/`, `Governance/`,
-  `Intake/`, `Investigation/`, `Memory/`, `Notifications/`, `Observability/`, `SourceContext/` and
-  `Tickets/`. `ArchitectureTests` enforces exactly this list; adding a folder means changing both.
+  `Intake/`, `Investigation/`, `Memory/`, `Notifications/`, `Observability/`, `Remediation/`,
+  `SourceContext/` and `Tickets/`. `ArchitectureTests` enforces exactly this list; adding a folder
+  means changing both.
 - `Core/` holds the dispatcher, identity/correlation, model/embedding gateway abstractions and shared options.
 - `Intake/` holds source normalization, redaction, fingerprinting, fault grouping, triage-job creation and grounded intake artifacts.
   `Intake/Configuration/` also holds the deserialized triage-configuration model for the whole system:
@@ -40,6 +41,13 @@ Before making non-trivial changes, read the relevant public docs:
 - `Investigation/` holds Worker job orchestration, config rehydration, bounded model calls, delegation,
   worker-tool execution and grounded report publication contracts.
 - `Memory/` holds incident-memory contracts and the governed `memory_search` tool.
+- `Remediation/` holds the post-report remediation pass: the bounded model request that asks for a
+  unified diff over a grounded report and its cited source evidence, the disposable-workspace port
+  that names a base tree and applies one candidate diff to a copy of it, and the durable exact-diff
+  record. The model call runs on `Investigation/`'s bounded caller under its own call kind rather
+  than on a second set of rails, so admission, the provider deadline, ledger accounting and route
+  fail-over stay in one place. Nothing here executes a test or starts a process, and the record says
+  so.
 - `Governance/` holds live triage-ledger contracts, worker-tool contracts and validation primitives.
   `ToolRuleEngine` is the single tool-policy decision path shared by immediate Worker reads and
   backend-owned post-report action proposals.

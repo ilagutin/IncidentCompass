@@ -10,4 +10,11 @@ internal static class TriageModelCallKinds
     public const string Orchestrator = "orchestrator";
 
     public const string Worker = "worker";
+
+    /// <summary>
+    /// A post-report remediation call: the one that asks for a unified diff. It is a separate kind
+    /// so cost roll-ups can tell what an incident spent producing its report from what it spent
+    /// proposing a change, while both keep running on the same admission, deadline and accounting.
+    /// </summary>
+    public const string Remediation = "remediation";
 }

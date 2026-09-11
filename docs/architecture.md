@@ -36,6 +36,10 @@ credential travels on an Application contract. See `docs/model-gateway.md`, "Pro
     message text.
   - `Observability/`: the tenant-scoped model-cost rollup read request, validator, response and
     persistence port.
+  - `Remediation/`: the post-report remediation pass. It holds the bounded model request that asks
+    for a unified diff over a grounded report and its cited source evidence, the disposable-workspace
+    port that names a base tree and applies one candidate diff to a copy of it, and the durable
+    exact-diff record. Nothing here executes a test or starts a process.
   - `SourceContext/`: provider-neutral source lookup contracts, bounded stack-frame extraction and
     the governed `source_lookup` worker tool.
   - `Tickets/`: system-neutral ticket-search, cited-ticket resolution and ticket-action-history
@@ -227,6 +231,45 @@ payload and `source:` domain reference. Grounding validates the payload shape an
 the job snapshot; report reads expose that artifact payload alongside the citation. A current-attempt outcome reader applies canonical
 no-match or connector-unavailable limitations before final publication, so model prose cannot omit
 those outcomes or turn them into evidence.
+
+## Remediation diff pass
+
+Beside the excerpt reader, the same monitored checkout can back a post-report remediation pass that
+produces one exact unified diff. It is a feature folder in its own right rather than an extension of
+either neighbour, because it is the first thing in the product that prepares a change: `Investigation/`
+ends at a grounded report, and `SourceContext/` is a read surface with no change concept in it.
+
+The pass runs in four steps. It names the base by copying the monitored checkout into a disposable
+workspace and computing that copy's content identity. It asks one model, over the grounded report and
+the report's cited `SourceCode` artifacts, for a unified diff and nothing else. It applies the answer
+to a fresh copy of the same base, all of it or none of it. It records the diff, the base identity, the
+resulting identity and the outcome.
+
+The model call goes through the same bounded caller every investigation call goes through, under its
+own `remediation` call kind. That caller owns admission against the attempt budget, the authoritative
+provider deadline, durable `ModelCall` accounting and the single declared route fail-over hop, and a
+second path would have to reimplement all four. The wall clock is measured from when the pass starts,
+since it is a separate bounded operation from the attempt that produced the report; the token budget
+stays the job attempt's own, so one incident's model spend remains one number. An answer that is not a
+unified diff, and a diff the backend refuses for a reason a different answer could fix, are worth one
+correction each, bounded by the configuration's own `MaxReprompts` and carrying the closed refusal code
+rather than any text. A refusal about the environment, a base that moved or a filesystem error, is not
+reprompted.
+
+The base identity is the pass's own obligation and not the applier's. A hunk that consumes no base line
+quotes no base line, so an insert-only diff applies to any tree; the identity is the only thing binding
+a change to the checkout it was written for. The pass therefore names the base before the model is
+asked, hands it back on the way into the apply, and the adapter refuses before parsing when the copy it
+materialized is something else. The same identity travels on the record, so a later application of an
+approved diff has something to compare.
+
+Persistence is a table of its own, `remediation_diffs`, rather than a `triage_artifacts` row. Every
+payload in that column passes a redactor on its way in, and a diff cannot: a redacted context line no
+longer matches the base and a redacted added line writes a placeholder into source. The diff body lives
+in that table and nowhere else, and it fits by construction, since the parser refuses a diff larger than
+the raw budget the action-payload ceiling leaves for it. Nothing in the pass starts a process, so no
+record carries test evidence and every one of them says so. Worker scheduling and workspace reaping are
+not part of it yet.
 
 ## Read-only ticket context
 

@@ -461,6 +461,86 @@ existed. What the identity does not prove is unchanged from the workspace bounda
 commit id, and it says nothing about whether the change is correct, builds or passes anything,
 because nothing here runs a test.
 
+## Remediation diff boundary
+
+A post-report remediation pass puts the two primitives above behind one bounded operation: it names a
+base, asks a model for a unified diff, applies that diff to a copy of the base, and records what it
+produced. Unlike the primitives it composes, this one is wired: an Application port, a registered
+local adapter, a durable table and a model call. Nothing schedules it yet, so no job reaches it on
+its own, and it stays off entirely unless an operator configures a workspace root.
+
+**What turns it on.** Two host options together, and neither has a default. A monitored root for the
+exact `(service, release)` the fault selects, and `IncidentCompass:SourceContext:WorkspaceRoot`, the
+absolute directory disposable copies are created below. With either missing the pass refuses with
+`remediation_not_configured` and touches no filesystem. There is deliberately no default workspace
+root: a default would make the first host with a monitored checkout start writing copies of it
+somewhere nobody chose.
+
+**What the model is shown.** The grounded report's classification, confidence, summary, limitations
+and recommended next action, plus the `SourceCode` artifacts the investigation actually cited, each
+already redacted on its way into durable state. All of it sits inside the same untrusted-context
+boundary the investigation prompts use, using the same marker strings rather than a second spelling
+of them. Every part is bounded: at most sixteen evidence items, each excerpt capped, the narrative
+fields capped, the limitations capped in count and length. The service, the release and the base
+identity are backend-selected and stated; the model names no file, no path and no release, and there
+is no tool surface on the call at all.
+
+**What the model may answer.** One unified diff and nothing else, bare or inside a single ```diff
+block with nothing but blank lines around it. A sentence before the fence, a sentence after it, two
+blocks, a block of something else, an apology or an empty answer are all refused as
+`remediation_answer_not_a_patch`. The recovered text is passed through byte for byte: carriage
+returns are not normalized, whitespace is not trimmed inside the block, no header is inferred and no
+hunk count is corrected, because the bytes that are parsed and applied must be the bytes a reviewer
+reads. Everything past that shape check is the patch boundary above, unchanged.
+
+**What a refusal costs.** A refusal the model could fix, an answer that is not a diff or a diff the
+backend refuses on its own terms, is worth one correction, bounded by the configuration's own
+`MaxReprompts` and durably visible as a bounded `BudgetEvent` with the `remediation_patch_reprompt:`
+prefix. The correction carries the closed outcome code and nothing else: no path, no line, no byte of
+the diff the model sent and no byte of a file. A refusal about the environment, a base that moved, a
+filesystem error or a rollback that failed, is not reprompted, because no answer fixes it. The
+adapter decides which is which; a caller guessing from the shape of a code string would guess wrong
+the first time the vocabulary grew.
+
+**The base obligation, discharged.** The previous section states it as the caller's: a hunk that
+consumes no base line matches at its offset in any file, so an insert-only diff binds to no tree and
+the context check has nothing to compare. The pass names the base before the model is asked, states
+it in the request, and hands it back into the apply, where the adapter compares it against the copy
+it just materialized and refuses with `remediation_base_mismatch` before the diff is even parsed. A
+checkout that moved between naming the base and applying the diff is therefore caught, not assumed
+away, and the same identity travels on the record so a later application of an approved diff has
+something to compare. A mismatch is never reported or corrected as a patch problem.
+
+**Where the diff body lives.** In `incidentcompass.remediation_diffs.patch_text`, and nowhere else.
+Not in a log line, not in a ledger rationale and not in a refusal code, all of which carry closed
+vocabulary codes and no content. That table is separate from `triage_artifacts` on purpose: every
+payload in `redacted_payload` passes a redactor on its way in, which is what makes that column safe,
+and a diff cannot pass one and remain a diff, since a redacted context line no longer matches the
+base and a redacted added line writes a placeholder into source. Putting a diff there would mean
+either breaking it or exempting it, and an exemption inside the redaction boundary is worse than a
+table outside it. Rows there are model text about attacker-influenced incident data and every reader
+must treat them as such.
+
+**What a record carries, and what it cannot.** The tenant, the report and job it came from, the
+service and release, the base identity it applied to, the identity it produced, how many files it
+touched, its own byte count, the diff, the route and model that wrote it, and the outcome. It is
+insert-only. Every field is bounded: the identities are fixed-width digests, the counts are integers,
+and the only free text is the diff, whose size the database refuses above the raw budget the
+action-payload ceiling leaves for it. A row exists only for a diff that applied whole, so a refused
+attempt cannot be stored and later mistaken for evidence.
+
+**No test is executed.** Nothing in this pass starts a process, and the architecture test that fails
+the build when `System.Diagnostics.Process` appears in the Application project is unchanged. Every
+record therefore carries `test_outcome = 'not_executed'` and a null `test_command_id`, and the schema
+enforces both rather than trusting a writer: a later release that runs a test has to relax those
+checks in its own migration, so claiming a test ran cannot be done quietly. A remediation diff is a
+change that parsed, matched its base and applied. It is **not** evidence that the change builds,
+passes anything, or is correct.
+
+**What is still missing.** Nothing schedules a pass, and nothing reaps a workspace a killed process
+left behind. The pass disposes its own copies on every terminal path, so leftovers need a crash to
+appear, but the operator-configured workspace root is where they would be.
+
 ## Redaction And Pseudonymization
 
 Redaction runs at two boundaries, not one. Incoming signals are redacted during intake, before the

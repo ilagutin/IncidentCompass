@@ -37,7 +37,8 @@ internal static class PostgresMigrationCatalog
         new(21, "v0.4-model-price-administration", ["030-model-price-administration.sql"]),
         new(22, "v0.4-memory-corpus-generations", ["031-memory-corpus-generations.sql"]),
         new(23, "v0.4-action-approval-fault-correlation",
-            ["032-action-approval-fault-correlation.sql"])
+            ["032-action-approval-fault-correlation.sql"]),
+        new(24, "v0.4-remediation-diffs", ["033-remediation-diffs.sql"])
     ];
 
     private static PostgresSchemaMigration Released(

@@ -30,6 +30,7 @@ using IncidentCompass.Infrastructure.Observability;
 using IncidentCompass.Infrastructure.OpenAiCompatible;
 using IncidentCompass.Infrastructure.Postgres;
 using IncidentCompass.Infrastructure.Postgres.Testing;
+using IncidentCompass.Infrastructure.Remediation;
 using IncidentCompass.Infrastructure.Security;
 using IncidentCompass.Infrastructure.SourceContext;
 using IncidentCompass.Infrastructure.Tickets;
@@ -56,6 +57,7 @@ public static class Setup
         services.AddIntakeInfrastructure(configuration);
         services.AddMemoryInfrastructure(configuration);
         services.AddSourceContextInfrastructure(configuration);
+        services.AddRemediationInfrastructure();
         services.AddTicketInfrastructure(configuration);
         // Infrastructure supplies the Worker identity; API auth binds IUserContext explicitly.
         services.TryAddScoped<IBackgroundUserContext, SystemUserContext>();

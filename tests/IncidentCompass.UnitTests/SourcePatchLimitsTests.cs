@@ -3,6 +3,7 @@ using System.Text.Json.Nodes;
 using IncidentCompass.Application.Core.Serialization;
 using IncidentCompass.Application.Governance.ActionApprovals;
 using IncidentCompass.Infrastructure.SourceContext;
+using IncidentCompass.TestSupport;
 
 namespace IncidentCompass.UnitTests;
 
@@ -88,6 +89,36 @@ public sealed class SourcePatchLimitsTests
         Assert.True(
             Encoding.UTF8.GetByteCount(CanonicalPayload(new string('<', ActionApprovalLimits.MaximumPayloadBytes))) >
             ActionApprovalLimits.MaximumPayloadBytes);
+
+    /// <summary>
+    /// The durable bound and the parse bound are one number, so a row cannot hold a diff an approval
+    /// could not carry.
+    /// </summary>
+    /// <remarks>
+    /// The migration states the bound as a literal, because a check constraint cannot read a C#
+    /// constant, and migrations are append-only so it cannot be regenerated later. This is what
+    /// keeps the two from drifting: change the derivation and this fails until a new migration says
+    /// the same thing.
+    /// </remarks>
+    [Fact]
+    public void RawBudget_IsTheBoundTheDiffTableEnforces()
+    {
+        var migration = File.ReadAllText(Path.Combine(
+            RepositoryRootLocator.Find(),
+            "infra",
+            "postgres",
+            "init",
+            "033-remediation-diffs.sql"));
+
+        Assert.Contains(
+            $"octet_length(patch_text) BETWEEN 1 AND {SourcePatchLimits.RawBudgetBytes}",
+            migration,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            $"patch_bytes BETWEEN 1 AND {SourcePatchLimits.RawBudgetBytes}",
+            migration,
+            StringComparison.Ordinal);
+    }
 
     /// <summary>
     /// The envelope the reserve is sized for: the patch, the base identity it applies to and the
