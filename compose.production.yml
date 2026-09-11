@@ -101,8 +101,11 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
     volumes:
       - postgres-data:/var/lib/postgresql/data
+    # Checked over TCP, not the Unix socket: on a fresh volume the image entrypoint first
+    # brings up a temporary socket-only server, and a socket check reports ready against it
+    # while port 5432 still refuses the connection the API actually makes.
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:?set POSTGRES_USER} -d ${POSTGRES_DB:?set POSTGRES_DB}"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U ${POSTGRES_USER:?set POSTGRES_USER} -d ${POSTGRES_DB:?set POSTGRES_DB}"]
       interval: 2s
       timeout: 3s
       retries: 30

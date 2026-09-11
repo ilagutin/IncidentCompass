@@ -286,6 +286,13 @@
   A failure that provably preceded the request is `telegram_unavailable`; anything that may have
   been delivered stays `dispatch_outcome_unknown`. Previously both escaped into the dispatcher's
   catch-all as an in-doubt row a person has to settle.
+- The PostgreSQL health check is answered over TCP rather than the Unix socket, so a service that
+  waits on it no longer starts against a database that is still refusing connections. On a fresh
+  volume the image entrypoint first brings up a temporary socket-only server to run its
+  initialisation, and `pg_isready` reported ready against that while port 5432 was still closed.
+  The API's first connection was refused, hosting failed to start, and only `restart: on-failure`
+  brought it back; under load that second start did not fit the API's own health budget, so
+  Compose declared the dependency failed and the production recovery test failed with it.
 
 ## 0.3.0 - 2026-09-06
 

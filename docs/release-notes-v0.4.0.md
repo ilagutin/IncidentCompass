@@ -275,6 +275,12 @@ layer it does not own. All are fixed here.
 - `ArchitectureTests` now checks `PackageReference` as well as `ProjectReference` against an exact
   allowed set for `Domain` and `Application`, and fails on a provider transport type named in either
   layer.
+- The PostgreSQL health check answered over the Unix socket rather than TCP. On a fresh volume the
+  image entrypoint brings up a temporary socket-only server to run its initialisation, so the check
+  reported ready while port 5432 still refused; the API's first connection failed, hosting did not
+  start, and only `restart: on-failure` recovered it. Under load that second start did not fit the
+  API's own health budget and Compose declared the dependency failed. A failing production recovery
+  test surfaced it during release verification.
 
 See the full [changelog](../CHANGELOG.md) for everything in this release, including internal
 refactors, test coverage and dependency updates not listed here.
