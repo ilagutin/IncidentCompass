@@ -4,8 +4,6 @@ namespace IncidentCompass.Application.Investigation.Jobs;
 
 internal static class OrchestratorRepromptDiagnostics
 {
-    internal const string DocumentationFitMismatch =
-        "publish_report documentationFit does not match backend-derived cited-document status.";
     internal const string DocumentationFitValueInvalid =
         "publish_report documentationFit must be Current, CurrentWithHistorical, StaleOnly, Missing, or MultipleCurrentDocuments.";
     internal const string UnknownReportValidationFailure =
@@ -32,7 +30,6 @@ internal static class OrchestratorRepromptDiagnostics
         var diagnostics = new HashSet<string>(StringComparer.Ordinal)
         {
             "A re-triage report must cite recurrence state evidence.",
-            DocumentationFitMismatch,
             DocumentationFitValueInvalid,
             "publish_report evidence referenceId does not resolve to a citable artifact for this job attempt.",
             "publish_report evidence referenceId must be a triage artifact id.",
@@ -52,6 +49,15 @@ internal static class OrchestratorRepromptDiagnostics
             "publish_report limitations must be an array of strings.",
             "publish_report limitations must contain only strings."
         };
+
+        // A documentationFit mismatch is the one refusal that names a backend-derived value, so its
+        // message is not one constant but a closed family of them. Every member is enumerated here,
+        // which keeps this an exact-match allowlist: the set of strings that can pass is fixed at
+        // startup and grows only when the enum does.
+        foreach (var mismatch in DocumentationFitDiagnostics.AllMismatchMessages())
+        {
+            diagnostics.Add(mismatch);
+        }
 
         foreach (var propertyName in new[]
         {

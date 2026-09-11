@@ -43,6 +43,14 @@ internal static class WorkerDelegateResultFactory
             }));
     }
 
+    /// <summary>
+    /// Items are projected field by field rather than serialized as records. Two reasons, and both
+    /// are about the orchestrator being able to act on what it is handed: the projection is the only
+    /// place that decides which of a retrieved document's fields the orchestrator sees, and it names
+    /// them in the same camel case the shipped instructions and <c>memory_search</c> itself use, so
+    /// the key the orchestrator is told to read is the key that arrives. Serializing the record
+    /// instead emitted PascalCase names that matched nothing the model had been shown.
+    /// </summary>
     private static WorkerDelegateResult CreateMemoryResult(
         string roleName,
         string workerContent,
@@ -56,7 +64,14 @@ internal static class WorkerDelegateResultFactory
                 role = roleName,
                 summary = output.Rationale,
                 matched = output.Matched,
-                items = output.Items,
+                items = output.Items.Select(static item => new
+                {
+                    artifactId = item.ArtifactId,
+                    title = item.Title,
+                    quote = item.Quote,
+                    score = item.Score,
+                    documentationStatus = item.DocumentationStatus
+                }),
                 noMatchReason = output.NoMatchReason,
                 artifactId = workerOutputArtifactId
             }));

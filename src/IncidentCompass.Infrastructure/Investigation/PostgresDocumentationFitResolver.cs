@@ -18,11 +18,11 @@ internal sealed class PostgresDocumentationFitResolver
             .GroupBy(static item => item.MemoryItemId!.Value)
             .Select(static group => group.First())
             .ToArray();
-        var documentationFit = Resolve(documents);
+        var documentationFit = DocumentationFitCalculator.Resolve(
+            documents.Select(static item => item.DocumentationStatus));
         if (report.DocumentationFit != documentationFit)
         {
-            throw new TriageReportValidationException(
-                "publish_report documentationFit does not match backend-derived cited-document status.");
+            throw new TriageReportValidationException(DocumentationFitDiagnostics.Mismatch(documentationFit));
         }
 
         return documentationFit switch
@@ -32,20 +32,6 @@ internal sealed class PostgresDocumentationFitResolver
                 item.DocumentationStatus is "Unversioned" or "ServiceMismatch") =>
                 AddLimitation(report, UnassessableDocumentLimitation),
             _ => report
-        };
-    }
-
-    private static DocumentationFitStatus Resolve(IReadOnlyCollection<GroundedReportEvidence> documents)
-    {
-        var currentCount = documents.Count(static item => item.DocumentationStatus == "Current");
-        var staleCount = documents.Count(static item => item.DocumentationStatus == "Stale");
-        return currentCount switch
-        {
-            > 1 => DocumentationFitStatus.MultipleCurrentDocuments,
-            1 when staleCount > 0 => DocumentationFitStatus.CurrentWithHistorical,
-            1 => DocumentationFitStatus.Current,
-            _ when staleCount > 0 => DocumentationFitStatus.StaleOnly,
-            _ => DocumentationFitStatus.Missing
         };
     }
 

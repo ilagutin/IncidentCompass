@@ -93,7 +93,7 @@ leased work was abandoned for an unrequested reason and is reported rather than 
 | 3302 | Information | Worker tool call was not executed because it requires approval. |
 | 3303 | Debug | Worker tool call executed successfully. |
 | 3304 | Warning | Worker tool call ended in a non-success status with a bounded error code. |
-| 3401 | Information | Orchestrator was reprompted, with its specific closed reason, bounded reprompt counter and durable `BudgetEvent` ledger record. |
+| 3401 | Information | Orchestrator was reprompted, with its specific closed reason, bounded reprompt counter and durable `BudgetEvent` ledger record. The safe diagnostic comes from a closed allowlist; a `documentationFit` mismatch additionally names the backend-derived enum value, which is the only part of that vocabulary that varies. |
 | 3402 | Warning | Worker role output was reprompted, with job, attempt, role, a safe validator diagnostic list, bounded reprompt counter and durable `BudgetEvent` ledger record. |
 | 3403 | Warning | Orchestrator spent its bounded reprompt allowance, with the closed reason and safe diagnostic of the turn it could not correct. The attempt then dead-letters as `triage_budget_orchestrator_reprompt_limit_reached`. |
 | 3501 | Debug | Immediate tool policy allowed a worker tool. |

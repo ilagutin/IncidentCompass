@@ -22,6 +22,14 @@ namespace IncidentCompass.UnitTests;
 /// </summary>
 public sealed class GovernedTriageInvestigationProcessorTests
 {
+    /// <summary>
+    /// One member of the closed family of mismatch refusals. Which value it names does not matter
+    /// here; what matters is that a message carrying a backend-derived value still survives the
+    /// diagnostic allowlist verbatim instead of collapsing to the content-free fallback.
+    /// </summary>
+    private static readonly string DocumentationFitMismatch =
+        DocumentationFitDiagnostics.Mismatch(DocumentationFitStatus.StaleOnly);
+
     private const string OutputSchema = """
         {
           "type": "object",
@@ -154,14 +162,14 @@ public sealed class GovernedTriageInvestigationProcessorTests
         var model = new ScriptedOrchestratorModel();
         var harness = CreateHarness(
             model,
-            reportFailureMessage: OrchestratorRepromptDiagnostics.DocumentationFitMismatch);
+            reportFailureMessage: DocumentationFitMismatch);
 
         await harness.ProcessAsync();
 
         var log = harness.Logger.Single(3401);
         Assert.Equal(LogLevel.Information, log.Level);
         Assert.Contains("publish_report_validation_failed", log.Message, StringComparison.Ordinal);
-        Assert.Contains(OrchestratorRepromptDiagnostics.DocumentationFitMismatch, log.Message, StringComparison.Ordinal);
+        Assert.Contains(DocumentationFitMismatch, log.Message, StringComparison.Ordinal);
         Assert.Contains("1/1", log.Message, StringComparison.Ordinal);
 
         var ledgerEvent = Assert.Single(
@@ -171,7 +179,7 @@ public sealed class GovernedTriageInvestigationProcessorTests
                 rationale.StartsWith("orchestrator_reprompt:", StringComparison.Ordinal));
         Assert.Equal("orchestrator", ledgerEvent.Role);
         Assert.Contains("publish_report_validation_failed", ledgerEvent.Rationale, StringComparison.Ordinal);
-        Assert.Contains(OrchestratorRepromptDiagnostics.DocumentationFitMismatch, ledgerEvent.Rationale, StringComparison.Ordinal);
+        Assert.Contains(DocumentationFitMismatch, ledgerEvent.Rationale, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -205,7 +213,7 @@ public sealed class GovernedTriageInvestigationProcessorTests
         var model = new ScriptedOrchestratorModel();
         var harness = CreateHarness(
             model,
-            reportFailureMessage: OrchestratorRepromptDiagnostics.DocumentationFitMismatch,
+            reportFailureMessage: DocumentationFitMismatch,
             reportFailureCount: 2);
 
         var exception = await Assert.ThrowsAsync<TriageBudgetExhaustedException>(harness.ProcessAsync);
@@ -229,7 +237,7 @@ public sealed class GovernedTriageInvestigationProcessorTests
         Assert.Equal(LogLevel.Warning, exhaustionLog.Level);
         Assert.Contains("publish_report_validation_failed", exhaustionLog.Message, StringComparison.Ordinal);
         Assert.Contains(
-            OrchestratorRepromptDiagnostics.DocumentationFitMismatch,
+            DocumentationFitMismatch,
             exhaustionLog.Message,
             StringComparison.Ordinal);
         Assert.Single(

@@ -105,7 +105,8 @@ internal sealed class AnalysisDelegateExecutor(
     /// a value of any kind whose property name looks like a secret holder. No shipped role schema
     /// names such a property, and the parsers downstream read only <c>keyFacts</c>,
     /// <c>candidateClassification</c>, <c>needsDeeperContext</c>, <c>matched</c>, <c>items</c>,
-    /// <c>artifactId</c> and <c>title</c>, none of which the denylist matches. A role schema that did
+    /// <c>artifactId</c>, <c>title</c>, <c>quote</c>, <c>score</c> and <c>documentationStatus</c>,
+    /// none of which the denylist matches. A role schema that did
     /// name one would make the redacted document fail the delegate parse, which fails the attempt
     /// rather than leaking anything.
     /// </para>

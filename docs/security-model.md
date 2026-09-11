@@ -1070,6 +1070,19 @@ accepts only citable artifacts from the same job/current attempt, never `WorkerO
 evidence kind and `is_mass_issue` itself, and marks prior reports as untrusted hypotheses in the
 artifact payload.
 
+A refusal is still allowed to say what it refused over. The diagnostic a refused `publish_report`
+hands back to the orchestrator is matched against a closed allowlist of backend-authored strings
+before it becomes a correction turn, a log line or a `BudgetEvent` rationale; anything else, a
+validation exception carrying model or document text included, collapses to a content-free fallback.
+The `documentationFit` mismatch is the one member of that vocabulary that varies, and it varies only
+by naming the value the backend derived. That is safe to disclose for a structural reason rather than
+a judgement about the value: the message is a pure function of one five-value enum, every member of
+that family is enumerated into the allowlist at startup, and the same five names are already handed
+to the model in the `publish_report` tool schema. A document title, quote, artifact id or release
+marker cannot reach it, and a message that carried one would not be on the allowlist. Without the
+derived value the correction turn is only the news that the value was wrong, which leaves the model
+nothing to correct with; the reprompt allowance itself is unchanged.
+
 The report's own account of which models produced it is derived the same way. `model_provenance` is
 read inside the publish transaction from that attempt's `ModelCall` ledger rows, which record what
 actually answered rather than what the route asked for, so a `publish_report` body that asserts its

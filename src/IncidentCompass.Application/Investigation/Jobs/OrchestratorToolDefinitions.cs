@@ -2,6 +2,7 @@ using System.Text.Json.Nodes;
 using IncidentCompass.Application.Core.ModelClients;
 using IncidentCompass.Application.Core.Serialization;
 using IncidentCompass.Application.Intake.Configuration;
+using IncidentCompass.Application.Investigation.Reports;
 
 namespace IncidentCompass.Application.Investigation.Jobs;
 
@@ -71,11 +72,12 @@ internal static class OrchestratorToolDefinitions
                         ["summary"] = new JsonObject { ["type"] = "string" },
                         ["classification"] = new JsonObject { ["type"] = "string", ["enum"] = TriageClassificationVocabulary.ToJsonArray() },
                         ["confidence"] = new JsonObject { ["type"] = "string", ["enum"] = new JsonArray("Low", "Medium", "High") },
+                        ["documentationFit"] = new JsonObject { ["type"] = "string", ["enum"] = CreateDocumentationFitEnum() },
                         ["evidence"] = new JsonObject { ["type"] = "array", ["items"] = evidenceItemSchema },
                         ["limitations"] = new JsonObject { ["type"] = "array", ["items"] = new JsonObject { ["type"] = "string" } },
                         ["recommendedNextAction"] = new JsonObject { ["type"] = "string" }
                     },
-                    ["required"] = new JsonArray("status", "summary", "classification", "confidence", "evidence", "limitations", "recommendedNextAction")
+                    ["required"] = new JsonArray("status", "summary", "classification", "confidence", "documentationFit", "evidence", "limitations", "recommendedNextAction")
                 }
             },
             ["required"] = new JsonArray("report_json")
@@ -86,5 +88,21 @@ internal static class OrchestratorToolDefinitions
             "Publish the final grounded triage report and end this investigation.",
             "v1",
             CanonicalJsonSerializer.ToElement(schema));
+    }
+
+    /// <summary>
+    /// The enumeration is generated from <see cref="DocumentationFitStatus"/> itself rather than
+    /// written out, so the values the model is handed are the values
+    /// <c>TriageReportParser.ReadDocumentationFit</c> parses, by construction.
+    /// </summary>
+    private static JsonArray CreateDocumentationFitEnum()
+    {
+        var values = new JsonArray();
+        foreach (var name in Enum.GetNames<DocumentationFitStatus>())
+        {
+            values.Add(name);
+        }
+
+        return values;
     }
 }
