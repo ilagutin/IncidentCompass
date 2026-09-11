@@ -70,6 +70,13 @@ public static class Setup
         // approved code write as executed, which is what makes the order a property of the write.
         services.AddSingleton<IPostReportActionWorkflow, BranchPushPostReportActionWorkflow>();
 
+        // And the last two links. Neither enqueues itself at report publication either: the
+        // pull-request intent is written by the transaction that records an approved push as executed,
+        // and the ticket backlink's by the transaction that records the pull request as opened, so the
+        // order of the whole chain is a property of three writes rather than of a poller's timing.
+        services.AddSingleton<IPostReportActionWorkflow, PullRequestPostReportActionWorkflow>();
+        services.AddSingleton<IPostReportActionWorkflow, TicketBacklinkPostReportActionWorkflow>();
+
         // The approval half of the same feature. It is registered where the other external-action
         // adapters are, and only here, because this is the one host that both proposes an approved
         // code write and dispatches it; the Api composes neither. Its descriptor is registered from
@@ -80,6 +87,9 @@ public static class Setup
         services.AddScoped<BranchPushActionTool>();
         services.AddScoped<IExternalActionTool>(
             serviceProvider => serviceProvider.GetRequiredService<BranchPushActionTool>());
+        services.AddScoped<PullRequestActionTool>();
+        services.AddScoped<IExternalActionTool>(
+            serviceProvider => serviceProvider.GetRequiredService<PullRequestActionTool>());
         services.AddSingleton<TelegramNotificationActionTool>();
         services.AddSingleton<IExternalActionTool>(
             serviceProvider => serviceProvider.GetRequiredService<TelegramNotificationActionTool>());
@@ -89,6 +99,9 @@ public static class Setup
         services.AddScoped<GitHubIssueCommentExternalActionTool>();
         services.AddScoped<IExternalActionTool>(serviceProvider =>
             serviceProvider.GetRequiredService<GitHubIssueCommentExternalActionTool>());
+        services.AddScoped<GitHubIssueBacklinkExternalActionTool>();
+        services.AddScoped<IExternalActionTool>(serviceProvider =>
+            serviceProvider.GetRequiredService<GitHubIssueBacklinkExternalActionTool>());
 
         services.AddScoped<IUserContext>(
             serviceProvider => serviceProvider.GetRequiredService<IBackgroundUserContext>());

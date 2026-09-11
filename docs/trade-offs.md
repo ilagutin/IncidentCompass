@@ -821,8 +821,65 @@ with nothing forcing them to notice. Reusing one binding means the repository th
 the repository an operator already named and reviewed.
 
 What does change is the scope that one token needs: creating branches needs write access to repository
-contents, which filing issues does not. That widening is deliberate rather than incidental. It is made
-by an operator who is turning `branch_push` on, which is off in the shipped configuration and requires
-editing both the tool's mode and `Actions.AllowedTools`, and the Worker refuses to start if the action
-is enabled without a repository, a credential and a base branch configured. A deployment that genuinely
-needs to separate the two repositories is a change with its own review, not a default.
+contents and opening a pull request needs pull-request write, neither of which filing issues does. That
+widening is deliberate rather than incidental. It is made by an operator who is turning `branch_push`
+or `pr_create` on, both of which are off in the shipped configuration and require editing the tool's
+mode and `Actions.AllowedTools`, and the Worker refuses to start if either is enabled without a
+repository, a credential and a base branch configured. A deployment that genuinely needs to separate
+the two repositories is a change with its own review, not a default.
+
+## A Pull-Request Description Cites Only Values Of Fixed Shape
+
+The backlog item asks that a pull-request description cite the originating report, the GitHub issue,
+test evidence and the uncertainty "without exposing credentials, absolute host paths, source bodies or
+prompts". Two of those four needed a decision rather than a filter.
+
+**There is no test evidence, so the description says so.** This release starts no process and runs no
+test command; the code-write payload refuses any diff whose test outcome is anything but
+`not_executed`. Citing test evidence therefore means citing its absence, in the same words the payload
+already uses, plus the sentence that a reader should not merge on the strength of the description.
+
+**The service name and the release are left out, even though the approval carries them.** They are the
+only values on this path an ingested signal can influence, and a pull-request description is a public
+page rendered by someone else's markdown. Rather than deciding how to escape a name for a renderer this
+product does not control, the composer simply has no free-text parameter: everything the body prints is
+a report identifier, an issue number, one of three confidence words, a commit name, a count or a hex
+digest. The service and the release stay in the reviewer's summary, which only an operator reads. The
+cost is a description a reader cannot skim for "which service" without opening the report it names, and
+that is the right side of the trade for a page strangers can read.
+
+The uncertainty it does cite is the report's own recorded confidence - one of `Low`, `Medium`, `High` -
+together with the statement that the change was written by a language model and that byte-equivalence
+was proved only over the intersection described above. A confidence outside that vocabulary is not
+published: the proposal refuses with `pr_create_origin_report_unreadable` rather than composing a
+description that omits the one thing it exists to say.
+
+## The Ticket Backlink Is A Second Tool Id, Not A Second Ticket Update
+
+The item asks that a confirmed pull request make "only the governed ticket-comment workflow" eligible
+for a backlink. It does, and it does so under a second tool id rather than by reusing `ticket_update`.
+
+The reason is a pair of unique keys. The post-report queue holds one intent per tenant, report and
+tool; the approval table holds one proposal per tenant, report, tool and key. A report therefore has
+exactly one `ticket_update` for its whole life, and that one is proposed when the report is published -
+long before any pull request exists - so its frozen payload cannot learn a number nobody knew when a
+person approved it.
+
+The alternative was to defer the ticket comment until the remediation chain settled. That is worse in a
+way that matters: the chain passes through three separate human approvals, any of which may simply
+never be granted, and a report with no remediation at all would then never receive the comment it
+receives today. Deferring would have traded a feature nobody has for behaviour people already rely on.
+
+A second id costs one more configuration entry, one more descriptor and one more workflow, and it
+reuses the existing comment's marker, preflight, bound and delivery path rather than duplicating them.
+It also keeps the refusal that made the whole question interesting: the comment preflight still declines
+any target the provider reports as a pull request, so a governed comment never lands inside a
+conversation this product opened. The link goes on the issue and points at the pull request.
+
+The shared payload contract did have to change, and the change is stated rather than absorbed: it is
+now six properties at schema version 2 rather than five at version 1, the sixth being the pull-request
+number, null for the evidence comment and a number for the backlink. A comment proposed under version 1
+and still awaiting approval when a host upgrades is no longer executable and fails closed; the remedy
+is a fresh proposal. The `branch_push` payload's own schema version moved to 2 for the same kind of
+reason: the frozen sentence a reviewer approves now has to say that executing a push schedules a
+pull-request proposal, and a statement inside an approval hash is not a comment.

@@ -35,8 +35,20 @@ public sealed class BranchPushPayloadTests
             BranchPushPayloadFactory.PublicationStatement,
             document.RootElement.GetProperty("landedStatement").GetString());
         Assert.Equal(JsonValueKind.Null, document.RootElement.GetProperty("testCommandId").ValueKind);
-        Assert.Equal(1, document.RootElement.GetProperty("schemaVersion").GetInt32());
+        Assert.Equal(2, document.RootElement.GetProperty("schemaVersion").GetInt32());
         Assert.NotNull(BranchPushPayloadFactory.TryReadPayload(prepared.CanonicalPayload));
+
+        // The statement now says what executing a push sets in motion, because it does set something
+        // in motion. A reviewer reading only this sentence should learn that a pull-request proposal
+        // follows and that it is a decision of its own.
+        Assert.Contains(
+            "pull-request proposal",
+            BranchPushPayloadFactory.PublicationStatement,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "no pull request is opened",
+            BranchPushPayloadFactory.PublicationStatement,
+            StringComparison.Ordinal);
     }
 
     /// <summary>

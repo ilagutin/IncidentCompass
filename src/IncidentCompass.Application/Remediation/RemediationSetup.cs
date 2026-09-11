@@ -41,6 +41,11 @@ internal static class RemediationSetup
         // nor dispatch a push. The adapter and the gateway behind this descriptor are registered only
         // by the host that can execute one.
         services.AddSingleton(BranchPushToolDescriptor.Descriptor);
+
+        // And the last link, for the same reason a third time: a configuration naming `pr_create`
+        // has to validate on every host that loads one, including the Api, which can neither propose
+        // nor dispatch one.
+        services.AddSingleton(PullRequestToolDescriptor.Descriptor);
         return services;
     }
 }

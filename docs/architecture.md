@@ -314,7 +314,8 @@ resolved by picking one.
 The adapter's binding fingerprint hashes the configured workspace root together with the resolved
 monitored roots, so repointing a root invalidates an outstanding approval instead of quietly moving
 what it applies to. Nothing on this path lands a change: no process is started and nothing here
-reaches a remote. Pull-request publication remains a category this release does not implement.
+reaches a remote. Publishing the change as a branch, and then as a pull request, are separate
+capabilities with separate approvals, described next.
 
 ## Governed branch push
 
@@ -339,9 +340,10 @@ proved byte-identical by comparing git blob ids, computed locally as
 path present only remotely refuses. The proof is frozen into the approval as a digest and re-proved at
 dispatch. `docs/trade-offs.md` states exactly what that claim covers and what it does not.
 
-**What it can do to a repository.** Create one branch. The gateway port has three operations - read a
-base, read a branch, create a branch - and no request this adapter can build is a reference update, a
-reference delete or a merge. Blobs, trees and commits are content-addressed and so idempotent by
+**What it can do to a repository.** Create one branch. The gateway port has four operations - read a
+base, read a branch, create a branch, open a pull request - and no request this adapter can build is a
+reference update, a reference delete, a merge, an automatic merge or a repository-settings change.
+Blobs, trees and commits are content-addressed and so idempotent by
 construction, and the commit's author and committer dates are pinned by the approval, which leaves the
 reference create as the only operation whose repetition would mean anything. It is a compare-and-swap:
 a name that is taken is read back, never overwritten.
@@ -351,6 +353,48 @@ a name that is taken is read back, never overwritten.
 the only new setting, and an unset one means code publication is not configured here. All three are
 folded into the adapter binding fingerprint, so repointing a host at another repository or another
 base branch turns a standing approval into `adapter_binding_changed`.
+
+## Governed pull request and ticket backlink
+
+A fourth capability, `pr_create`, turns an executed `branch_push` into one pull request from that
+branch into the configured base. A fifth, `ticket_backlink`, adds one comment to the issue the report
+cited saying which pull request now answers it. Each is a separate tool entry with its own
+configuration switch and its own idempotency key, so an operator can allow branches without pull
+requests, or pull requests without ticket comments, and the chain simply stops where they stopped it.
+
+**Where the ordering lives.** The same place as the push's: inside the predecessor's terminal
+transaction. The queue entry that can lead to a pull request is written when the push is recorded as
+`executed`, and the entry that can lead to a backlink when the pull request is recorded as opened.
+Both workflows decline to enqueue themselves at report publication. `ActionSuccessorIntents` is the
+whole of the policy and is a list of three pairs.
+
+**What the pull request is bound to.** Not a branch name but a commit: the payload carries the commit
+the push recorded in its own audit projection, and the dispatch reads the head reference and refuses
+unless it still points there. The base branch is host configuration the adapter reads for itself, and
+the request record has no field for one, so nothing above the port can choose where a change is
+proposed to land.
+
+**At most one, and how an uncertain outcome settles.** The head branch is derived from the origin
+report and is created only by a governed push, so a pull request from that head is the marker a create
+would leave. The adapter reads the pull requests for that head before every create, unconditionally, so
+a replay answers with the one that exists and a create is never sent without that question having been
+answered. Two answers refuse rather than being picked from. A create whose answer never arrived is
+`dispatch_outcome_unknown` on a `failed` row, and the same single read settles it.
+
+**What the description says.** The originating report id, the cited issue number, the report's own
+recorded confidence, the change's commits, counts and digests, and the plain statement that no test was
+executed because this release runs none. Nothing else: the service name and the release are in the
+approval and in the reviewer's summary but deliberately not in the published text, because they are the
+only values on the path an ingested signal can influence and the page is public. The title and the body
+are frozen in the approval and re-derived at dispatch, so an edited row is unreadable rather than
+published.
+
+**The backlink lands on the issue.** The comment preflight still refuses any target the provider
+reports as a pull request, and the cited-evidence shape still requires an issue URL in the configured
+repository. The backlink is a second tool id rather than a second `ticket_update` because the queue
+holds one intent per report per tool and the approval table one proposal per report, tool and key, so a
+report's single `ticket_update` is frozen at publication, long before a pull request exists. The
+existing comment is unchanged and still runs for every report, with or without any of this.
 
 ## Read-only ticket context
 

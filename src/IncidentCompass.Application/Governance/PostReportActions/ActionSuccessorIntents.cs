@@ -1,4 +1,5 @@
 using IncidentCompass.Application.Remediation;
+using IncidentCompass.Application.Tickets;
 using IncidentCompass.Domain.Incidents.Actions;
 
 namespace IncidentCompass.Application.Governance.PostReportActions;
@@ -27,6 +28,14 @@ namespace IncidentCompass.Application.Governance.PostReportActions;
 /// <b>A dry run schedules nothing.</b> A simulated action writes a terminal row without reaching an
 /// adapter, so nothing was applied and there is nothing to publish.
 /// </para>
+/// <para>
+/// <b>The chain is a list, not a graph, and each step is still a separate human decision.</b> An
+/// applied code write schedules a branch push, an executed push schedules a pull request, and an opened
+/// pull request schedules the ticket backlink that points at it. Each entry only ever produces a
+/// proposal, under its own tool id and its own configuration switch, so an operator who wants branches
+/// but no pull requests, or pull requests but no ticket comments, switches off the one they do not want
+/// and the chain stops there. Nothing here approves anything.
+/// </para>
 /// </remarks>
 public static class ActionSuccessorIntents
 {
@@ -39,11 +48,22 @@ public static class ActionSuccessorIntents
         string toolId,
         ActionCategory category,
         ActionExecutionMode mode,
-        ActionApprovalState terminalState) =>
-        terminalState == ActionApprovalState.Executed &&
-        mode == ActionExecutionMode.Live &&
-        category == ActionCategory.CodeWrite &&
-        string.Equals(toolId, RemediationApplyToolDescriptor.ToolId, StringComparison.Ordinal)
-            ? BranchPushToolDescriptor.ToolId
-            : null;
+        ActionApprovalState terminalState)
+    {
+        if (terminalState != ActionApprovalState.Executed || mode != ActionExecutionMode.Live)
+        {
+            return null;
+        }
+
+        return (toolId, category) switch
+        {
+            (RemediationApplyToolDescriptor.ToolId, ActionCategory.CodeWrite) =>
+                BranchPushToolDescriptor.ToolId,
+            (BranchPushToolDescriptor.ToolId, ActionCategory.BranchPush) =>
+                PullRequestToolDescriptor.ToolId,
+            (PullRequestToolDescriptor.ToolId, ActionCategory.PrCreate) =>
+                TicketBacklinkDescriptor.ToolId,
+            _ => null
+        };
+    }
 }

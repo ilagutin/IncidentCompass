@@ -56,6 +56,7 @@ internal static class RemediationInfrastructureSetup
             provider => provider.GetRequiredService<GitHubCodePublicationGateway>());
         services.TryAddScoped<IRemediationPredecessorReader, PostgresRemediationPredecessorReader>();
         services.TryAddScoped<IBranchPushActionHistory, PostgresBranchPushActionHistory>();
+        services.TryAddScoped<IConfirmedPullRequestReader, PostgresConfirmedPullRequestReader>();
 
         // The publisher is bound here for the same reason as the runner: it is an Application type
         // that cannot be constructed without IRemediationDiffRepository, which only this method
@@ -68,6 +69,11 @@ internal static class RemediationInfrastructureSetup
         // approved push is not bound here, because a host that cannot dispatch one has no business
         // declaring a tool it could execute.
         services.TryAddScoped<BranchPushProposalPublisher>();
+
+        // The pull-request publisher, for the same reason again: it cannot be constructed without the
+        // predecessor reader this method registers and the ticket evidence resolver the ticket half
+        // registers, neither of which AddApplication can satisfy on its own.
+        services.TryAddScoped<PullRequestProposalPublisher>();
         return services;
     }
 }

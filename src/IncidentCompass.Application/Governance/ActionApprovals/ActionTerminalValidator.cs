@@ -71,6 +71,8 @@ public static class ActionTerminalValidator
         TicketCreateTool.ToolId => ActionCategory.TicketCreate,
         TicketUpdatePostReportActionWorkflow.UpdateToolId => ActionCategory.TicketUpdate,
         BranchPushToolDescriptor.ToolId => ActionCategory.BranchPush,
+        PullRequestToolDescriptor.ToolId => ActionCategory.PrCreate,
+        TicketBacklinkDescriptor.ToolId => ActionCategory.TicketUpdate,
         _ => null
     };
 

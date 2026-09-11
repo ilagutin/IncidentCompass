@@ -354,6 +354,13 @@ public sealed class BranchPushActionToolTests
             return Task.FromResult(new CodePublicationRefResult(
                 CodePublicationCodes.BranchCreated, PushedCommit));
         }
+
+        // A push never opens a pull request. Throwing rather than returning a stub answer means any
+        // path that started to would fail this whole file instead of passing quietly.
+        public Task<CodePublicationPullRequestResult> CreatePullRequestAsync(
+            CodePublicationPullRequestRequest request,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
     }
 
     private sealed class StubHistory(BranchPushActionHistorySnapshot snapshot) : IBranchPushActionHistory

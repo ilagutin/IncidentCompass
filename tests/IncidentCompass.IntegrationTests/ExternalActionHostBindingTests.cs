@@ -233,6 +233,47 @@ public sealed class ExternalActionHostBindingTests
         await StartCodePublicationValidatorAsync(host.Services);
     }
 
+    /// <summary>
+    /// The pull request needs the same binding as the push and can be enabled without it, so the same
+    /// boot check covers it. Blank still means not configured, which is what lets a production host
+    /// that forwards an unset variable as an empty string come up at all.
+    /// </summary>
+    [Theory]
+    [InlineData(null, false)]
+    [InlineData("", false)]
+    [InlineData("main", true)]
+    public async Task WorkerCodePublicationBinding_CoversAnEnabledPullRequestToo(
+        string? baseBranch,
+        bool startsCleanly)
+    {
+        using var host = CreateBranchPushHost(
+            new Dictionary<string, string?>
+            {
+                ["IncidentCompass:Tickets:GitHub:Owner"] = "owner",
+                ["IncidentCompass:Tickets:GitHub:Repository"] = "repo",
+                ["IncidentCompass:Tickets:GitHub:Token"] = "github-host-token-sentinel",
+                ["IncidentCompass:Publication:GitHub:BaseBranch"] = baseBranch
+            },
+            PullRequestToolDescriptor.ToolId,
+            "pr_create");
+
+        if (startsCleanly)
+        {
+            await StartCodePublicationValidatorAsync(host.Services);
+            return;
+        }
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => StartCodePublicationValidatorAsync(host.Services));
+
+        Assert.Equal(
+            "GitHub code publication binding does not match an enabled branch push action.",
+            exception.Message);
+        Assert.DoesNotContain("owner/repo", exception.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "github-host-token-sentinel", exception.ToString(), StringComparison.Ordinal);
+    }
+
     private static IHost CreateTelegramHost(
         bool includeWorker,
         IReadOnlyDictionary<string, string?> telegramValues)
@@ -366,7 +407,10 @@ public sealed class ExternalActionHostBindingTests
         return validator.StartAsync(TestContext.Current.CancellationToken);
     }
 
-    private static IHost CreateBranchPushHost(IReadOnlyDictionary<string, string?> publicationValues)
+    private static IHost CreateBranchPushHost(
+        IReadOnlyDictionary<string, string?> publicationValues,
+        string toolId = BranchPushToolDescriptor.ToolId,
+        string category = "branch_push")
     {
         var values = new Dictionary<string, string?>(publicationValues)
         {
@@ -382,13 +426,16 @@ public sealed class ExternalActionHostBindingTests
                 services.AddInfrastructure(context.Configuration);
                 services.RemoveAll<ITriageConfigurationRepository>();
                 services.AddSingleton<ITriageConfigurationRepository>(
-                    new StaticNotificationConfiguration(CreateBranchPushConfiguration()));
+                    new StaticNotificationConfiguration(
+                        CreateBranchPushConfiguration(toolId, category)));
                 services.AddWorker(context.Configuration);
             })
             .Build();
     }
 
-    private static TriageConfiguration CreateBranchPushConfiguration() => new(
+    private static TriageConfiguration CreateBranchPushConfiguration(
+        string toolId,
+        string category) => new(
         "branch-push-host-composition",
         new Dictionary<string, TriageProviderSettings>(StringComparer.Ordinal),
         new Dictionary<string, TriageRouteSettings>(StringComparer.Ordinal),
@@ -397,17 +444,17 @@ public sealed class ExternalActionHostBindingTests
         new Dictionary<string, TriageRoleSettings>(StringComparer.Ordinal),
         new Dictionary<string, TriageToolSettings>(StringComparer.Ordinal)
         {
-            [BranchPushToolDescriptor.ToolId] = new(
-                "external_action", null, null, null, "branch_push",
+            [toolId] = new(
+                "external_action", null, null, null, category,
                 BranchPushToolDescriptor.LogicalTargetId)
         },
         [],
         new IngestionSettings("tenant", ["tester"]),
         new FaultGroupingSettings(15, 30, 1, new MassIssueSettings(5, "strong")),
         RedactionSettings.Default)
-    {
-        Actions = new TriageActionSettings([BranchPushToolDescriptor.ToolId], "live", false, 60)
-    };
+        {
+            Actions = new TriageActionSettings([toolId], "live", false, 60)
+        };
 
     private static void AssertTelegramBindingFailureIsSecretFree(
         InvalidOperationException exception,

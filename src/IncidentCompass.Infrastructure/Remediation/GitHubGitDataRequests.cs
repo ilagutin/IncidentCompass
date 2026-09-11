@@ -8,16 +8,18 @@ using IncidentCompass.Infrastructure.Tickets;
 namespace IncidentCompass.Infrastructure.Remediation;
 
 /// <summary>
-/// Builds the seven request shapes a governed push uses, and nothing else.
+/// Builds the request shapes a governed push and pull request use, and nothing else.
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>There is no request here that could move, delete or merge a reference.</b> The only write to a
-/// reference is <see cref="CreateRef" />, which is a create and fails when the name is taken; there is
-/// no <c>PATCH</c>, no <c>DELETE</c> and no merge endpoint anywhere in this file, and none can be
-/// reached from the gateway because the port above it has no method that would call one. That is the
-/// structural form of "never force-push, never delete a branch, never merge": not a rule the code
-/// follows, but a request it cannot build.
+/// <b>There is no request here that could move, delete or merge a reference.</b> The only writes are
+/// <see cref="CreateRef" />, which is a create and fails when the name is taken, and
+/// <see cref="CreatePullRequest" />, which opens one. There is no <c>PATCH</c>, no <c>PUT</c>, no
+/// <c>DELETE</c>, no <c>/merge</c> endpoint and no GraphQL call anywhere in this file, so neither a
+/// merge nor an automatic merge nor a repository-settings change can be expressed; and none could be
+/// reached from the gateway anyway, because the port above it has no method that would call one. That
+/// is the structural form of "never force-push, never delete a branch, never merge": not a rule the
+/// code follows, but a request it cannot build.
 /// </para>
 /// <para>
 /// <b>Blob content travels base64-encoded.</b> The whole feature is a claim about bytes, and sending
@@ -109,6 +111,44 @@ internal static class GitHubGitDataRequests
         {
             ["ref"] = "refs/heads/" + branchName,
             ["sha"] = commitSha
+        });
+
+    /// <summary>
+    /// Asks for whatever pull request answers for one head branch against one base, open or closed.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Closed ones count.</b> Filtering to open pull requests would make a closed one invisible, and
+    /// an adapter that cannot see the pull request it already opened would open a second. The page size
+    /// is two rather than one so that ambiguity is detectable instead of being hidden by the bound.
+    /// </para>
+    /// <para>
+    /// Both names are allowlisted before they reach here, so nothing in this query needs escaping.
+    /// </para>
+    /// </remarks>
+    public static HttpRequestMessage ReadPullRequests(
+        GitHubIssuesOptions options,
+        string headBranch,
+        string baseBranch) =>
+        Get(
+            options,
+            $"{Repository(options)}/pulls?head={options.Owner}:{headBranch}&base={baseBranch}" +
+            "&state=all&sort=created&direction=asc&per_page=2");
+
+    /// <summary>
+    /// Opens one pull request. The body has exactly four properties and there is no fifth it could
+    /// carry: no draft flag, no merge method, no auto-merge, no reviewer and no label.
+    /// </summary>
+    public static HttpRequestMessage CreatePullRequest(
+        GitHubIssuesOptions options,
+        CodePublicationPullRequestRequest request,
+        string baseBranch) =>
+        Post(options, $"{Repository(options)}/pulls", new JsonObject
+        {
+            ["base"] = baseBranch,
+            ["body"] = request.Body,
+            ["head"] = request.HeadBranch,
+            ["title"] = request.Title
         });
 
     private static string Repository(GitHubIssuesOptions options) =>

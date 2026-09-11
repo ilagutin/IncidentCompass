@@ -650,10 +650,10 @@ ends in `failed` with that code on it, and nothing was written to any copy. Ther
 of a failed action: the honest recovery is a fresh investigation, because the source evidence the old
 diff was derived from came from the old tree too.
 
-**What is still missing.** Pull-request publication. An approved and executed proposal proves the
-change still applies to the tree it was approved against; nothing carries it into the monitored
-checkout, opens a pull request or merges anything. Publishing the change as a branch is a separate
-capability with a separate approval, described next.
+**What this step still does not do.** An approved and executed proposal proves the change still
+applies to the tree it was approved against; nothing carries it into the monitored checkout, opens a
+pull request or merges anything. Publishing the change as a branch, and then that branch as a pull
+request, are separate capabilities with separate approvals, described next.
 
 ## Branch push boundary
 
@@ -688,11 +688,11 @@ else, so there is no free-text branch field to sanitize. All of it is folded int
 fingerprint and compared again before dispatch.
 
 **What it cannot do.** Force-push, delete a branch, merge, or change a repository setting. That is
-structural rather than a rule: the gateway port has three operations - read a base, read a branch,
-create a branch - the push request has no field that could express an update or a merge, and the
-request factory builds no `PATCH`, no `DELETE` and no merge call. The base branch is read and never
-written, and a base branch configured inside the namespace this product creates branches in is
-refused at startup.
+structural rather than a rule: the gateway port has four operations - read a base, read a branch,
+create a branch, open a pull request - neither write request has a field that could express an update
+or a merge, and the request factory builds no `PATCH`, no `PUT`, no `DELETE`, no `/merge` call and no
+GraphQL call of any kind. The base branch is read and never written, and a base branch configured
+inside the namespace this product creates branches in is refused at startup.
 
 **What proves the base.** Before anything is proposed, the remote base commit's whole regular-file
 listing is compared with the approved base tree path by path, using git blob ids computed locally as
@@ -718,6 +718,86 @@ with the created commit as its identifier. The branch name is not stored because
 `origin_report_id` on the same row; the commit is the fact that exists only because the push happened.
 Migration `034` widens the projection's constraints for that kind, and the database independently
 refuses any transition for it other than absent to created.
+
+## Pull request boundary
+
+`pr_create` is the capability that asks people to take a change. It opens one pull request from a
+branch a governed push already created into the configured base branch, and does nothing else.
+
+**What can reach it.** No model turn, for the same three reasons the push cannot be reached: it is an
+external action, only immediate tools are offered to a model, and the remediation pass runs with no
+tools at all. A unit test asserts all three, and the shipped configuration declares it disabled with an
+empty allow-list.
+
+**What schedules it.** Only the transaction that records an approved `branch_push` as `executed`. The
+workflow declines to enqueue itself at report publication, so a pull request cannot be proposed for a
+branch that was never pushed. The push's action id and result digest travel inside the pull request's
+own canonical payload, where the approval hash covers them and a dispatch re-checks them.
+
+**What the head is bound to.** A commit, not a name. The payload carries the commit the push recorded
+in its own audit projection, and the dispatch reads the head reference and refuses with
+`code_publication_head_branch_diverged` unless it still points there, so a branch someone moved after
+approval is never published under an approval taken for something else. The base branch is host
+configuration the adapter reads itself; the request record has no field for one.
+
+**What it cannot do.** Merge, enable an automatic merge, mark anything mergeable, close or edit a pull
+request, move a reference, or change a repository setting. Structurally: the port has no such method,
+the request record has four fields - head, head commit, title, body - the create body has exactly four
+properties, there is no `PUT`, `PATCH`, `DELETE`, `/merge` path or GraphQL client anywhere in the
+adapter, and the audit projection admits one transition for a pull request, from absent to open. The
+database enforces that last one independently of the application.
+
+**At most one.** The head branch is derived from the origin report and is created only by a governed
+push, so a pull request from that head is the marker a create would leave. The adapter lists the pull
+requests for that head against that base before every create, unconditionally, including closed ones:
+finding one is the replay answer, finding two refuses as ambiguous, and finding none is the only state
+in which a create is sent. The listing is not offered as a separate port operation, because the only
+right moment to ask the question is immediately before the create, and a method a caller could call
+earlier would invite deciding from a stale answer. A create whose answer never arrived, or whose answer
+could not be matched to what was asked for, is `dispatch_outcome_unknown` on a `failed` row, durable
+and never retried automatically; that same single read settles it on the next attempt, and it settles
+it exactly rather than by searching free text, which is why a create after an unknown outcome is safe
+where the issue adapter's is not.
+
+**What the description may contain.** Only values of fixed shape: the origin report id, the cited issue
+number, one of three confidence words, commit names, counts and digests, plus fixed backend sentences
+including the statement that no test was executed. It carries no credential, because none exists above
+the gateway; no absolute host path, because no path of any kind is rendered; no source body or diff,
+because the patch is not a parameter of the composer; and no prompt or model output, because nothing a
+model wrote reaches it. The service name and the release are in the approval and in the reviewer's
+summary but not in the published text, since they are the only values on this path an ingested signal
+can influence. The title and the body are frozen in the approval and re-derived from the numbers beside
+them at dispatch, so a row edited by hand is unreadable rather than published.
+
+**What is recorded.** The compact audit projection on the action row, as resource kind
+`github_pull_request` with the provider's number as its identifier. Migration `035` adds that kind and
+its single transition.
+
+## Ticket backlink boundary
+
+`ticket_backlink` adds one comment to the issue a report cited, saying which pull request now answers
+it. It is the governed evidence comment's machinery - the same marker, preflight, bound and delivery
+path - under a second tool id.
+
+**Why a second id.** The queue holds one intent per report per tool and the approval table one proposal
+per report, tool and key, so a report has exactly one `ticket_update` for its whole life and that one
+is frozen at publication, before any pull request exists. Deferring it instead would have been worse:
+the chain can stop at any of three human approvals that may never come, and a report with no
+remediation would then never get the comment it gets today. The existing comment is untouched.
+
+**It writes to an issue, never to a pull request.** The preflight refuses any target the provider
+reports as a pull request, and the cited-evidence shape requires an issue URL in the configured
+repository. Neither was loosened to make the backlink possible; the link points at the pull request
+from the issue, which is the only direction that was ever wanted.
+
+**What the comment contract change cost.** The governed comment payload is now six properties at schema
+version 2 rather than five at version 1, the sixth being the pull-request number, required to be null
+for the evidence comment and a number for the backlink. The shape is enforced in the same three places
+it always was. A comment proposed under version 1 and still awaiting approval when a host upgrades is
+no longer executable and fails closed with `github_issue_comment_payload_invalid`; the remedy is a
+fresh proposal, which the workflow produces on the next evaluation. The number a backlink states is
+re-checked inside the proposal transaction against the audit projection the pull-request action wrote,
+so it is a value the database vouches for rather than one a workflow computed.
 
 ## Redaction And Pseudonymization
 

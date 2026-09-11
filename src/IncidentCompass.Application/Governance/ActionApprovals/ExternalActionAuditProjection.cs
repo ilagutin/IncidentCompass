@@ -25,6 +25,18 @@ public sealed record ExternalActionAuditProjection(
     /// </remarks>
     public const string GitBranchKind = "git_branch";
 
+    /// <summary>
+    /// A pull request this product opened, named by the number the provider gave it.
+    /// </summary>
+    /// <remarks>
+    /// It is its own kind rather than a second use of <see cref="GitHubIssueKind" />, even though a
+    /// provider may number the two in one sequence. The two are different resources with different
+    /// lifecycles, and an auditor filtering the column for issues should not have to know that a pull
+    /// request is one. The identifier shape is the same positive integer the numbering providers
+    /// already use, so this adds a kind and not a new notion of identity.
+    /// </remarks>
+    public const string GitHubPullRequestKind = "github_pull_request";
+
     /// <summary>Characters in a git object name.</summary>
     public const int GitObjectNameCharacters = 40;
 
@@ -41,6 +53,14 @@ public sealed record ExternalActionAuditProjection(
 
     public static ExternalActionAuditProjection GitBranchPushed(string commitSha) =>
         new(GitBranchKind, commitSha, "absent", "created");
+
+    /// <summary>
+    /// The one transition a pull request this product opened may record: it did not exist, and now it
+    /// is open. There is deliberately no factory for "merged", "closed" or any other state, so the
+    /// audit table cannot be made to say that this product merged anything.
+    /// </summary>
+    public static ExternalActionAuditProjection GitHubPullRequestOpened(string pullRequestNumber) =>
+        new(GitHubPullRequestKind, pullRequestNumber, "absent", "open");
 
     public void Validate()
     {
@@ -66,7 +86,7 @@ public sealed record ExternalActionAuditProjection(
     public static bool IsValidResourceIdentity(string? resourceKind, string? resourceId) =>
         resourceKind switch
         {
-            TelegramMessageKind or GitHubIssueKind =>
+            TelegramMessageKind or GitHubIssueKind or GitHubPullRequestKind =>
                 resourceId is { Length: >= 1 and <= 20 } &&
                 resourceId[0] is >= '1' and <= '9' &&
                 resourceId.All(static character => character is >= '0' and <= '9'),
@@ -86,6 +106,8 @@ public sealed record ExternalActionAuditProjection(
             ResourceKind == GitHubIssueKind && BeforeState == "open" && AfterState == "comment_added",
         ActionCategory.BranchPush =>
             ResourceKind == GitBranchKind && BeforeState == "absent" && AfterState == "created",
+        ActionCategory.PrCreate =>
+            ResourceKind == GitHubPullRequestKind && BeforeState == "absent" && AfterState == "open",
         _ => false
     };
 
@@ -93,5 +115,6 @@ public sealed record ExternalActionAuditProjection(
         ResourceKind == TelegramMessageKind && BeforeState == "not_sent" && AfterState == "sent" ||
         ResourceKind == GitHubIssueKind && BeforeState == "absent" && AfterState == "open" ||
         ResourceKind == GitHubIssueKind && BeforeState == "open" && AfterState == "comment_added" ||
-        ResourceKind == GitBranchKind && BeforeState == "absent" && AfterState == "created";
+        ResourceKind == GitBranchKind && BeforeState == "absent" && AfterState == "created" ||
+        ResourceKind == GitHubPullRequestKind && BeforeState == "absent" && AfterState == "open";
 }

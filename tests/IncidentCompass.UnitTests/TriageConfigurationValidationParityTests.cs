@@ -377,6 +377,8 @@ public sealed class TriageConfigurationValidationParityTests
             RemediationDiffToolDescriptor.Descriptor,
             RemediationApplyToolDescriptor.Descriptor,
             BranchPushToolDescriptor.Descriptor,
+            PullRequestToolDescriptor.Descriptor,
+            TicketBacklinkDescriptor.Descriptor,
             new AgentToolDescriptor(
                 "notify_test",
                 AgentToolCapability.ExternalAction,

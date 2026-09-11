@@ -7,24 +7,22 @@ using Microsoft.Extensions.Options;
 namespace IncidentCompass.Infrastructure.Remediation;
 
 /// <summary>
-/// The GitHub Git Data adapter behind <see cref="ICodePublicationGateway" />: reads one base, builds
-/// content-addressed objects, and creates one branch reference.
+/// The GitHub adapter behind <see cref="ICodePublicationGateway" />: reads one base, builds
+/// content-addressed objects, creates one branch reference, and opens one pull request.
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Exactly one operation here can happen twice and mean something.</b> Blobs, trees and commits are
+/// <b>Only two operations here can happen twice and mean something.</b> Blobs, trees and commits are
 /// named by their content, so creating one that already exists returns the same name and changes
-/// nothing; the whole object half of a push is therefore idempotent by construction, which is why the
-/// commit's author and committer dates are pinned by the approval rather than taken from a clock.
-/// What is left is the reference create, and it is a compare-and-swap: the provider refuses a name
-/// that is taken, and this adapter answers that refusal by reading the reference rather than by
-/// overwriting it.
+/// nothing; the object half of a push is idempotent by construction, which is why the commit's author
+/// and committer dates are pinned by the approval rather than taken from a clock. What is left is the
+/// reference create, a compare-and-swap the provider refuses when the name is taken, and the
+/// pull-request create, which is preceded unconditionally by the read that asks the same question.
 /// </para>
 /// <para>
 /// <b>The bounds are the issue adapter's.</b> No redirects, an infinite client timeout with a
-/// per-call linked deadline instead, and every response body read through a bound. The tree read has a
-/// larger bound than an issue search because a repository listing is larger than an issue, and it
-/// refuses rather than truncating when the bound is reached.
+/// per-call linked deadline instead, and every response body read through a bound. The tree read's
+/// bound is larger because a repository listing is, and it refuses rather than truncating.
 /// </para>
 /// </remarks>
 public sealed class GitHubCodePublicationGateway : ICodePublicationGateway, IDisposable
@@ -38,6 +36,7 @@ public sealed class GitHubCodePublicationGateway : ICodePublicationGateway, IDis
     private readonly GitHubIssuesOptions repositoryOptions;
     private readonly GitHubCodePublicationOptions publicationOptions;
     private readonly GitHubGitDataSender sender;
+    private readonly GitHubPullRequestOperations pullRequests;
     private readonly HttpClient client;
 
     public GitHubCodePublicationGateway(
@@ -53,6 +52,8 @@ public sealed class GitHubCodePublicationGateway : ICodePublicationGateway, IDis
             Timeout = Timeout.InfiniteTimeSpan
         };
         sender = new GitHubGitDataSender(client, this.publicationOptions.TimeoutSeconds);
+        pullRequests = new GitHubPullRequestOperations(
+            this.repositoryOptions, sender, MaximumResponseBytes);
         BindingFingerprint = GitHubCodePublicationBinding.ComputeFingerprint(
             this.repositoryOptions, this.publicationOptions);
     }
@@ -175,9 +176,8 @@ public sealed class GitHubCodePublicationGateway : ICodePublicationGateway, IDis
             return built;
         }
 
-        // Everything above this line is content-addressed and changed nothing observable. What
-        // follows is the one operation that can only happen once, so cancellation is checked here and
-        // reported as its own settled outcome rather than as an unknown one.
+        // Everything above is content-addressed and changed nothing observable; what follows can only
+        // happen once, so cancellation is settled here rather than reported as an unknown outcome.
         return cancellationToken.IsCancellationRequested
             ? CodePublicationRefResult.Refused(CodePublicationCodes.CancelledBeforeWrite)
             : await CreateRefOnceAsync(request.BranchName, built.CommitSha, cancellationToken);
@@ -314,6 +314,58 @@ public sealed class GitHubCodePublicationGateway : ICodePublicationGateway, IDis
             : CodePublicationRefResult.Refused(CodePublicationCodes.BranchDiverged);
     }
 
+    /// <summary>
+    /// Opens one pull request, after proving the head is still the approved commit and after asking
+    /// whether a pull request for that head already exists.
+    /// </summary>
+    /// <remarks>
+    /// The order is the whole at-most-once argument. The reference read refuses a head someone moved
+    /// since the approval; the listing read is the marker search, and it is unconditional, so no create
+    /// is ever sent without that question having been answered first, and a create whose answer never
+    /// arrives is settled later by that same read.
+    /// </remarks>
+    public async Task<CodePublicationPullRequestResult> CreatePullRequestAsync(
+        CodePublicationPullRequestRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (!IsConfigured)
+        {
+            return CodePublicationPullRequestResult.Refused(CodePublicationCodes.BindingUnavailable);
+        }
+
+        if (!GitReferenceName.IsValid(request.HeadBranch) ||
+            !GitBlobIdentity.IsValid(request.HeadCommitSha) ||
+            !GitHubPullRequestOperations.IsPublishable(request))
+        {
+            return CodePublicationPullRequestResult.Refused(CodePublicationCodes.RequestInvalid);
+        }
+
+        var head = await ReadBranchAsync(request.HeadBranch, cancellationToken);
+        if (head.CommitSha is null)
+        {
+            return CodePublicationPullRequestResult.Refused(
+                head.Code == CodePublicationCodes.BranchAbsent
+                    ? CodePublicationCodes.HeadBranchMissing
+                    : head.Code);
+        }
+
+        if (!string.Equals(head.CommitSha, request.HeadCommitSha, StringComparison.Ordinal))
+        {
+            return CodePublicationPullRequestResult.Refused(CodePublicationCodes.HeadBranchDiverged);
+        }
+
+        var existing = await pullRequests.FindAsync(
+            request.HeadBranch, request.HeadCommitSha, BaseBranch, cancellationToken);
+        if (existing.Code != CodePublicationCodes.PullRequestAbsent)
+        {
+            return existing;
+        }
+
+        return cancellationToken.IsCancellationRequested
+            ? CodePublicationPullRequestResult.Refused(CodePublicationCodes.CancelledBeforeWrite)
+            : await pullRequests.OpenAsync(request, BaseBranch, cancellationToken);
+    }
+
     private async Task<CodePublicationBaseResult> ReadTreeAsync(
         string commitSha,
         string treeSha,
@@ -337,5 +389,4 @@ public sealed class GitHubCodePublicationGateway : ICodePublicationGateway, IDis
                     CodePublicationCodes.BaseRead, commitSha, treeSha, blobs, modes);
         }
     }
-
 }

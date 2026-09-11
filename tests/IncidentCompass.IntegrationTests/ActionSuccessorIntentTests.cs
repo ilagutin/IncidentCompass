@@ -6,6 +6,7 @@ using IncidentCompass.Application.Governance.PostReportActions;
 using IncidentCompass.Application.Governance.Tools;
 using IncidentCompass.Application.Intake.Configuration;
 using IncidentCompass.Application.Remediation;
+using IncidentCompass.Application.Tickets;
 using IncidentCompass.Domain.Incidents.Actions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -94,6 +95,103 @@ public sealed class ActionSuccessorIntentTests(PostgresRepositoryFixture postgre
     }
 
     /// <summary>
+    /// The second link, written the same way as the first. A pull request cannot be proposed before a
+    /// push executed, because the row that leads to one is inserted by that push's own transaction.
+    /// </summary>
+    [DockerAvailableFact]
+    public async Task ExecutingAnApprovedBranchPushEnqueuesExactlyOnePullRequestIntent()
+    {
+        await using var database = await ActionApprovalDatabase.CreateAsync(postgres);
+        var origin = await ActionApprovalTestSupport.SeedOriginAsync(database.ConnectionString);
+        using var services = ChainServices(
+            database.ConnectionString,
+            BranchPushToolDescriptor.ToolId,
+            ActionCategory.BranchPush,
+            BranchPushToolDescriptor.LogicalTargetId,
+            ExternalActionAuditProjection.GitBranchPushed(new string('a', 40)));
+
+        var action = await ExecuteApprovedAsync(
+            database.ConnectionString, services, origin, BranchPushToolDescriptor.ToolId);
+
+        Assert.Equal(ActionApprovalState.Executed, action.State);
+        var intent = Assert.Single(await ReadIntentsAsync(
+            database.ConnectionString, origin.ReportId, PullRequestToolDescriptor.ToolId));
+        Assert.Equal("pending", intent.State);
+        Assert.Equal(
+            $"post-report:v1:{origin.ReportId:N}:{PullRequestToolDescriptor.ToolId}",
+            intent.ProposalKey);
+        Assert.Null(intent.RouteId);
+    }
+
+    /// <summary>
+    /// The third link. The backlink's queue entry exists only because a pull request was opened, which
+    /// is why the report's ordinary ticket comment could stay exactly where it was: at publication,
+    /// under its own tool id, with or without any of this.
+    /// </summary>
+    [DockerAvailableFact]
+    public async Task ExecutingAnApprovedPullRequestEnqueuesExactlyOneTicketBacklinkIntent()
+    {
+        await using var database = await ActionApprovalDatabase.CreateAsync(postgres);
+        var origin = await ActionApprovalTestSupport.SeedOriginAsync(database.ConnectionString);
+        using var services = ChainServices(
+            database.ConnectionString,
+            PullRequestToolDescriptor.ToolId,
+            ActionCategory.PrCreate,
+            PullRequestToolDescriptor.LogicalTargetId,
+            ExternalActionAuditProjection.GitHubPullRequestOpened("17"));
+
+        var action = await ExecuteApprovedAsync(
+            database.ConnectionString, services, origin, PullRequestToolDescriptor.ToolId);
+
+        Assert.Equal(ActionApprovalState.Executed, action.State);
+        var intent = Assert.Single(await ReadIntentsAsync(
+            database.ConnectionString, origin.ReportId, TicketBacklinkDescriptor.ToolId));
+        Assert.Equal("pending", intent.State);
+        Assert.Equal(
+            $"post-report:v1:{origin.ReportId:N}:{TicketBacklinkDescriptor.ToolId}",
+            intent.ProposalKey);
+        Assert.Empty(await ReadIntentsAsync(
+            database.ConnectionString, origin.ReportId, BranchPushToolDescriptor.ToolId));
+    }
+
+    /// <summary>
+    /// The compact projection the backlink later reads is written on the same row, under the check
+    /// constraints the migration added, so "the pull request this report opened" is a column read.
+    /// </summary>
+    [DockerAvailableFact]
+    public async Task AnExecutedPullRequestRecordsItsNumberInTheAuditProjection()
+    {
+        await using var database = await ActionApprovalDatabase.CreateAsync(postgres);
+        var origin = await ActionApprovalTestSupport.SeedOriginAsync(database.ConnectionString);
+        using var services = ChainServices(
+            database.ConnectionString,
+            PullRequestToolDescriptor.ToolId,
+            ActionCategory.PrCreate,
+            PullRequestToolDescriptor.LogicalTargetId,
+            ExternalActionAuditProjection.GitHubPullRequestOpened("17"));
+
+        await ExecuteApprovedAsync(
+            database.ConnectionString, services, origin, PullRequestToolDescriptor.ToolId);
+
+        await using var connection = new NpgsqlConnection(database.ConnectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand("""
+            SELECT external_resource_kind, external_resource_id, external_before_state,
+                   external_after_state
+            FROM incidentcompass.action_approvals
+            WHERE origin_report_id = @origin_report_id AND tool_id = @tool_id;
+            """, connection);
+        command.Parameters.AddWithValue("origin_report_id", origin.ReportId);
+        command.Parameters.AddWithValue("tool_id", PullRequestToolDescriptor.ToolId);
+        await using var reader = await command.ExecuteReaderAsync(TestContext.Current.CancellationToken);
+        Assert.True(await reader.ReadAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(ExternalActionAuditProjection.GitHubPullRequestKind, reader.GetString(0));
+        Assert.Equal("17", reader.GetString(1));
+        Assert.Equal("absent", reader.GetString(2));
+        Assert.Equal("open", reader.GetString(3));
+    }
+
+    /// <summary>
     /// The other direction: an action that schedules nothing writes nothing, so this is not a queue
     /// entry every completed action grows.
     /// </summary>
@@ -121,7 +219,13 @@ public sealed class ActionSuccessorIntentTests(PostgresRepositoryFixture postgre
     [InlineData(CodeWriteToolId, ActionCategory.CodeWrite, ActionExecutionMode.DryRun, ActionApprovalState.Executed, null)]
     [InlineData(CodeWriteToolId, ActionCategory.TicketCreate, ActionExecutionMode.Live, ActionApprovalState.Executed, null)]
     [InlineData("ticket_create", ActionCategory.CodeWrite, ActionExecutionMode.Live, ActionApprovalState.Executed, null)]
-    [InlineData(BranchPushToolDescriptor.ToolId, ActionCategory.BranchPush, ActionExecutionMode.Live, ActionApprovalState.Executed, null)]
+    [InlineData(BranchPushToolDescriptor.ToolId, ActionCategory.BranchPush, ActionExecutionMode.Live, ActionApprovalState.Executed, PullRequestToolDescriptor.ToolId)]
+    [InlineData(BranchPushToolDescriptor.ToolId, ActionCategory.BranchPush, ActionExecutionMode.DryRun, ActionApprovalState.Executed, null)]
+    [InlineData(BranchPushToolDescriptor.ToolId, ActionCategory.BranchPush, ActionExecutionMode.Live, ActionApprovalState.Failed, null)]
+    [InlineData(PullRequestToolDescriptor.ToolId, ActionCategory.PrCreate, ActionExecutionMode.Live, ActionApprovalState.Executed, TicketBacklinkDescriptor.ToolId)]
+    [InlineData(PullRequestToolDescriptor.ToolId, ActionCategory.PrCreate, ActionExecutionMode.Live, ActionApprovalState.Failed, null)]
+    [InlineData(PullRequestToolDescriptor.ToolId, ActionCategory.BranchPush, ActionExecutionMode.Live, ActionApprovalState.Executed, null)]
+    [InlineData(TicketBacklinkDescriptor.ToolId, ActionCategory.TicketUpdate, ActionExecutionMode.Live, ActionApprovalState.Executed, null)]
     public void TheSuccessorPolicyIsOneToolInOneStateAndNothingElse(
         string toolId,
         ActionCategory category,
@@ -129,6 +233,33 @@ public sealed class ActionSuccessorIntentTests(PostgresRepositoryFixture postgre
         ActionApprovalState state,
         string? expected) =>
         Assert.Equal(expected, ActionSuccessorIntents.SuccessorToolId(toolId, category, mode, state));
+
+    /// <summary>
+    /// A host configured for one link of the publication chain, with a stand-in adapter under that
+    /// link's own registered identity. Nothing about the successor rule depends on which adapter ran,
+    /// which is the point of testing it this way; what the adapter must supply is the compact audit
+    /// projection its category requires, because the terminal validator refuses one without it.
+    /// </summary>
+    private static ServiceProvider ChainServices(
+        string connectionString,
+        string toolId,
+        ActionCategory category,
+        string logicalTargetId,
+        ExternalActionAuditProjection projection) =>
+        Services(
+            connectionString,
+            ActionDispatchTestConfiguration.Create(
+                toolId: toolId, category: category, logicalTargetId: logicalTargetId),
+            new SyntheticExternalActionTool(
+                (_, _, _) => Task.FromResult(new ExternalActionExecutionResult(
+                    true,
+                    "{\"landed\":true}"u8.ToArray(),
+                    "The stand-in adapter completed.",
+                    AuditProjection: projection)),
+                category,
+                toolId,
+                logicalTargetId),
+            descriptor: null);
 
     private static ServiceProvider CodeWriteServices(
         string connectionString,

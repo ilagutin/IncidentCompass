@@ -56,6 +56,45 @@ public static class CodePublicationCodes
     /// </summary>
     public const string CommitMismatch = "code_publication_commit_mismatch";
 
+    /// <summary>One pull request was opened for the approved head.</summary>
+    public const string PullRequestOpened = "code_publication_pull_request_opened";
+
+    /// <summary>
+    /// A pull request for exactly this head and this base already exists, so the create had already
+    /// happened and nothing was written. This is the replay answer, not a failure.
+    /// </summary>
+    public const string PullRequestAlreadyOpen = "code_publication_pull_request_already_open";
+
+    /// <summary>
+    /// No pull request exists for this head. Only ever an answer to a read, never to a create.
+    /// </summary>
+    public const string PullRequestAbsent = "code_publication_pull_request_absent";
+
+    /// <summary>
+    /// More than one pull request answers for this head. The head is derived from the origin report
+    /// and only this product creates it, so two is a state a person resolves rather than one an
+    /// adapter picks from.
+    /// </summary>
+    public const string PullRequestAmbiguous = "code_publication_pull_request_ambiguous";
+
+    /// <summary>
+    /// The pull request the provider named is not the one that was asked about: its head reference,
+    /// its head commit or its base branch differs. Refused rather than adopted.
+    /// </summary>
+    public const string PullRequestMismatch = "code_publication_pull_request_mismatch";
+
+    /// <summary>
+    /// The head branch a pull request would be opened from does not exist. Nothing is created: a
+    /// pull request is only ever opened from a reference an earlier approved push confirmed.
+    /// </summary>
+    public const string HeadBranchMissing = "code_publication_head_branch_missing";
+
+    /// <summary>
+    /// The head branch exists and points somewhere other than the commit the approval named, so the
+    /// approval describes publishing a change other than the one that was reviewed.
+    /// </summary>
+    public const string HeadBranchDiverged = "code_publication_head_branch_diverged";
+
     /// <summary>The credential was rejected.</summary>
     public const string AuthenticationFailed = "code_publication_authentication_failed";
 

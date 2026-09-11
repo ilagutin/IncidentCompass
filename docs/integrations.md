@@ -66,17 +66,20 @@ being reported as zero-cost usage. See [Cost tracking](cost-tracking.md).
 
 ## GitHub code publication
 
-`branch_push` publishes an approved, executed `code_write` as one new branch at one new commit. It
-reuses the GitHub Issues binding above - the same owner, the same repository and the same
-`IncidentCompass__Tickets__GitHub__Token` - and adds one setting,
+`branch_push` publishes an approved, executed `code_write` as one new branch at one new commit.
+`pr_create` then opens one pull request from that branch into the configured base. Both reuse the
+GitHub Issues binding above - the same owner, the same repository and the same
+`IncidentCompass__Tickets__GitHub__Token` - and share one setting,
 `IncidentCompass__Publication__GitHub__BaseBranch`, which has no default. With it unset, code
-publication is not configured on the host and every call refuses. Enabling the action also requires an
-exact `Actions.AllowedTools` grant and a non-disabled mode, and the Worker refuses to start when the
-action is enabled without a repository, a credential and a base branch.
+publication is not configured on the host and every call refuses. Enabling either action also requires
+an exact `Actions.AllowedTools` grant and a non-disabled mode, and the Worker refuses to start when
+either is enabled without a repository, a credential and a base branch.
 
 Setting it widens what the shared token needs: creating a branch requires write access to repository
-contents, which filing issues does not. `docs/trade-offs.md` explains why one credential is preferred
-to two.
+contents, and opening a pull request requires pull-request write, neither of which filing issues does.
+`docs/trade-offs.md` explains why one credential is preferred to two. The token never needs any
+permission that could merge: nothing in the adapter can send a merge, an automatic merge or a
+repository-settings change.
 
 The adapter talks to `https://api.github.com` with redirects disabled, exactly as the issue adapters
 do. It reads a reference, a commit and one recursive tree listing, creates the blobs, tree and commit
@@ -87,3 +90,14 @@ branch is read and never written; the branch that is created is derived from the
 `incidentcompass/remediation/<report>` and is never taken from a payload or a model. A reference
 create whose outcome is unknown is durable, is never retried automatically, and is settled by one read
 of that derived reference.
+
+The pull request is opened the same way and with the same discipline. The adapter reads the head
+reference and refuses unless it still points at the commit the push confirmed, lists the pull requests
+for that head against the configured base - open or closed - and creates one only when there is none.
+A second answer refuses as ambiguous rather than being picked from, and a create whose outcome is
+unknown is durable and settled by that same listing read. The description is composed entirely from the
+report id, the cited issue number, the report's confidence, commit names, counts and digests, plus
+fixed sentences including the statement that no test was executed; it is frozen in the approval and
+re-derived at dispatch. `ticket_backlink` then adds one comment to the cited issue naming the pull
+request, using the same preflight as the governed evidence comment, which still refuses any target the
+provider reports as a pull request.

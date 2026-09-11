@@ -1,16 +1,24 @@
 namespace IncidentCompass.Application.Remediation;
 
 /// <summary>
-/// The port a governed branch push reaches a code-hosting provider through: read one base, create one
-/// branch, read one branch back.
+/// The port a governed branch push and pull request reach a code-hosting provider through: read one
+/// base, read one branch, create one branch, open one pull request.
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Three operations, and deliberately no fourth.</b> There is no update, no delete, no merge and no
-/// force. A caller cannot ask for one because no method takes one and no request field could carry
-/// one, so "never force-push, never delete a branch, never merge" is a property of the contract rather
-/// than a rule an adapter is trusted to keep. An adapter that wanted to do any of those would have to
-/// grow a method, and a method has to be argued for.
+/// <b>Four operations, and deliberately no fifth.</b> There is no update, no delete, no merge, no
+/// auto-merge, no repository-settings write and no force. A caller cannot ask for one because no
+/// method takes one and no request field could carry one, so "never force-push, never delete a branch,
+/// never merge" is a property of the contract rather than a rule an adapter is trusted to keep. An
+/// adapter that wanted to do any of those would have to grow a method, and a method has to be argued
+/// for.
+/// </para>
+/// <para>
+/// <b>Two of the four write, and each writes one thing once.</b> A push ends in a single reference
+/// create that fails when the name is taken. A pull-request create makes its own preflight read part
+/// of itself rather than offering it as a separate call: the question "does one already exist for this
+/// head" has exactly one right moment to be asked, immediately before the create, and a port method
+/// that let a caller ask it earlier would invite a caller to decide from a stale answer.
 /// </para>
 /// <para>
 /// <b>The owner, the repository, the remote and the base branch are not here.</b> They are host
@@ -65,5 +73,30 @@ public interface ICodePublicationGateway
     /// </summary>
     Task<CodePublicationRefResult> PushAsync(
         CodePublicationPushRequest request,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Opens one pull request from the request's head into the configured base branch, or answers with
+    /// the one that already exists.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// It reads the head reference first and refuses unless it still points at the commit the request
+    /// names, then reads whatever open or closed pull request answers for that head against the
+    /// configured base, and only creates one when there is none. The create itself is the only call
+    /// that writes, it merges nothing, and there is no operation on this port that could merge
+    /// afterwards.
+    /// </para>
+    /// <para>
+    /// <b>That second read is both the preflight and the reconciliation.</b> The head branch is derived
+    /// from the origin report and only a governed push creates it, so a pull request from that head is
+    /// the marker a create would have produced: finding one means the create already happened, finding
+    /// none means it did not, and finding two is an ambiguity a person resolves. It is exact and
+    /// exhaustive for that head rather than a search through free text, and because it is
+    /// unconditional there is no state in which a create is sent without it having been answered.
+    /// </para>
+    /// </remarks>
+    Task<CodePublicationPullRequestResult> CreatePullRequestAsync(
+        CodePublicationPullRequestRequest request,
         CancellationToken cancellationToken);
 }

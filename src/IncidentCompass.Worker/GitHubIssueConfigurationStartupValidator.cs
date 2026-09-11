@@ -18,7 +18,7 @@ internal sealed class GitHubIssueConfigurationStartupValidator(
         var configuration = await configurationRepository.GetCurrentAsync(cancellationToken);
         var enabledTools = configuration.Actions.AllowedTools
             .Where(static toolId => toolId is TicketCreateTool.ToolId or
-                TicketUpdatePostReportActionWorkflow.UpdateToolId)
+                TicketUpdatePostReportActionWorkflow.UpdateToolId or TicketBacklinkDescriptor.ToolId)
             .ToArray();
         if (enabledTools.Length == 0)
         {
@@ -43,6 +43,11 @@ internal sealed class GitHubIssueConfigurationStartupValidator(
         }
     }
 
+    /// <summary>
+    /// The backlink is checked exactly as the evidence comment is: it is the same category on the same
+    /// logical target, so a host that enables it and has no issue binding fails at boot rather than at
+    /// the dispatch of an approval a person had already granted.
+    /// </summary>
     private static bool MatchesIdentity(string toolId, TriageToolSettings tool) =>
         toolId == TicketCreateTool.ToolId
             ? string.Equals(tool.Category, "ticket_create", StringComparison.Ordinal) &&

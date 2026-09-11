@@ -30,4 +30,24 @@ public sealed record RemediationPredecessor(
     Guid ActionId,
     byte[] CanonicalPayload,
     string ResultSha256,
-    DateTimeOffset ExecutedAtUtc);
+    DateTimeOffset ExecutedAtUtc)
+{
+    /// <summary>
+    /// The identifier the predecessor recorded in its own compact audit projection, or
+    /// <see langword="null" /> when it recorded none.
+    /// </summary>
+    /// <remarks>
+    /// It is read from the projection column rather than parsed out of the predecessor's result
+    /// document, which is exactly what that projection exists for. A pull request needs the commit an
+    /// approved push confirmed, and "confirmed" has to mean a value the terminal transaction wrote
+    /// under a check constraint, not a field a reader hoped to find in JSON.
+    /// </remarks>
+    public string? ExternalResourceId { get; init; }
+
+    /// <summary>
+    /// The origin report's own recorded confidence, or <see langword="null" /> when it could not be
+    /// read. It is the one statement of uncertainty a published description makes, and it comes from
+    /// the report row rather than from anything a successor composed.
+    /// </summary>
+    public string? ReportConfidence { get; init; }
+}

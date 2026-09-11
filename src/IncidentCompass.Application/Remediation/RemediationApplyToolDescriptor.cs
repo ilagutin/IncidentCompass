@@ -36,8 +36,9 @@ namespace IncidentCompass.Application.Remediation;
 /// records the execution, and that entry can only ever produce another proposal for a person to
 /// approve. Approving a code write therefore approves applying a diff to a copy and nothing more;
 /// whether those bytes ever leave this host is a second, separately approved decision, under a
-/// separate category an operator can leave switched off. Pull-request publication remains a category
-/// this release does not implement.
+/// separate category an operator can leave switched off. Publishing that branch as a pull request is a
+/// third decision under a third category, scheduled the same way by the push's own transaction and
+/// switched off the same way.
 /// </para>
 /// <para>
 /// <b>The logical target is the pass's own.</b> Both act on the checkout an operator configured, so

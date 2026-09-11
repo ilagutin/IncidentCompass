@@ -6,6 +6,7 @@ using IncidentCompass.Application.Tickets;
 using IncidentCompass.Domain.Incidents.Actions;
 using IncidentCompass.Infrastructure.Governance.ActionApprovals;
 using IncidentCompass.Infrastructure.Postgres;
+using IncidentCompass.Infrastructure.Remediation;
 using Microsoft.Extensions.Options;
 using Npgsql;
 
@@ -38,10 +39,11 @@ internal sealed class PostgresTicketUpdateEvidenceResolver(
         Func<string, Task> denyAsync,
         CancellationToken cancellationToken)
     {
+        var isBacklink = proposal.RegisteredTool.ToolId == TicketBacklinkDescriptor.ToolId;
         if (proposal.RegisteredTool.Category != ActionCategory.TicketUpdate ||
-            proposal.RegisteredTool.ToolId !=
+            (!isBacklink && proposal.RegisteredTool.ToolId !=
                 IncidentCompass.Application.Governance.PostReportActions
-                    .TicketUpdatePostReportActionWorkflow.UpdateToolId)
+                    .TicketUpdatePostReportActionWorkflow.UpdateToolId))
         {
             return;
         }
@@ -68,7 +70,8 @@ internal sealed class PostgresTicketUpdateEvidenceResolver(
 
         if (!GitHubIssueCommentMarker.TryReadPayload(
                 proposal.CanonicalPayload, out var payload) ||
-            payload.OriginReportId != proposal.OriginReportId)
+            payload.OriginReportId != proposal.OriginReportId ||
+            (payload.PullRequestNumber is not null) != isBacklink)
         {
             await denyAsync("ticket_update_payload_invalid");
             return;
@@ -81,8 +84,31 @@ internal sealed class PostgresTicketUpdateEvidenceResolver(
             !string.Equals(evidence.TicketId, payload.TicketId, StringComparison.Ordinal))
         {
             await denyAsync("ticket_update_target_required");
+            return;
+        }
+
+        // A backlink states a number that a stranger will read as this product's own claim about what
+        // answers their incident. It is re-checked here, inside the proposal transaction, against the
+        // audit projection the pull-request action wrote, so the number a person approves is one the
+        // database vouches for rather than one a workflow computed and nobody verified since.
+        if (isBacklink && !await HasConfirmedPullRequestAsync(
+                connection, transaction, proposal, payload.PullRequestNumber!, cancellationToken))
+        {
+            await denyAsync("ticket_backlink_pull_request_unconfirmed");
         }
     }
+
+    private static async Task<bool> HasConfirmedPullRequestAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        GovernedActionProposal proposal,
+        string claimed,
+        CancellationToken cancellationToken) =>
+        string.Equals(
+            await PostgresConfirmedPullRequestReader.ReadAsync(
+                connection, transaction, proposal.TenantId, proposal.OriginReportId, cancellationToken),
+            claimed,
+            StringComparison.Ordinal);
 
     private static async Task<TicketUpdateEvidence?> ResolveAsync(
         NpgsqlConnection connection,

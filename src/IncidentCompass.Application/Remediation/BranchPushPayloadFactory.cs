@@ -25,13 +25,25 @@ internal static class BranchPushPayloadFactory
     /// a review summary, because a person approving echoes a hash computed over these exact words.
     /// </summary>
     public const string PublicationStatement =
-        "Approving creates one new branch at one new commit in the configured repository and nothing " +
-        "else. No existing reference is moved or deleted, nothing is merged, no pull request is " +
-        "opened, no repository setting is changed, and no test is executed.";
+        "Approving creates one new branch at one new commit in the configured repository. No existing " +
+        "reference is moved or deleted, nothing is merged, no pull request is opened, no repository " +
+        "setting is changed, and no test is executed. Executing it does schedule one pull-request " +
+        "proposal, which is a separate decision a person has to approve and which an operator can " +
+        "switch off entirely; nothing about opening a pull request is automatic.";
 
     private const string ProposalKeyPrefix = "post-report:v1:";
     private const string TimestampFormat = "yyyy-MM-ddTHH:mm:ssZ";
-    private const int SchemaVersion = 1;
+    /// <summary>
+    /// Version 2. The frozen statement about what approving a push sets in motion changed when a push
+    /// began scheduling a pull-request proposal, and a statement inside the approval hash is not a
+    /// comment: a payload frozen under version 1 says something that is no longer the whole truth. The
+    /// version is bumped rather than left alone so that such a payload is refused for a stated reason
+    /// instead of failing an opaque text comparison. The cost is that a push proposed before an upgrade
+    /// and still awaiting approval after one is no longer executable and needs a fresh proposal, which
+    /// the workflow produces on the next evaluation.
+    /// </summary>
+    private const int SchemaVersion = 2;
+
     private const int ArgumentPropertyCount = 19;
     private const int PayloadPropertyCount = ArgumentPropertyCount + 4;
     private const int MaximumNameCharacters = 128;

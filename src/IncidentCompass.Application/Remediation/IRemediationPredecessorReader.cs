@@ -1,8 +1,8 @@
 namespace IncidentCompass.Application.Remediation;
 
 /// <summary>
-/// Reads the one executed <c>code_write</c> action a report may have, which is the only thing a
-/// branch push is ever allowed to continue.
+/// Reads the one executed predecessor a report may have for each link in the publication chain: the
+/// <c>code_write</c> a branch push continues, and the <c>branch_push</c> a pull request continues.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -23,6 +23,23 @@ namespace IncidentCompass.Application.Remediation;
 public interface IRemediationPredecessorReader
 {
     Task<RemediationPredecessor?> FindExecutedCodeWriteAsync(
+        string tenantId,
+        Guid originReportId,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Reads the one executed, live <c>branch_push</c> action a report may have, together with the
+    /// commit that action recorded in its own audit projection and the report's recorded confidence.
+    /// </summary>
+    /// <remarks>
+    /// The three values travel together because a pull request needs all three at once and each is a
+    /// fact about the same row or the row it points at. Reading them in one place keeps the second link
+    /// in the chain checked the same three ways the first one is: the intent exists only because the
+    /// push's terminal transaction wrote it, this read re-verifies that the row is in the one state
+    /// that makes a pull request meaningful, and the push's identity and result digest go into the
+    /// successor's frozen payload.
+    /// </remarks>
+    Task<RemediationPredecessor?> FindExecutedBranchPushAsync(
         string tenantId,
         Guid originReportId,
         CancellationToken cancellationToken);
