@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SourceWorkerOutput",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "matched": { "type": "boolean" },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "artifactId": { "type": "string" },
+          "title": { "type": "string" },
+          "quote": { "type": "string" },
+          "relativePath": { "type": "string" },
+          "lineStart": { "type": "number" },
+          "lineEnd": { "type": "number" },
+          "release": { "type": "string" },
+          "mappingMethod": { "type": "string", "enum": ["heuristic"] }
+        },
+        "required": ["artifactId", "title", "relativePath", "lineStart", "lineEnd", "release", "mappingMethod"]
+      }
+    },
+    "noMatchReason": { "type": "string" }
+  },
+  "required": ["matched", "items"]
+}
