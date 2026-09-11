@@ -650,9 +650,74 @@ ends in `failed` with that code on it, and nothing was written to any copy. Ther
 of a failed action: the honest recovery is a fresh investigation, because the source evidence the old
 diff was derived from came from the old tree too.
 
-**What is still missing.** Branch push and pull-request publication. An approved and executed
-proposal proves the change still applies to the tree it was approved against; nothing carries it into
-the monitored checkout, pushes a branch, opens a pull request or merges anything.
+**What is still missing.** Pull-request publication. An approved and executed proposal proves the
+change still applies to the tree it was approved against; nothing carries it into the monitored
+checkout, opens a pull request or merges anything. Publishing the change as a branch is a separate
+capability with a separate approval, described next.
+
+## Branch push boundary
+
+`branch_push` is the one capability in this product that makes something a stranger can see. It
+creates one branch at one new commit in the configured repository and does nothing else.
+
+**What can reach it.** No model turn. It is an external action, and only `IImmediateAgentTool`
+implementations are ever offered to a model; the adapter behind this id implements
+`IExternalActionTool` and nothing else, so declaring the tool and granting the id to a role produces a
+tool surface without it. The remediation pass, the one place a model is asked about source code, is
+called with no tools at all. A unit test asserts all three.
+
+**What schedules it, and in what order.** Only the transaction that records an approved `code_write`
+as `executed`. The workflow declines to enqueue itself at report publication, so there is no path by
+which a push is proposed before the change it publishes was approved and applied; and because the
+queue entry is written in that same transaction, there is no path by which an executed change loses
+its follow-up either. The predecessor's action id and a digest of its result are inside the push's own
+canonical payload, so the approval hash covers which execution is being published, and a standing
+approval cannot be re-pointed at another.
+
+**What the approval binds.** The repository, the base branch, the base commit and its tree, the branch
+name, the exact approved diff and both tree identities, the correspondence digest with its proved and
+excluded path counts, the predecessor and its result digest, and the instant pinned into the commit.
+`branch_push` is not an auto-approvable category, so the proposal is always created `requested`.
+
+**Where the target comes from.** Host configuration, never a payload and never a model. The owner,
+repository and credential are the ticket binding's; `IncidentCompass:Publication:GitHub:BaseBranch` is
+the only new setting and has no default, so an unset one means code publication is not configured here
+and every call refuses. The branch name is derived from the origin report as
+`incidentcompass/remediation/<report>`; the reader re-derives it and refuses a payload naming anything
+else, so there is no free-text branch field to sanitize. All of it is folded into the adapter binding
+fingerprint and compared again before dispatch.
+
+**What it cannot do.** Force-push, delete a branch, merge, or change a repository setting. That is
+structural rather than a rule: the gateway port has three operations - read a base, read a branch,
+create a branch - the push request has no field that could express an update or a merge, and the
+request factory builds no `PATCH`, no `DELETE` and no merge call. The base branch is read and never
+written, and a base branch configured inside the namespace this product creates branches in is
+refused at startup.
+
+**What proves the base.** Before anything is proposed, the remote base commit's whole regular-file
+listing is compared with the approved base tree path by path, using git blob ids computed locally as
+`sha1("blob " + length + "\0" + bytes)` - arithmetic, with no git binary, no child process, no `.git`
+read and no extra network call beyond one recursive tree GET. A truncated listing refuses; an entry
+this product cannot reproduce, such as a symlink or a submodule, refuses; a shared path whose bytes
+differ refuses; a path only the remote holds refuses; a path only the local base holds is enumerated
+and excluded from the push. The result is frozen into the approval as a digest and re-proved at
+dispatch against the pinned commit. `docs/trade-offs.md` states exactly what that claim covers.
+
+**At most once.** Blobs, trees and commits are content-addressed, and the commit's author and
+committer dates are pinned by the approval, so every object the push builds is idempotent by
+construction and the reference create is the only operation whose repetition would mean anything. It
+is a compare-and-swap: a name that is taken is read back, and the push is a replay when the branch
+already points at exactly this commit and a refusal when it points elsewhere. A reference create whose
+answer never arrived is `dispatch_outcome_unknown` on a `failed` row, durable and never retried
+automatically; because the branch name is derived from the report, one read of that reference settles
+it, and a later approval refuses with `branch_push_prior_outcome_unknown` rather than writing when the
+branch is absent.
+
+**What is recorded.** The compact audit projection on the action row, as resource kind `git_branch`
+with the created commit as its identifier. The branch name is not stored because it is derivable from
+`origin_report_id` on the same row; the commit is the fact that exists only because the push happened.
+Migration `034` widens the projection's constraints for that kind, and the database independently
+refuses any transition for it other than absent to created.
 
 ## Redaction And Pseudonymization
 

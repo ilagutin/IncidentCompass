@@ -2,6 +2,7 @@ using IncidentCompass.Application.Governance.PostReportActions;
 using IncidentCompass.Application.Governance.Tools;
 using IncidentCompass.Application.Intake.Configuration;
 using IncidentCompass.Application.Notifications;
+using IncidentCompass.Application.Remediation;
 using IncidentCompass.Application.Tickets;
 using IncidentCompass.Infrastructure;
 using IncidentCompass.Worker;
@@ -170,6 +171,68 @@ public sealed class ExternalActionHostBindingTests
         await StartGitHubValidatorAsync(host.Services);
     }
 
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task WorkerCodePublicationBinding_RejectsEnabledBranchPushWithoutABaseBranch(
+        string? baseBranch)
+    {
+        // An unset base branch is what a host that never configured code publication looks like, and
+        // such a host has to start. What it may not do is start while its configuration enables the
+        // action, and that is this validator's whole job: the options validator lets blank through so
+        // that a deployment which forwards an unset variable as an empty string comes up.
+        using var host = CreateBranchPushHost(new Dictionary<string, string?>
+        {
+            ["IncidentCompass:Tickets:GitHub:Owner"] = "owner",
+            ["IncidentCompass:Tickets:GitHub:Repository"] = "repo",
+            ["IncidentCompass:Tickets:GitHub:Token"] = "github-host-token-sentinel",
+            ["IncidentCompass:Publication:GitHub:BaseBranch"] = baseBranch
+        });
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => StartCodePublicationValidatorAsync(host.Services));
+
+        Assert.Equal(
+            "GitHub code publication binding does not match an enabled branch push action.",
+            exception.Message);
+        Assert.DoesNotContain("owner/repo", exception.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "github-host-token-sentinel", exception.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task WorkerCodePublicationBinding_RejectsEnabledBranchPushWithoutAHostCredential()
+    {
+        using var host = CreateBranchPushHost(new Dictionary<string, string?>
+        {
+            ["IncidentCompass:Tickets:GitHub:Owner"] = "owner",
+            ["IncidentCompass:Tickets:GitHub:Repository"] = "repo",
+            ["IncidentCompass:Publication:GitHub:BaseBranch"] = "main"
+        });
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => StartCodePublicationValidatorAsync(host.Services));
+
+        Assert.Equal(
+            "GitHub code publication binding does not match an enabled branch push action.",
+            exception.Message);
+    }
+
+    [Fact]
+    public async Task WorkerCodePublicationBinding_AcceptsExactEnabledBranchPushBinding()
+    {
+        using var host = CreateBranchPushHost(new Dictionary<string, string?>
+        {
+            ["IncidentCompass:Tickets:GitHub:Owner"] = "owner",
+            ["IncidentCompass:Tickets:GitHub:Repository"] = "repo",
+            ["IncidentCompass:Tickets:GitHub:Token"] = "github-host-token-sentinel",
+            ["IncidentCompass:Publication:GitHub:BaseBranch"] = "main"
+        });
+
+        await StartCodePublicationValidatorAsync(host.Services);
+    }
+
     private static IHost CreateTelegramHost(
         bool includeWorker,
         IReadOnlyDictionary<string, string?> telegramValues)
@@ -294,6 +357,57 @@ public sealed class ExternalActionHostBindingTests
             service.GetType().FullName == "IncidentCompass.Worker.GitHubIssueConfigurationStartupValidator");
         return validator.StartAsync(TestContext.Current.CancellationToken);
     }
+
+    private static Task StartCodePublicationValidatorAsync(IServiceProvider services)
+    {
+        var validator = services.GetServices<IHostedService>().Single(service =>
+            service.GetType().FullName ==
+            "IncidentCompass.Worker.CodePublicationConfigurationStartupValidator");
+        return validator.StartAsync(TestContext.Current.CancellationToken);
+    }
+
+    private static IHost CreateBranchPushHost(IReadOnlyDictionary<string, string?> publicationValues)
+    {
+        var values = new Dictionary<string, string?>(publicationValues)
+        {
+            ["IncidentCompass:ModelGateway:Provider"] = "Mock",
+            ["IncidentCompass:Embeddings:Provider"] = "Mock"
+        };
+        return new HostBuilder()
+            .ConfigureAppConfiguration(configuration => configuration.AddInMemoryCollection(values))
+            .ConfigureServices((context, services) =>
+            {
+                services.AddLogging();
+                services.AddTestApplication(context.Configuration);
+                services.AddInfrastructure(context.Configuration);
+                services.RemoveAll<ITriageConfigurationRepository>();
+                services.AddSingleton<ITriageConfigurationRepository>(
+                    new StaticNotificationConfiguration(CreateBranchPushConfiguration()));
+                services.AddWorker(context.Configuration);
+            })
+            .Build();
+    }
+
+    private static TriageConfiguration CreateBranchPushConfiguration() => new(
+        "branch-push-host-composition",
+        new Dictionary<string, TriageProviderSettings>(StringComparer.Ordinal),
+        new Dictionary<string, TriageRouteSettings>(StringComparer.Ordinal),
+        new OrchestratorSettings("orchestrator", "chat", ["delegate", "publish_report"],
+            new OrchestratorBudgetSettings(1, 1000, 30)),
+        new Dictionary<string, TriageRoleSettings>(StringComparer.Ordinal),
+        new Dictionary<string, TriageToolSettings>(StringComparer.Ordinal)
+        {
+            [BranchPushToolDescriptor.ToolId] = new(
+                "external_action", null, null, null, "branch_push",
+                BranchPushToolDescriptor.LogicalTargetId)
+        },
+        [],
+        new IngestionSettings("tenant", ["tester"]),
+        new FaultGroupingSettings(15, 30, 1, new MassIssueSettings(5, "strong")),
+        RedactionSettings.Default)
+    {
+        Actions = new TriageActionSettings([BranchPushToolDescriptor.ToolId], "live", false, 60)
+    };
 
     private static void AssertTelegramBindingFailureIsSecretFree(
         InvalidOperationException exception,

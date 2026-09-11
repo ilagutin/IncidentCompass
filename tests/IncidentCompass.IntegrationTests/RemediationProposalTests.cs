@@ -451,5 +451,10 @@ public sealed class RemediationProposalTests(PostgresRepositoryFixture postgres)
             AppliedPatch = request.PatchText;
             return Task.FromResult(RemediationApplyResult.Applied(ResultIdentity, 1));
         }
+
+        public Task<RemediationPublicationResult> PrepareForPublicationAsync(
+            RemediationPublicationRequest request,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(RemediationPublicationResult.Refused(RemediationCodes.NotConfigured));
     }
 }

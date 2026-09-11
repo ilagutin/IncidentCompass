@@ -64,6 +64,12 @@ public static class Setup
         // host composed with the model gateway and the workspace adapter it needs.
         services.AddSingleton<IPostReportActionWorkflow, RemediationPostReportActionWorkflow>();
 
+        // The publication half of the same feature. It is in the catalog so that its identity is
+        // validated against its backend descriptor like every other workflow, but it never enqueues
+        // itself at report publication: its intent is written by the transaction that records an
+        // approved code write as executed, which is what makes the order a property of the write.
+        services.AddSingleton<IPostReportActionWorkflow, BranchPushPostReportActionWorkflow>();
+
         // The approval half of the same feature. It is registered where the other external-action
         // adapters are, and only here, because this is the one host that both proposes an approved
         // code write and dispatches it; the Api composes neither. Its descriptor is registered from
@@ -71,6 +77,9 @@ public static class Setup
         services.AddScoped<RemediationApplyActionTool>();
         services.AddScoped<IExternalActionTool>(
             serviceProvider => serviceProvider.GetRequiredService<RemediationApplyActionTool>());
+        services.AddScoped<BranchPushActionTool>();
+        services.AddScoped<IExternalActionTool>(
+            serviceProvider => serviceProvider.GetRequiredService<BranchPushActionTool>());
         services.AddSingleton<TelegramNotificationActionTool>();
         services.AddSingleton<IExternalActionTool>(
             serviceProvider => serviceProvider.GetRequiredService<TelegramNotificationActionTool>());
@@ -91,6 +100,7 @@ public static class Setup
         services.TryAddSingleton<RetentionPump>();
         services.AddHostedService<TelegramConfigurationStartupValidator>();
         services.AddHostedService<GitHubIssueConfigurationStartupValidator>();
+        services.AddHostedService<CodePublicationConfigurationStartupValidator>();
         services.AddHostedService<Worker>();
         services.AddHostedService<ActionDispatchWorker>();
         services.AddHostedService<PostReportActionEvaluationWorker>();

@@ -757,3 +757,72 @@ cannot be read back at all. So the day a release runs a test, it cannot reuse th
 accident: the artifact that ran one and the artifact that did not can never be confused, and saying
 that a test passed will take a deliberate change to the payload contract, the same way it already
 takes a deliberate migration to relax the table's own checks.
+
+## A Push Is Byte-Equivalent Over A Proved Intersection, Not Over Everything
+
+The backlog item behind the governed branch push asks that the pushed tree be the approved base with
+the approved diff applied. Taken literally over what this product calls a base, that criterion cannot
+be met, and meeting it would be worse than not meeting it.
+
+A base tree identity is a SHA-256 over the *admitted* files of a monitored checkout. Admission has no
+notion of what a repository tracks: there is no `.gitignore` handling anywhere in the product, and the
+checkout's own `.git` directory is deliberately skipped, so the admitted set includes build output,
+local logs and any environment file sitting in the working tree. Building the pushed tree from that
+set would publish all of it, and would give the commit no defensible parent, since a tree made of
+admitted files is not a descendant of anything on the remote.
+
+What ships instead is the honest restatement, and it is what a reviewer is told:
+
+> The pushed commit's tree equals the remote base commit's tree with exactly the files the approved
+> diff writes replaced by the bytes that diff produces when applied to its approved base. Before the
+> push, every path the approved base and the remote base commit have in common is proved
+> byte-identical, and any path present on only one side is enumerated: a path only the local base
+> holds is untracked by the remote and is excluded from the push, and a path only the remote holds
+> refuses. Divergence at any compared path, a truncated remote listing, or a tree entry this product
+> cannot reproduce refuses and requires a fresh proposal.
+
+Three things follow from that wording and are worth stating plainly.
+
+**The excluded set is named, not ignored.** The comparison returns the local-only paths in order, the
+count is frozen into the approval payload and shown in the review summary, and the digest the approval
+freezes is computed over those paths as well as over the proved ones. So "byte-equivalent over the
+intersection" is a claim with a stated boundary rather than a claim with a silent one. Those files are
+also unreachable rather than merely unwanted: only the paths the diff names are ever read back out of
+the patched copy, and a diff may name at most sixteen policy-checked paths.
+
+**A path only the remote holds refuses, and that is deliberate.** It is either a file the checkout
+deleted - in which case the pushed commit would silently keep it, because the base tree does - or a
+file admission could not see, such as a symlink or a submodule, in which case the pushed tree carries
+content the approved base never described. Accepting the intersection as whatever the local filesystem
+happened to expose would make the proof a function of what was hidden from it. A clean checkout of the
+base branch has no such path, so the strict answer costs nothing in the ordinary case.
+
+**The resulting commit is bound by determination rather than by name.** Every input to the commit is
+in the frozen payload and hashed: the parent, the base tree, the diff, the pinned author and committer
+instant, and a backend-composed message carrying no model text. Those bytes determine exactly one
+content-addressed commit. Naming that commit id in the payload would mean either implementing git's
+tree and commit object formats inside this product - a second implementation of a format whose failure
+mode is a feature that refuses forever - or creating objects in the remote repository while the
+proposal is still waiting for a person, which is an external write before an approval. Neither is
+worth the literal value. The dispatch proves the commit instead: it refuses unless the commit the
+provider built has exactly the approved parent and the tree this dispatch created, before the
+reference is touched, and the commit id is recorded on the action row once it exists.
+
+## One Credential For Issues And For Code
+
+The code repository binding is the issue repository binding: the same owner, the same repository and
+the same token that `IncidentCompass:Tickets:GitHub` already carries. Only the base branch is new.
+
+The alternative was a second repository setting and a second credential, which would allow a
+deployment where incidents are filed in one repository and fixes pushed to another. That flexibility
+is real and it is not free: it doubles the secret inventory, and it creates a path where a credential
+with write access to source is configured beside the one an operator thought they were configuring,
+with nothing forcing them to notice. Reusing one binding means the repository that receives a branch is
+the repository an operator already named and reviewed.
+
+What does change is the scope that one token needs: creating branches needs write access to repository
+contents, which filing issues does not. That widening is deliberate rather than incidental. It is made
+by an operator who is turning `branch_push` on, which is off in the shipped configuration and requires
+editing both the tool's mode and `Actions.AllowedTools`, and the Worker refuses to start if the action
+is enabled without a repository, a credential and a base branch configured. A deployment that genuinely
+needs to separate the two repositories is a change with its own review, not a default.

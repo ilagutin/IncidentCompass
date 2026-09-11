@@ -25,9 +25,10 @@ namespace IncidentCompass.Infrastructure.Remediation;
 /// configured checkout again, refuses unless that copy is the tree the approval named, applies the
 /// frozen diff to the copy, recomputes the resulting tree identity and compares it with the one the
 /// approval named. Then the copy is discarded. Nothing is landed: no branch is pushed, no pull
-/// request is opened, nothing is merged and no test is run, because the workspace port has no
-/// operation that could and no process is started anywhere in the product. The recorded result says
-/// so in the same words.
+/// request is opened, nothing is merged and no test is run, because nothing on this path reaches a
+/// remote and no process is started anywhere in the product. The recorded result says so in the same
+/// words. A successful execution does schedule one further proposal, for the separately approved
+/// <c>branch_push</c> category, and scheduling a decision is not taking one.
 /// </para>
 /// <para>
 /// <b>Why that is worth doing rather than skipping.</b> It is the proof that the approval hash covers

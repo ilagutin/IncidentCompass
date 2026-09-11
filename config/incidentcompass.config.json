@@ -26,7 +26,8 @@
     "ticket_search": { "Kind": "internal" },
     "ticket_create": { "Kind": "external_action", "Category": "ticket_create", "LogicalTargetId": "ticket:configured-repository", "Mode": "disabled" },
     "remediation_diff": { "Kind": "external_action", "Category": "code_write", "LogicalTargetId": "source:configured-workspace", "Mode": "disabled" },
-    "remediation_apply": { "Kind": "external_action", "Category": "code_write", "LogicalTargetId": "source:configured-workspace", "Mode": "disabled" }
+    "remediation_apply": { "Kind": "external_action", "Category": "code_write", "LogicalTargetId": "source:configured-workspace", "Mode": "disabled" },
+    "branch_push": { "Kind": "external_action", "Category": "branch_push", "LogicalTargetId": "code:configured-repository", "Mode": "disabled" }
   },
   "Rules": [
     { "Type": "rate_cap", "Tool": "*", "Scope": "attempt", "Max": 50 }

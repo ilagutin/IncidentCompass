@@ -97,6 +97,44 @@ internal sealed class LocalSourceRemediationWorkspace(IOptions<SourceContextOpti
     }
 
     /// <summary>
+    /// Re-derives what an approved change would publish, and proves the base it is a change to.
+    /// </summary>
+    /// <remarks>
+    /// It materializes its own copy like the other two calls and disposes it before returning, so a
+    /// push re-derives the change from bytes that are already durable instead of depending on a
+    /// directory that was thrown away when the code write executed. The steps themselves live in
+    /// <see cref="RemediationPublicationPreparer" />, because the order they run in is the safety
+    /// argument and is worth reading in one place.
+    /// </remarks>
+    public async Task<RemediationPublicationResult> PrepareForPublicationAsync(
+        RemediationPublicationRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (Resolve(request.Target) is not { } selection)
+        {
+            return RemediationPublicationResult.Refused(RemediationCodes.NotConfigured);
+        }
+
+        try
+        {
+            var materialized = await MaterializeAsync(selection, cancellationToken);
+            using var workspace = materialized.Workspace;
+            return workspace is null
+                ? RemediationPublicationResult.Refused(materialized.Code)
+                : await RemediationPublicationPreparer.PrepareAsync(
+                    workspace, request, options, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception) when (IsAdapterFailure(exception))
+        {
+            return RemediationPublicationResult.Refused(SourceWorkspaceCodes.Unavailable);
+        }
+    }
+
+    /// <summary>
     /// Checks the base before anything else, then parses, then applies.
     /// </summary>
     /// <remarks>

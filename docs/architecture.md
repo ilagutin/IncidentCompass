@@ -313,9 +313,44 @@ resolved by picking one.
 
 The adapter's binding fingerprint hashes the configured workspace root together with the resolved
 monitored roots, so repointing a root invalidates an outstanding approval instead of quietly moving
-what it applies to. Nothing on this path lands a change: the workspace port has no landing operation,
-no process is started, and branch push and pull-request publication are separate categories this
-release does not implement.
+what it applies to. Nothing on this path lands a change: no process is started and nothing here
+reaches a remote. Pull-request publication remains a category this release does not implement.
+
+## Governed branch push
+
+A third capability, `branch_push`, turns an executed `code_write` into one new branch at one new
+commit in a configured repository. It is a separate tool entry, a separate category and a separate
+idempotency key again, because publishing bytes where a stranger can see them is a different decision
+from applying them to a copy, and an operator has to be able to allow the first and not the second.
+
+**Where the ordering lives.** A proposal's origin is a report and cannot be an action: the schema, the
+grounder and the artifact kind that would express it all refuse. So the chain is not expressed in
+provenance. The queue entry that can lead to a push is written inside the same database transaction
+that records the `code_write` action as `executed`, and nowhere else - the push workflow declines to
+enqueue itself at report publication. The entry therefore cannot exist before the change it publishes
+was approved and applied, and cannot be lost after it was. The predecessor's action id and a digest of
+its result travel inside the push's own canonical payload, where the approval hash covers them.
+
+**What the push is.** The pushed commit's tree is the remote base commit's tree with exactly the files
+the approved diff writes replaced by the bytes that diff produces when applied to its approved base.
+Before anything is proposed, every path the approved base and that remote commit have in common is
+proved byte-identical by comparing git blob ids, computed locally as
+`sha1("blob " + length + "\0" + bytes)`; paths present only locally are enumerated and excluded, and a
+path present only remotely refuses. The proof is frozen into the approval as a digest and re-proved at
+dispatch. `docs/trade-offs.md` states exactly what that claim covers and what it does not.
+
+**What it can do to a repository.** Create one branch. The gateway port has three operations - read a
+base, read a branch, create a branch - and no request this adapter can build is a reference update, a
+reference delete or a merge. Blobs, trees and commits are content-addressed and so idempotent by
+construction, and the commit's author and committer dates are pinned by the approval, which leaves the
+reference create as the only operation whose repetition would mean anything. It is a compare-and-swap:
+a name that is taken is read back, never overwritten.
+
+**Where it is bound.** The owner, repository and credential are the ones
+`IncidentCompass:Tickets:GitHub` already carries; `IncidentCompass:Publication:GitHub:BaseBranch` adds
+the only new setting, and an unset one means code publication is not configured here. All three are
+folded into the adapter binding fingerprint, so repointing a host at another repository or another
+base branch turns a standing approval into `adapter_binding_changed`.
 
 ## Read-only ticket context
 

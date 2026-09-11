@@ -641,6 +641,11 @@ public sealed class RemediationTriggerTests
             RemediationApplyRequest request,
             CancellationToken cancellationToken) =>
             Task.FromResult(RemediationApplyResult.Applied(ResultIdentity, 1));
+
+        public Task<RemediationPublicationResult> PrepareForPublicationAsync(
+            RemediationPublicationRequest request,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(RemediationPublicationResult.Refused(RemediationCodes.NotConfigured));
     }
 
     /// <summary>

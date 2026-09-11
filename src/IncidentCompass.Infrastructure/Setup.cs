@@ -57,7 +57,7 @@ public static class Setup
         services.AddIntakeInfrastructure(configuration);
         services.AddMemoryInfrastructure(configuration);
         services.AddSourceContextInfrastructure(configuration);
-        services.AddRemediationInfrastructure();
+        services.AddRemediationInfrastructure(configuration);
         services.AddTicketInfrastructure(configuration);
         // Infrastructure supplies the Worker identity; API auth binds IUserContext explicitly.
         services.TryAddScoped<IBackgroundUserContext, SystemUserContext>();

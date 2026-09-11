@@ -228,5 +228,10 @@ public sealed class RemediationApplyActionToolTests
             RequestedBaseTreeIdentity = request.BaseTreeIdentity;
             return Task.FromResult(Result);
         }
+
+        public Task<RemediationPublicationResult> PrepareForPublicationAsync(
+            RemediationPublicationRequest request,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(RemediationPublicationResult.Refused(RemediationCodes.NotConfigured));
     }
 }

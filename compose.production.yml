@@ -74,6 +74,10 @@ services:
       IncidentCompass__Tickets__GitHub__Owner: ${INCIDENTCOMPASS_GITHUB_OWNER:?set INCIDENTCOMPASS_GITHUB_OWNER}
       IncidentCompass__Tickets__GitHub__Repository: ${INCIDENTCOMPASS_GITHUB_REPOSITORY:?set INCIDENTCOMPASS_GITHUB_REPOSITORY}
       IncidentCompass__Tickets__GitHub__Token: ${INCIDENTCOMPASS_GITHUB_TOKEN:?set INCIDENTCOMPASS_GITHUB_TOKEN}
+      # Code publication reuses the owner, repository and token above. Leaving this unset means
+      # `branch_push` is not configured on this host and every push refuses; setting it also means the
+      # token above now needs write access to repository contents, not only to issues.
+      IncidentCompass__Publication__GitHub__BaseBranch: ${INCIDENTCOMPASS_GITHUB_BASE_BRANCH:-}
       IncidentCompass__Telegram__Enabled: ${INCIDENTCOMPASS_TELEGRAM_ENABLED:-false}
       IncidentCompass__Telegram__RouteId: ${INCIDENTCOMPASS_TELEGRAM_ROUTE_ID:-}
       IncidentCompass__Telegram__ChatId: ${INCIDENTCOMPASS_TELEGRAM_CHAT_ID:-}

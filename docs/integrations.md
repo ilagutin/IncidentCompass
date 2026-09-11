@@ -63,3 +63,27 @@ The cost-rollup route uses the same authenticated key-to-tenant binding. It requ
 reversed or greater-than-31-day windows. Provider, model, logical route and tenant identifiers are not
 returned. Calls with missing or ambiguous effective pricing remain explicitly unpriced instead of
 being reported as zero-cost usage. See [Cost tracking](cost-tracking.md).
+
+## GitHub code publication
+
+`branch_push` publishes an approved, executed `code_write` as one new branch at one new commit. It
+reuses the GitHub Issues binding above - the same owner, the same repository and the same
+`IncidentCompass__Tickets__GitHub__Token` - and adds one setting,
+`IncidentCompass__Publication__GitHub__BaseBranch`, which has no default. With it unset, code
+publication is not configured on the host and every call refuses. Enabling the action also requires an
+exact `Actions.AllowedTools` grant and a non-disabled mode, and the Worker refuses to start when the
+action is enabled without a repository, a credential and a base branch.
+
+Setting it widens what the shared token needs: creating a branch requires write access to repository
+contents, which filing issues does not. `docs/trade-offs.md` explains why one credential is preferred
+to two.
+
+The adapter talks to `https://api.github.com` with redirects disabled, exactly as the issue adapters
+do. It reads a reference, a commit and one recursive tree listing, creates the blobs, tree and commit
+its request describes - all content-addressed, so creating one twice changes nothing - and then makes
+exactly one `POST /git/refs`. There is no reference update, no reference delete and no merge call
+anywhere in the adapter, and the port above it has no operation that could ask for one. The base
+branch is read and never written; the branch that is created is derived from the origin report as
+`incidentcompass/remediation/<report>` and is never taken from a payload or a model. A reference
+create whose outcome is unknown is durable, is never retried automatically, and is settled by one read
+of that derived reference.

@@ -1,5 +1,6 @@
 using IncidentCompass.Application.Core.Embeddings;
 using IncidentCompass.Application.Core.ModelClients;
+using IncidentCompass.Application.Remediation;
 using IncidentCompass.Application.Tickets;
 using IncidentCompass.Infrastructure;
 using IncidentCompass.Infrastructure.Tickets;
@@ -303,6 +304,39 @@ public sealed class HostOptionsValidationTests
         Assert.NotNull(exception);
         Assert.Contains(GetOptionsValidationFailures(exception),
             failure => failure.Contains("Repository", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task HostServices_StartWithAnUnconfiguredCodePublicationBaseBranch(string baseBranch)
+    {
+        // A compose file that forwards an unset variable delivers an empty string, not a missing key.
+        // A host that never asked for branch pushes must start on that, and refuse at dispatch.
+        using var host = CreateHostWithConfiguration(new Dictionary<string, string?>
+        {
+            ["IncidentCompass:Publication:GitHub:BaseBranch"] = baseBranch
+        });
+
+        await host.StartAsync();
+
+        var gateway = host.Services.GetRequiredService<ICodePublicationGateway>();
+        Assert.False(gateway.IsConfigured);
+    }
+
+    [Fact]
+    public async Task HostServices_RejectAnInvalidCodePublicationBaseBranchOnStart()
+    {
+        using var host = CreateHostWithConfiguration(new Dictionary<string, string?>
+        {
+            ["IncidentCompass:Publication:GitHub:BaseBranch"] = "../escape"
+        });
+
+        var exception = await Record.ExceptionAsync(() => host.StartAsync());
+
+        Assert.NotNull(exception);
+        Assert.Contains(GetOptionsValidationFailures(exception),
+            failure => failure.Contains("BaseBranch", StringComparison.Ordinal));
     }
 
     private static IHost CreateHostWithConfiguration(

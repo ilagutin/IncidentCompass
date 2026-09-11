@@ -22,4 +22,9 @@ internal sealed class UnavailableRemediationWorkspace : IRemediationWorkspace
         Task.FromResult(RemediationApplyResult.Refused(
             RemediationCodes.NotConfigured,
             answerCorrectable: false));
+
+    public Task<RemediationPublicationResult> PrepareForPublicationAsync(
+        RemediationPublicationRequest request,
+        CancellationToken cancellationToken) =>
+        Task.FromResult(RemediationPublicationResult.Refused(RemediationCodes.NotConfigured));
 }

@@ -52,11 +52,13 @@ public sealed class HostCompositionTests
         // Investigation/action/retention workers + Infrastructure warmups for config and optional
         // memory seeding.
         var hostedServices = provider.GetServices<IHostedService>().ToArray();
-        Assert.Equal(8, hostedServices.Length);
+        Assert.Equal(9, hostedServices.Length);
         Assert.Contains(hostedServices, service =>
             service.GetType().FullName == "IncidentCompass.Worker.TelegramConfigurationStartupValidator");
         Assert.Contains(hostedServices, service =>
             service.GetType().FullName == "IncidentCompass.Worker.GitHubIssueConfigurationStartupValidator");
+        Assert.Contains(hostedServices, service =>
+            service.GetType().FullName == "IncidentCompass.Worker.CodePublicationConfigurationStartupValidator");
         Assert.Contains(hostedServices, service => service is WorkerService);
         Assert.Contains(hostedServices, service =>
             service.GetType().FullName == "IncidentCompass.Worker.ActionDispatchWorker");

@@ -1,6 +1,8 @@
 using IncidentCompass.Application.Remediation;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Options;
 
 namespace IncidentCompass.Infrastructure.Remediation;
 
@@ -30,18 +32,42 @@ namespace IncidentCompass.Infrastructure.Remediation;
 /// </remarks>
 internal static class RemediationInfrastructureSetup
 {
-    public static IServiceCollection AddRemediationInfrastructure(this IServiceCollection services)
+    public static IServiceCollection AddRemediationInfrastructure(
+        this IServiceCollection services,
+        IConfiguration configuration)
     {
         services.Replace(ServiceDescriptor.Scoped<IRemediationWorkspace, LocalSourceRemediationWorkspace>());
         services.TryAddScoped<IRemediationDiffRepository, PostgresRemediationDiffRepository>();
         services.TryAddScoped<IRemediationPassContextRepository, PostgresRemediationPassContextRepository>();
         services.TryAddScoped<RemediationDiffRunner>();
 
+        // The publication half. The repository, owner and credential are the ticket binding's, read
+        // from the options that already carry them; the base branch is the one thing a host says here,
+        // and an unset one means code publication is not configured and every call refuses. The
+        // gateway is a singleton because it owns one HttpClient, exactly as the issue adapters do.
+        services.AddOptions<GitHubCodePublicationOptions>()
+            .Bind(configuration.GetSection(GitHubCodePublicationOptions.SectionName))
+            .ValidateOnStart();
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<
+            IValidateOptions<GitHubCodePublicationOptions>,
+            GitHubCodePublicationOptionsValidator>());
+        services.TryAddSingleton<GitHubCodePublicationGateway>();
+        services.TryAddSingleton<ICodePublicationGateway>(
+            provider => provider.GetRequiredService<GitHubCodePublicationGateway>());
+        services.TryAddScoped<IRemediationPredecessorReader, PostgresRemediationPredecessorReader>();
+        services.TryAddScoped<IBranchPushActionHistory, PostgresBranchPushActionHistory>();
+
         // The publisher is bound here for the same reason as the runner: it is an Application type
         // that cannot be constructed without IRemediationDiffRepository, which only this method
         // registers. The adapter it proposes through is not bound here, because a host that cannot
         // dispatch an approved action has no business declaring one it could execute.
         services.TryAddScoped<RemediationProposalPublisher>();
+
+        // The push publisher is bound here for the same reason: it is an Application type that cannot
+        // be constructed without ports only this method registers. The adapter that executes an
+        // approved push is not bound here, because a host that cannot dispatch one has no business
+        // declaring a tool it could execute.
+        services.TryAddScoped<BranchPushProposalPublisher>();
         return services;
     }
 }

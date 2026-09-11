@@ -28,9 +28,16 @@ namespace IncidentCompass.Application.Remediation;
 /// <b>What approving one authorizes, and what it does not.</b> Executing an approved proposal
 /// re-applies the frozen diff to a fresh disposable copy of the approved base and records the
 /// resulting tree identity. It does not push a branch, open a pull request, merge anything or run a
-/// test, and nothing behind <see cref="IRemediationWorkspace" /> can: the port has no landing
-/// operation and no process is started anywhere in the product. Branch push and pull-request
-/// publication are separate categories that this release does not implement.
+/// test: nothing on this path reaches a remote, and no process is started anywhere in the product.
+/// </para>
+/// <para>
+/// <b>It does schedule the next decision, and only the next decision.</b> Executing this action
+/// writes one queue entry for <see cref="BranchPushToolDescriptor" /> in the same transaction that
+/// records the execution, and that entry can only ever produce another proposal for a person to
+/// approve. Approving a code write therefore approves applying a diff to a copy and nothing more;
+/// whether those bytes ever leave this host is a second, separately approved decision, under a
+/// separate category an operator can leave switched off. Pull-request publication remains a category
+/// this release does not implement.
 /// </para>
 /// <para>
 /// <b>The logical target is the pass's own.</b> Both act on the checkout an operator configured, so

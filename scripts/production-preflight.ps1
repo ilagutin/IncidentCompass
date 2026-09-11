@@ -121,6 +121,22 @@ try {
         throw "INCIDENTCOMPASS_SOURCE_ROOT must select one repository, not a filesystem root."
     }
 
+    # Optional by design: empty means code publication is not configured on this host and every push
+    # refuses. A non-empty value is an operator string that ends up in a provider URL path, so its
+    # shape is checked here as well as in the host that will refuse to start on a bad one.
+    $publicationBaseBranch = if ($values.ContainsKey("INCIDENTCOMPASS_GITHUB_BASE_BRANCH")) {
+        [string] $values["INCIDENTCOMPASS_GITHUB_BASE_BRANCH"]
+    } else { "" }
+    if (-not [string]::IsNullOrWhiteSpace($publicationBaseBranch)) {
+        Assert-ProductionValueIsConfigured "INCIDENTCOMPASS_GITHUB_BASE_BRANCH" $publicationBaseBranch
+        if ($publicationBaseBranch -notmatch '^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$' -or
+            $publicationBaseBranch -match '\.\.|//' -or
+            $publicationBaseBranch.EndsWith("/") -or $publicationBaseBranch.EndsWith(".lock") -or
+            $publicationBaseBranch.StartsWith("incidentcompass/remediation/")) {
+            throw "INCIDENTCOMPASS_GITHUB_BASE_BRANCH is not a branch name this adapter will use."
+        }
+    }
+
     $telegramEnabled = if ($values.ContainsKey("INCIDENTCOMPASS_TELEGRAM_ENABLED")) {
         [string] $values["INCIDENTCOMPASS_TELEGRAM_ENABLED"]
     } else { "false" }

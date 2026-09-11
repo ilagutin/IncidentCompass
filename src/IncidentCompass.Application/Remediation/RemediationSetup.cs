@@ -35,6 +35,12 @@ internal static class RemediationSetup
         // and that validation runs wherever a configuration is loaded, not only where a pass or a
         // dispatch can run. The adapter behind it is registered by the host that can execute one.
         services.AddSingleton(RemediationApplyToolDescriptor.Descriptor);
+
+        // And the publication half, for the same reason again: a configuration naming `branch_push`
+        // has to validate on every host that loads one, including the Api, which can neither propose
+        // nor dispatch a push. The adapter and the gateway behind this descriptor are registered only
+        // by the host that can execute one.
+        services.AddSingleton(BranchPushToolDescriptor.Descriptor);
         return services;
     }
 }
