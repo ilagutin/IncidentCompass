@@ -104,10 +104,14 @@ internal sealed class MemorySearchTool(IEmbeddingClient embeddingClient, IMemory
             Artifacts: drafts);
     }
 
+    // The throwing form is the right one here: the only segment is a Guid rendered by the runtime,
+    // so it is always 36 characters of hexadecimal and hyphens. It cannot break a rule, and a
+    // refusal would mean the runtime's own formatting changed rather than that a connector supplied
+    // something unexpected.
     private static ToolArtifactDraft CreateRetrievedDraft(AgentToolExecutionContext context, EmbeddingResponse embedding, MemorySearchMatch match) =>
         new(
             ArtifactKind.RetrievedItem,
-            "memory_item:" + match.MemoryItemId,
+            ArtifactDomainRef.Create("memory_item", match.MemoryItemId.ToString()),
             CreateRetrievedPayload(context, embedding, match));
 
     private static JsonObject CreateRetrievedPayload(AgentToolExecutionContext context, EmbeddingResponse embedding, MemorySearchMatch match)

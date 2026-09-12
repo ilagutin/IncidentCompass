@@ -62,7 +62,7 @@ public sealed class ToolArtifactRedactionTests
         var job = Job();
         var draft = new ToolArtifactDraft(
             ArtifactKind.RetrievedItem,
-            "source:2026.09.01:src/Checkout.cs",
+            ArtifactDomainRef.Create("source", "2026.09.01", "src/Checkout.cs"),
             SourcePayload(CredentialBearingSourceExcerpt));
 
         var artifact = RedactedToolArtifactFactory.Create(job, draft, Redaction(), Now);
@@ -92,7 +92,7 @@ public sealed class ToolArtifactRedactionTests
     {
         var draft = new ToolArtifactDraft(
             ArtifactKind.RetrievedItem,
-            "source:2026.09.01:src/Checkout.cs",
+            ArtifactDomainRef.Create("source", "2026.09.01", "src/Checkout.cs"),
             SourcePayload(OrdinarySourceExcerpt));
 
         var artifact = RedactedToolArtifactFactory.Create(Job(), draft, Redaction(), Now);
@@ -112,7 +112,7 @@ public sealed class ToolArtifactRedactionTests
     {
         var draft = new ToolArtifactDraft(
             ArtifactKind.RetrievedItem,
-            "source:2026.09.01:src/Checkout.cs",
+            ArtifactDomainRef.Create("source", "2026.09.01", "src/Checkout.cs"),
             SourcePayload("// audit note: the previous maintainer wrote [REDACTED] here on purpose."));
 
         var artifact = RedactedToolArtifactFactory.Create(Job(), draft, Redaction(), Now);
@@ -134,7 +134,7 @@ public sealed class ToolArtifactRedactionTests
             Job(),
             new ToolArtifactDraft(
                 ArtifactKind.RetrievedItem,
-                "source:2026.09.01:src/Checkout.cs",
+                ArtifactDomainRef.Create("source", "2026.09.01", "src/Checkout.cs"),
                 SourcePayload(CredentialBearingSourceExcerpt)),
             Redaction(),
             Now);
@@ -161,7 +161,7 @@ public sealed class ToolArtifactRedactionTests
             Job(),
             new ToolArtifactDraft(
                 ArtifactKind.RetrievedItem,
-                "source:2026.09.01:src/CheckoutHandler.cs",
+                ArtifactDomainRef.Create("source", "2026.09.01", "src/CheckoutHandler.cs"),
                 SourcePayload(OrdinarySourceExcerpt)),
             Redaction(),
             Now);
@@ -190,7 +190,7 @@ public sealed class ToolArtifactRedactionTests
 
         var artifact = RedactedToolArtifactFactory.Create(
             Job(),
-            new ToolArtifactDraft(ArtifactKind.RetrievedItem, "ticket:github:owner/repo:42", payload),
+            new ToolArtifactDraft(ArtifactKind.RetrievedItem, ArtifactDomainRef.Create("ticket", "github", "owner/repo", "42"), payload),
             Redaction(),
             Now);
 
@@ -233,7 +233,7 @@ public sealed class ToolArtifactRedactionTests
 
         var artifact = RedactedToolArtifactFactory.Create(
             Job(),
-            new ToolArtifactDraft(ArtifactKind.WorkerOutput, "worker:analysis", payload),
+            new ToolArtifactDraft(ArtifactKind.WorkerOutput, ArtifactDomainRef.Create("worker", "analysis"), payload),
             Redaction(),
             Now);
 
@@ -269,12 +269,12 @@ public sealed class ToolArtifactRedactionTests
         };
 
         var once = RedactedToolArtifactFactory.Create(
-            Job(), new ToolArtifactDraft(ArtifactKind.RetrievedItem, "source:r:src/A.cs", payload), settings, Now);
+            Job(), new ToolArtifactDraft(ArtifactKind.RetrievedItem, ArtifactDomainRef.Create("source", "r", "src/A.cs"), payload), settings, Now);
         var twice = RedactedToolArtifactFactory.Create(
             Job(),
             new ToolArtifactDraft(
                 ArtifactKind.RetrievedItem,
-                "source:r:src/A.cs",
+                ArtifactDomainRef.Create("source", "r", "src/A.cs"),
                 JsonNode.Parse(once.RedactedPayload.GetRawText())!),
             settings,
             Now);
@@ -377,10 +377,10 @@ public sealed class ToolArtifactRedactionTests
         Assert.False(CompiledRedactionPatterns.TryGetExisting(settings, out _));
 
         var first = RedactedToolArtifactFactory.Create(
-            Job(), new ToolArtifactDraft(ArtifactKind.RetrievedItem, "source:r:src/A.cs", SourcePayload(largeExcerpt)), settings, Now);
+            Job(), new ToolArtifactDraft(ArtifactKind.RetrievedItem, ArtifactDomainRef.Create("source", "r", "src/A.cs"), SourcePayload(largeExcerpt)), settings, Now);
         Assert.True(CompiledRedactionPatterns.TryGetExisting(settings, out var compiled));
         RedactedToolArtifactFactory.Create(
-            Job(), new ToolArtifactDraft(ArtifactKind.RetrievedItem, "source:r:src/B.cs", SourcePayload(largeExcerpt)), settings, Now);
+            Job(), new ToolArtifactDraft(ArtifactKind.RetrievedItem, ArtifactDomainRef.Create("source", "r", "src/B.cs"), SourcePayload(largeExcerpt)), settings, Now);
         Assert.True(CompiledRedactionPatterns.TryGetExisting(settings, out var reused));
 
         Assert.Same(compiled, reused);

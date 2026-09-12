@@ -17,19 +17,27 @@ namespace IncidentCompass.Application.Governance.Tools;
 /// its own model-visible output before the artifact exists. Identity is not the safety property;
 /// redaction is, and the factory still owns that.
 /// </para>
+/// <para>
+/// <see cref="DomainRef"/> is an <see cref="ArtifactDomainRef"/> rather than a <c>string</c> for the
+/// same reason the payload is a draft rather than an artifact. A domain reference is assembled out
+/// of connector text too, and a bare string beside a redacted payload was a way for a tool to put an
+/// arbitrary connector value into a stored column without meeting anything. The type bounds its
+/// shape at construction and the factory redacts it on the way out; see
+/// <see cref="ArtifactDomainRef"/> for what each half covers and what neither does.
+/// </para>
 /// </summary>
 /// <remarks>
 /// This is a class rather than a record on purpose: a record's synthesized <c>ToString</c> prints
 /// every member, which would put not-yet-redacted connector text into any log line that formats a
 /// draft. See the logging rules in <c>docs/security-model.md</c>.
 /// </remarks>
-public sealed class ToolArtifactDraft(ArtifactKind kind, string domainRef, JsonNode payload)
+public sealed class ToolArtifactDraft(ArtifactKind kind, ArtifactDomainRef domainRef, JsonNode payload)
 {
     public Guid Id { get; } = Guid.NewGuid();
 
     public ArtifactKind Kind { get; } = kind;
 
-    public string DomainRef { get; } = domainRef;
+    public ArtifactDomainRef DomainRef { get; } = domainRef;
 
     public JsonNode Payload { get; } = payload;
 }

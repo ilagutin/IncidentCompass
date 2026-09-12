@@ -49,6 +49,30 @@ internal sealed class AnalysisDelegateExecutor(
     internal const string UnknownRoleMessage =
         "delegate role is not one of the configured roles the delegate tool offers.";
 
+    /// <summary>
+    /// The <c>worker:</c> reference a <c>WorkerOutput</c> artifact carries when the configured role
+    /// key cannot be one - a colon in it, or a key past the segment cap.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The load validator refuses such a key, so a host that started with this configuration cannot
+    /// reach here. This is the second line, and what it must not do is throw. There is exactly one
+    /// worker output on this path, the model call that produced it is already spent, and the
+    /// exception would leave through <see cref="ExecuteAsync" /> unclassified: no tool-failure branch
+    /// sees it, no retry classifier matches it, so the attempt fails, repeats identically and
+    /// dead-letters the job over the spelling of a configuration key.
+    /// </para>
+    /// <para>
+    /// Dropping the artifact silently is the other thing it must not do: unlike a source match, which
+    /// is one of several, this is the delegate's whole answer, and the orchestrator reads the stored
+    /// payload rather than the worker's raw text. So the answer is kept and only the reference
+    /// degrades. That costs nothing a reader needs: the role name is on the <c>Delegated</c> and
+    /// <c>WorkerCompleted</c> ledger entries either way, this reference is not parsed anywhere, and
+    /// <c>WorkerOutput</c> is not a citable evidence kind.
+    /// </para>
+    /// </remarks>
+    private const string UnrepresentableRoleSegment = "unrepresentable_role";
+
     public async Task<string> ExecuteAsync(
         TriageJob job,
         TriageConfiguration configuration,
@@ -150,9 +174,11 @@ internal sealed class AnalysisDelegateExecutor(
         CancellationToken cancellationToken)
     {
         var payload = JsonNode.Parse(content) ?? new JsonObject { ["raw"] = content };
+        var reference = ArtifactDomainRef.TryCreate("worker", roleName) ??
+            ArtifactDomainRef.Create("worker", UnrepresentableRoleSegment);
         var artifact = RedactedToolArtifactFactory.Create(
             job,
-            new ToolArtifactDraft(ArtifactKind.WorkerOutput, $"worker:{roleName}", payload),
+            new ToolArtifactDraft(ArtifactKind.WorkerOutput, reference, payload),
             configuration.Redaction,
             timeProvider.GetUtcNow());
 

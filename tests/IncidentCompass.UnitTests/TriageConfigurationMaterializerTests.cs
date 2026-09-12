@@ -105,6 +105,61 @@ public sealed class TriageConfigurationMaterializerTests
         Assert.Contains("CurrentReleases", exception.Message, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// A release name becomes one segment of the <c>source:{release}:{path}</c> reference every
+    /// source artifact is stored under, and an ISO-8601 release id carries the colon that reference
+    /// separates on. Refusing it here is what keeps a configuration that only fails later - once per
+    /// lookup, inside an investigation - from starting at all. The blank check above does not see it.
+    /// </summary>
+    [Theory]
+    [InlineData("2026-09-12T14:03:00Z")]
+    [InlineData("release:candidate")]
+    public void Materialize_CurrentReleaseThatCannotNameAnArtifact_FailsLoadValidation(string release)
+    {
+        var node = ValidConfigNode();
+        node["CurrentReleases"] = new JsonObject { ["checkout"] = release };
+
+        var exception = Assert.Throws<TriageConfigurationLoadException>(() =>
+            CreateMaterializer().Materialize("hash-1", node, ResolvedReferences()));
+
+        Assert.Contains("CurrentReleases.checkout", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Materialize_AcceptsAnOrdinaryReleaseName()
+    {
+        var node = ValidConfigNode();
+        node["CurrentReleases"] = new JsonObject { ["checkout"] = "2026.09.12.1" };
+
+        var configuration = CreateMaterializer().Materialize("hash-1", node, ResolvedReferences());
+
+        Assert.Equal("2026.09.12.1", configuration.CurrentReleases["checkout"]);
+    }
+
+    /// <summary>
+    /// The same rule on the other value that becomes a reference segment: a role key is written into
+    /// <c>worker:{role}</c> on every delegated worker's output artifact.
+    /// </summary>
+    [Fact]
+    public void Materialize_RoleKeyThatCannotNameAnArtifact_FailsLoadValidation()
+    {
+        var node = ValidConfigNode();
+        var roles = (JsonObject)node["Roles"]!;
+        roles["deep:analysis"] = new JsonObject
+        {
+            ["RouteId"] = "analysis-chat",
+            ["Instructions"] = "ref:instructions/analysis.md",
+            ["Tools"] = new JsonArray(),
+            ["OutputSchema"] = "ref:schemas/analysis.json"
+        };
+
+        var exception = Assert.Throws<TriageConfigurationLoadException>(() =>
+            CreateMaterializer().Materialize("hash-1", node, ResolvedReferences()));
+
+        Assert.Contains("Roles", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("artifact domain reference segment", exception.Message, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void Materialize_RoleToolNotConfigured_FailsLoadValidation()
     {

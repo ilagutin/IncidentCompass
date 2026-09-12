@@ -35,9 +35,13 @@ internal sealed class PostgresTriageToolResultCommitter(
             // ToolResult is a citable artifact kind, so this row has to be able to answer the report
             // marker's question for itself. Left silent it would be the model's choice whether the
             // marker appears: citing this row instead of the per-item artifact carrying the same
-            // redacted text would ground just as well and say nothing about the withholding. The
-            // caller computed the flag against the pre-redaction document, which no longer exists
-            // here.
+            // redacted text would ground just as well and say nothing about the withholding.
+            //
+            // What the flag answers is the whole tool call, not this row's own payload: the caller
+            // computed it against every pre-redaction document the call produced - the output and
+            // each artifact's payload and domain reference - because a redaction can land on one and
+            // not the others, and a row that spoke only for itself would let the pair disagree on
+            // exactly that case. None of those documents exists here.
             RedactionApplied = request.RedactionApplied
         };
 

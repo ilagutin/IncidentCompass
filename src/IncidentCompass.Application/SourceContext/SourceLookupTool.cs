@@ -62,21 +62,51 @@ internal sealed class SourceLookupTool(ISourceContextLookup sourceContextLookup)
         return SuccessfulOutcome(result, release);
     }
 
+    /// <summary>
+    /// The limitation a match is reported through when its release and repository-relative path
+    /// cannot be expressed as an <see cref="ArtifactDomainRef"/> - a path past the segment cap, which
+    /// a deep checkout produces on its own, or a release name a colon or an invisible character got
+    /// into. The match is dropped rather than stored under a reference that does not describe it,
+    /// and the read boundary's own limitation list is where a dropped match already gets said, so
+    /// this joins the codes that list already carries instead of inventing a second channel.
+    /// </summary>
+    private const string UnrepresentableReferenceCode = "source_reference_rejected";
+
     private static ToolExecutionResult SuccessfulOutcome(
         SourceLookupResult result,
         string? release)
     {
-        var drafts = result.Matches
-            .Select(CreateDraft)
-            .ToArray();
+        // One pathological path costs one match, not the investigation: the tool still succeeds with
+        // the matches that are representable, and the caller learns a match was withheld from the
+        // limitation rather than from an exception that nothing on the worker path classifies.
+        var matched = new List<SourceLookupMatch>(result.Matches.Count);
+        var drafts = new List<ToolArtifactDraft>(result.Matches.Count);
+        var limitations = result.Limitations.ToList();
+        foreach (var match in result.Matches)
+        {
+            if (CreateDraft(match) is not { } draft)
+            {
+                limitations.Add(new SourceLookupLimitation(UnrepresentableReferenceCode));
+                continue;
+            }
+
+            matched.Add(match);
+            drafts.Add(draft);
+        }
+
         return new ToolExecutionResult(
             ToolExecutionStatus.Succeeded,
-            CreateOutput(result, drafts, release),
+            CreateOutput(result, matched, drafts, limitations, release),
             Artifacts: drafts);
     }
 
-    private static ToolArtifactDraft CreateDraft(SourceLookupMatch match)
+    private static ToolArtifactDraft? CreateDraft(SourceLookupMatch match)
     {
+        if (ArtifactDomainRef.TryCreate("source", match.Release, match.RelativePath) is not { } reference)
+        {
+            return null;
+        }
+
         var payload = new JsonObject
         {
             ["evidenceKind"] = "SourceCode",
@@ -87,21 +117,20 @@ internal sealed class SourceLookupTool(ISourceContextLookup sourceContextLookup)
             ["release"] = match.Release,
             ["mappingMethod"] = match.MappingMethod
         };
-        return new ToolArtifactDraft(
-            ArtifactKind.RetrievedItem,
-            $"source:{match.Release}:{match.RelativePath}",
-            payload);
+        return new ToolArtifactDraft(ArtifactKind.RetrievedItem, reference, payload);
     }
 
     private static JsonElement CreateOutput(
         SourceLookupResult result,
-        ToolArtifactDraft[] drafts,
+        List<SourceLookupMatch> matches,
+        List<ToolArtifactDraft> drafts,
+        List<SourceLookupLimitation> limitations,
         string? release)
     {
         var items = new JsonArray();
-        for (var index = 0; index < result.Matches.Count; index++)
+        for (var index = 0; index < matches.Count; index++)
         {
-            var match = result.Matches[index];
+            var match = matches[index];
             items.Add(new JsonObject
             {
                 ["artifactId"] = drafts[index].Id.ToString(),
@@ -127,6 +156,12 @@ internal sealed class SourceLookupTool(ISourceContextLookup sourceContextLookup)
             SourceLookupOutcome.NoMatch => "no matches",
             _ => "connector unavailable"
         };
+        // When every match was dropped for an unrepresentable reference, `matched` is false while
+        // `outcome` stays "matched". The two are not contradicting each other: `outcome` reports what
+        // the read boundary found, and it did find files, while `matched` reports whether anything
+        // survived that a report could cite. Collapsing `outcome` to "no_match" would tell the model
+        // the release holds no such source, which is a different and false statement. The
+        // source_reference_rejected code in `limitations` is what says why the gap is there.
         return CanonicalJsonSerializer.ToElement(new JsonObject
         {
             ["matched"] = result.Outcome == SourceLookupOutcome.Matched && items.Count > 0,
@@ -135,7 +170,7 @@ internal sealed class SourceLookupTool(ISourceContextLookup sourceContextLookup)
             ["code"] = result.Code,
             ["release"] = release,
             ["items"] = items,
-            ["limitations"] = new JsonArray(result.Limitations.Select(item => JsonValue.Create(item.Code)).ToArray()),
+            ["limitations"] = new JsonArray(limitations.Select(item => JsonValue.Create(item.Code)).ToArray()),
             ["noMatchReason"] = result.Outcome == SourceLookupOutcome.Matched ? null : result.Code
         });
     }

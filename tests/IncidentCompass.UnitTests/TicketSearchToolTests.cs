@@ -33,7 +33,7 @@ public sealed class TicketSearchToolTests
         Assert.DoesNotContain("body", result.Output.GetRawText(), StringComparison.OrdinalIgnoreCase);
         var draft = Assert.Single(result.Artifacts!);
         Assert.Equal(ArtifactKind.RetrievedItem, draft.Kind);
-        Assert.Equal("ticket:github:owner/repo:42", draft.DomainRef);
+        Assert.Equal("ticket:github:owner/repo:42", draft.DomainRef.Value);
         Assert.Equal("ExistingTicket", draft.Payload["evidenceKind"]!.GetValue<string>());
         // Absent, not present-and-null: an explicit null would still put the ticket body's key in the
         // stored payload and in the prompt built from it, which is what this tool must never do.
