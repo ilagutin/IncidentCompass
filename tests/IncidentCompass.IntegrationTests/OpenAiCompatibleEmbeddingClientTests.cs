@@ -1,5 +1,7 @@
 using System.Net;
 using IncidentCompass.Application.Core.Embeddings;
+using IncidentCompass.Application.Core.Errors;
+using IncidentCompass.Application.Core.Resilience;
 using IncidentCompass.Infrastructure;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -38,15 +40,91 @@ public sealed class OpenAiCompatibleEmbeddingClientTests
     }
 
     [Theory]
-    [InlineData((int)HttpStatusCode.BadRequest, "invalid_request")]
-    [InlineData((int)HttpStatusCode.Unauthorized, "authentication_error")]
-    [InlineData((int)HttpStatusCode.Forbidden, "authentication_error")]
-    [InlineData((int)HttpStatusCode.RequestTimeout, "provider_timeout")]
-    [InlineData((int)HttpStatusCode.TooManyRequests, "rate_limited")]
-    [InlineData((int)HttpStatusCode.InternalServerError, "provider_unavailable")]
+    [InlineData(StatusCodes.Status408RequestTimeout)]
+    [InlineData(StatusCodes.Status429TooManyRequests)]
+    [InlineData(StatusCodes.Status500InternalServerError)]
+    [InlineData(StatusCodes.Status502BadGateway)]
+    [InlineData(StatusCodes.Status503ServiceUnavailable)]
+    [InlineData(StatusCodes.Status504GatewayTimeout)]
+    public async Task CreateEmbeddingAsync_RetriesIdempotentProviderStatusSet(int statusCode)
+    {
+        await using var app = CreateFakeOpenAiCompatibleServer(async context =>
+        {
+            var attempts = context.RequestServices.GetRequiredService<AttemptCounter>();
+            attempts.Value++;
+            if (attempts.Value == 1)
+            {
+                context.Response.StatusCode = statusCode;
+                await context.Response.WriteAsJsonAsync(new { error = new { code = "provider-code" } });
+                return;
+            }
+
+            await WriteSuccessfulEmbeddingAsync(context);
+        });
+        await app.StartAsync();
+        using var provider = CreateEmbeddingServiceProvider(
+            GetServerAddress(app),
+            new Dictionary<string, string?>
+            {
+                ["IncidentCompass:Embeddings:OpenAiCompatible:MaxRetryAttempts"] = "1"
+            });
+        var embeddingClient = provider.GetRequiredService<IEmbeddingClient>();
+
+        var response = await embeddingClient.CreateEmbeddingAsync(
+            new EmbeddingRequest("hello", "embedding-model", "embedding-status-retry-test"),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(FakeEmbeddingVector, response.Vector);
+        Assert.Equal(2, app.Services.GetRequiredService<AttemptCounter>().Value);
+    }
+
+    [Theory]
+    [InlineData(StatusCodes.Status501NotImplemented)]
+    [InlineData(StatusCodes.Status505HttpVersionNotsupported)]
+    public async Task CreateEmbeddingAsync_DoesNotRetryRejectedProviderStatus(int statusCode)
+    {
+        await using var app = CreateFakeOpenAiCompatibleServer(async context =>
+        {
+            var attempts = context.RequestServices.GetRequiredService<AttemptCounter>();
+            attempts.Value++;
+            context.Response.StatusCode = statusCode;
+            await context.Response.WriteAsJsonAsync(new { error = new { code = "provider-code" } });
+        });
+        await app.StartAsync();
+        using var provider = CreateEmbeddingServiceProvider(
+            GetServerAddress(app),
+            new Dictionary<string, string?>
+            {
+                ["IncidentCompass:Embeddings:OpenAiCompatible:MaxRetryAttempts"] = "3"
+            });
+        var embeddingClient = provider.GetRequiredService<IEmbeddingClient>();
+
+        var exception = await Assert.ThrowsAsync<EmbeddingClientException>(() =>
+            embeddingClient.CreateEmbeddingAsync(
+                new EmbeddingRequest("hello", "embedding-model", "embedding-rejected-status-test"),
+                TestContext.Current.CancellationToken));
+
+        Assert.Equal("provider_request_rejected", exception.ErrorCode);
+        Assert.Equal(ProviderFailureKind.RejectedRequest, exception.FailureKind);
+        Assert.Equal(1, app.Services.GetRequiredService<AttemptCounter>().Value);
+    }
+
+    [Theory]
+    [InlineData((int)HttpStatusCode.BadRequest, "invalid_request", ProviderFailureKind.RejectedRequest)]
+    [InlineData((int)HttpStatusCode.Unauthorized, "authentication_error", ProviderFailureKind.RejectedRequest)]
+    [InlineData((int)HttpStatusCode.Forbidden, "authentication_error", ProviderFailureKind.RejectedRequest)]
+    [InlineData((int)HttpStatusCode.RequestTimeout, "provider_timeout", ProviderFailureKind.GenerationTimeout)]
+    [InlineData((int)HttpStatusCode.TooManyRequests, "rate_limited", ProviderFailureKind.Unavailable)]
+    [InlineData((int)HttpStatusCode.InternalServerError, "provider_unavailable", ProviderFailureKind.Unavailable)]
+    [InlineData((int)HttpStatusCode.BadGateway, "provider_unavailable", ProviderFailureKind.Unavailable)]
+    [InlineData((int)HttpStatusCode.ServiceUnavailable, "provider_unavailable", ProviderFailureKind.Unavailable)]
+    [InlineData((int)HttpStatusCode.GatewayTimeout, "provider_unavailable", ProviderFailureKind.Unavailable)]
+    [InlineData((int)HttpStatusCode.NotImplemented, "provider_request_rejected", ProviderFailureKind.RejectedRequest)]
+    [InlineData((int)HttpStatusCode.HttpVersionNotSupported, "provider_request_rejected", ProviderFailureKind.RejectedRequest)]
     public async Task CreateEmbeddingAsync_NormalizesProviderErrorStatus(
         int statusCodeValue,
-        string expectedErrorCode)
+        string expectedErrorCode,
+        ProviderFailureKind expectedFailureKind)
     {
         await using var app = CreateFakeOpenAiCompatibleServer(async context =>
         {
@@ -71,8 +149,14 @@ public sealed class OpenAiCompatibleEmbeddingClientTests
 
         Assert.Equal("openai-compatible", exception.Provider);
         Assert.Equal(expectedErrorCode, exception.ErrorCode);
-        Assert.Equal((HttpStatusCode)statusCodeValue, exception.StatusCode);
         Assert.Equal("raw_provider_code", exception.ProviderErrorCode);
+        Assert.Equal(expectedFailureKind, exception.FailureKind);
+        var expectedOutage = expectedFailureKind == ProviderFailureKind.Unavailable;
+        Assert.Equal(expectedOutage, ProviderOutageExceptionClassifier.IsProviderOutage(exception));
+        Assert.Equal(
+            expectedOutage,
+            ProviderOutageExceptionClassifier.IsProviderOutage(
+                new InvalidOperationException("Outer wrapper.", exception)));
     }
 
     [Fact]
@@ -87,7 +171,7 @@ public sealed class OpenAiCompatibleEmbeddingClientTests
                 TestContext.Current.CancellationToken));
 
         Assert.Equal("configuration_error", exception.ErrorCode);
-        Assert.Null(exception.StatusCode);
+        Assert.Equal(ProviderFailureKind.RejectedRequest, exception.FailureKind);
     }
 
     [Fact]
@@ -107,7 +191,7 @@ public sealed class OpenAiCompatibleEmbeddingClientTests
                 TestContext.Current.CancellationToken));
 
         Assert.Equal("configuration_error", exception.ErrorCode);
-        Assert.Null(exception.StatusCode);
+        Assert.Equal(ProviderFailureKind.RejectedRequest, exception.FailureKind);
     }
 
     [Fact]
@@ -128,7 +212,7 @@ public sealed class OpenAiCompatibleEmbeddingClientTests
                 TestContext.Current.CancellationToken));
 
         Assert.Equal("invalid_json", exception.ErrorCode);
-        Assert.Null(exception.StatusCode);
+        Assert.Equal(ProviderFailureKind.InvalidResponse, exception.FailureKind);
     }
 
     [Fact]
@@ -163,7 +247,38 @@ public sealed class OpenAiCompatibleEmbeddingClientTests
                 TestContext.Current.CancellationToken));
 
         Assert.Equal("empty_embedding", exception.ErrorCode);
-        Assert.Null(exception.StatusCode);
+        Assert.Equal(ProviderFailureKind.InvalidResponse, exception.FailureKind);
+    }
+
+    [Fact]
+    public async Task CreateEmbeddingAsync_PropagatesCallerCancellationWithoutRetry()
+    {
+        await using var app = CreateFakeOpenAiCompatibleServer(async context =>
+        {
+            var attempts = context.RequestServices.GetRequiredService<AttemptCounter>();
+            attempts.Value++;
+            attempts.Started.TrySetResult();
+            await Task.Delay(TimeSpan.FromSeconds(5), context.RequestAborted);
+        });
+        await app.StartAsync();
+        using var provider = CreateEmbeddingServiceProvider(
+            GetServerAddress(app),
+            new Dictionary<string, string?>
+            {
+                ["IncidentCompass:Embeddings:OpenAiCompatible:MaxRetryAttempts"] = "3"
+            });
+        var embeddingClient = provider.GetRequiredService<IEmbeddingClient>();
+        using var cancellation = new CancellationTokenSource();
+        var call = embeddingClient.CreateEmbeddingAsync(
+            new EmbeddingRequest("hello", "embedding-model", "embedding-cancellation-test"),
+            cancellation.Token);
+        var attempts = app.Services.GetRequiredService<AttemptCounter>();
+        await attempts.Started.Task.WaitAsync(TestContext.Current.CancellationToken);
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => call);
+
+        Assert.Equal(1, attempts.Value);
     }
 
     [Fact]
@@ -188,7 +303,7 @@ public sealed class OpenAiCompatibleEmbeddingClientTests
                 TestContext.Current.CancellationToken));
 
         Assert.Equal("timeout", exception.ErrorCode);
-        Assert.Null(exception.StatusCode);
+        Assert.Equal(ProviderFailureKind.GenerationTimeout, exception.FailureKind);
     }
 
     private static WebApplication CreateFakeOpenAiCompatibleServer()
@@ -212,22 +327,27 @@ public sealed class OpenAiCompatibleEmbeddingClientTests
                 return;
             }
 
-            await context.Response.WriteAsJsonAsync(new
+            await WriteSuccessfulEmbeddingAsync(context);
+        });
+    }
+
+    private static Task WriteSuccessfulEmbeddingAsync(HttpContext context)
+    {
+        return context.Response.WriteAsJsonAsync(new
+        {
+            model = "embedding-model",
+            data = new[]
             {
-                model = "embedding-model",
-                data = new[]
+                new
                 {
-                    new
-                    {
-                        embedding = FakeEmbeddingVector
-                    }
-                },
-                usage = new
-                {
-                    prompt_tokens = 1,
-                    total_tokens = 1
+                    embedding = FakeEmbeddingVector
                 }
-            });
+            },
+            usage = new
+            {
+                prompt_tokens = 1,
+                total_tokens = 1
+            }
         });
     }
 
@@ -248,7 +368,6 @@ public sealed class OpenAiCompatibleEmbeddingClientTests
         var configurationValues = new Dictionary<string, string?>
         {
             ["IncidentCompass:Embeddings:Provider"] = "OpenAiCompatible",
-            ["IncidentCompass:Embeddings:DefaultModel"] = "embedding-model",
             ["IncidentCompass:Embeddings:OpenAiCompatible:BaseUrl"] = baseUrl,
             ["IncidentCompass:Embeddings:OpenAiCompatible:ApiKey"] = "test-api-key",
             ["IncidentCompass:Embeddings:OpenAiCompatible:AllowInsecureHttpForLoopback"] = "true",
@@ -283,5 +402,7 @@ public sealed class OpenAiCompatibleEmbeddingClientTests
     private sealed class AttemptCounter
     {
         public int Value { get; set; }
+
+        public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 }

@@ -4,7 +4,7 @@ using Microsoft.Extensions.Options;
 namespace IncidentCompass.UnitTests;
 
 /// <summary>
-/// IC-BL-072: <c>MaxSignalsPerExport</c> is the per-request record bound for OTLP ingestion, so a
+/// <c>MaxSignalsPerExport</c> is the per-request record bound for OTLP ingestion, so a
 /// misconfiguration that disables it (zero) or lifts it far past what one request should ever do
 /// (above ten thousand) has to fail at startup rather than at ingestion time.
 /// </summary>

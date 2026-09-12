@@ -22,12 +22,14 @@ public sealed class SecretRedactorTests
     [Fact]
     public void RedactText_RedactsAwsAccessKey()
     {
-        const string input = "leaked key AKIAABCDEFGHIJKLMNOP in log line";
+        // Kept split so the source literal never matches a secret scanner; the redactor still sees one key.
+        const string key = "AKIA" + "ABCDEFGHIJKLMNOP";
+        const string input = "leaked key " + key + " in log line";
 
         var result = SecretRedactor.RedactText(input)!;
 
         Assert.Contains("[REDACTED]", result, StringComparison.Ordinal);
-        Assert.DoesNotContain("AKIAABCDEFGHIJKLMNOP", result, StringComparison.Ordinal);
+        Assert.DoesNotContain(key, result, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -78,6 +80,49 @@ public sealed class SecretRedactorTests
         Assert.Null(redacted.ErrorMessage);
         Assert.Null(redacted.Description);
         Assert.Equal("Checkout failed", redacted.Summary);
+    }
+
+    /// <summary>
+    /// A connection-string password ends at the next <c>;</c> or at the end of its line, whichever
+    /// comes first. The line bound is what keeps a multi-line value, such as a source excerpt with a
+    /// <c>Password ==</c> comparison and no later <c>;</c>, from losing every remaining line to one
+    /// match.
+    /// </summary>
+    [Fact]
+    public void RedactText_ConnectionStringPasswordStopsAtTheEndOfItsLine()
+    {
+        var input = string.Join(
+            '\n',
+            "if (request.Password == expectedHash)",
+            "{",
+            "    Retry(attempt)",
+            "}");
+
+        var result = SecretRedactor.RedactText(input)!;
+
+        Assert.Equal(4, result.Split('\n').Length);
+        Assert.DoesNotContain("expectedHash", result, StringComparison.Ordinal);
+        Assert.Contains("    Retry(attempt)", result, StringComparison.Ordinal);
+        Assert.Equal(
+            "Host=db;Password=[REDACTED];Database=checkout",
+            SecretRedactor.RedactText("Host=db;Password=hunter2;Database=checkout"));
+    }
+
+    /// <summary>
+    /// The other half of the same bound, pinned so it cannot change silently. A credential whose value
+    /// continues onto the next line - backslash continuation, as `.env`, `.properties`, shell scripts
+    /// and Dockerfiles use it - is no longer redacted past the line break. The name and the first line
+    /// go, the continued tail stays. That is a knowing loss, taken because the unbounded rule destroyed
+    /// a whole source excerpt every time it fired on ordinary code; `docs/trade-offs.md` records it.
+    /// </summary>
+    [Fact]
+    public void RedactText_LeavesACredentialTailThatContinuesPastTheLineBreak()
+    {
+        var result = SecretRedactor.RedactText("DB_PASSWORD=hunter2\\\nsupersecret-tail")!;
+
+        Assert.DoesNotContain("hunter2", result, StringComparison.Ordinal);
+        Assert.StartsWith("DB_PASSWORD=[REDACTED]", result, StringComparison.Ordinal);
+        Assert.Contains("supersecret-tail", result, StringComparison.Ordinal);
     }
 
     [Fact]

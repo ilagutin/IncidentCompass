@@ -9,7 +9,7 @@ using Microsoft.Extensions.Logging;
 namespace IncidentCompass.IntegrationTests;
 
 /// <summary>
-/// IC-BL-071: exercises <see cref="ApiExceptionHandler" /> directly (it is internal, visible here
+/// exercises <see cref="ApiExceptionHandler" /> directly (it is internal, visible here
 /// via InternalsVisibleTo) so the logging and response-body behavior can be asserted independently
 /// of any specific route.
 /// </summary>

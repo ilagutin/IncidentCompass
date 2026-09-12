@@ -10,6 +10,7 @@ RUN dotnet restore src/IncidentCompass.Tester/IncidentCompass.Tester.csproj --lo
 
 COPY src/IncidentCompass.Tester src/IncidentCompass.Tester
 COPY samples/incidents/tester-ticket-action-injection.json samples/incidents/tester-ticket-action-injection.json
+COPY evaluations/triage/corpus-v1.json evaluations/triage/corpus-v1.json
 RUN dotnet publish src/IncidentCompass.Tester/IncidentCompass.Tester.csproj \
     --configuration Release \
     --no-restore \
@@ -24,6 +25,7 @@ RUN groupadd --system incidentcompass && \
     chown -R incidentcompass:incidentcompass /app
 
 COPY --chown=incidentcompass:incidentcompass --from=build /app/publish ./
+COPY --chown=incidentcompass:incidentcompass evaluations/triage/corpus-v1.json /app/evaluations/triage/corpus-v1.json
 
 ENV INCIDENTCOMPASS_TESTER_BASE_URL=http://api:8080
 

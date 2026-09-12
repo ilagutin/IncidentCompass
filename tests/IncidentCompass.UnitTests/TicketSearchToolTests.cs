@@ -18,7 +18,7 @@ public sealed class TicketSearchToolTests
                 DateTimeOffset.Parse("2026-01-15T00:00:00Z", CultureInfo.InvariantCulture), "https://github.com/owner/repo/issues/42", 0.85)],
             "github",
             "owner/repo"));
-        var tool = new TicketSearchTool(adapter, TimeProvider.System);
+        var tool = new TicketSearchTool(adapter);
 
         var result = await tool.ExecuteAsync(CreateContext(), Json("{}"), TestContext.Current.CancellationToken);
 
@@ -31,11 +31,13 @@ public sealed class TicketSearchToolTests
         Assert.Equal("github", result.Output.GetProperty("provider").GetString());
         Assert.Equal("owner/repo", result.Output.GetProperty("repository").GetString());
         Assert.DoesNotContain("body", result.Output.GetRawText(), StringComparison.OrdinalIgnoreCase);
-        var artifact = Assert.Single(result.Artifacts!);
-        Assert.Equal(ArtifactKind.RetrievedItem, artifact.Kind);
-        Assert.Equal("ticket:github:owner/repo:42", artifact.DomainRef);
-        Assert.Equal("ExistingTicket", artifact.RedactedPayload.GetProperty("evidenceKind").GetString());
-        Assert.False(artifact.RedactedPayload.TryGetProperty("body", out _));
+        var draft = Assert.Single(result.Artifacts!);
+        Assert.Equal(ArtifactKind.RetrievedItem, draft.Kind);
+        Assert.Equal("ticket:github:owner/repo:42", draft.DomainRef);
+        Assert.Equal("ExistingTicket", draft.Payload["evidenceKind"]!.GetValue<string>());
+        // Absent, not present-and-null: an explicit null would still put the ticket body's key in the
+        // stored payload and in the prompt built from it, which is what this tool must never do.
+        Assert.False(draft.Payload.AsObject().ContainsKey("body"));
     }
 
     [Fact]
@@ -48,7 +50,7 @@ public sealed class TicketSearchToolTests
                 DateTimeOffset.Parse("2026-01-15T00:00:00Z", CultureInfo.InvariantCulture), "https://jira.example/browse/INC-42", 0.4)],
             "jira",
             "INC"));
-        var tool = new TicketSearchTool(adapter, TimeProvider.System);
+        var tool = new TicketSearchTool(adapter);
 
         var result = await tool.ExecuteAsync(CreateContext(), Json("{}"), TestContext.Current.CancellationToken);
 
@@ -60,8 +62,7 @@ public sealed class TicketSearchToolTests
     public void Validate_RejectsModelSelectedQueryOrRepository()
     {
         var tool = new TicketSearchTool(
-            new CapturingTicketSearch(TicketSearchResult.NoMatch("github", "owner/repo")),
-            TimeProvider.System);
+            new CapturingTicketSearch(TicketSearchResult.NoMatch("github", "owner/repo")));
 
         Assert.False(tool.Validate(Json("{\"query\":\"secret\"}")).IsValid);
         Assert.False(tool.Validate(Json("{\"repository\":\"other/repo\"}")).IsValid);

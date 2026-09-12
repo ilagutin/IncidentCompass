@@ -1,6 +1,6 @@
 namespace IncidentCompass.Worker;
 
-public sealed class WorkerOptions
+internal sealed class WorkerOptions
 {
     public const string SectionName = "IncidentCompass:Worker";
 

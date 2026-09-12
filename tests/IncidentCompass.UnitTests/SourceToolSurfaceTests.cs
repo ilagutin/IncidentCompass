@@ -34,12 +34,13 @@ public sealed class SourceToolSurfaceTests
 
     private static WorkerToolCallExecutor CreateExecutor()
     {
-        var tool = new SourceLookupTool(new UnavailableLookup(), TimeProvider.System);
+        var tool = new SourceLookupTool(new UnavailableLookup());
         return new WorkerToolCallExecutor(
             [tool],
             new ToolRuleEngine(new ThrowingLedgerReader()),
             new TriageLedgerAppender(new ThrowingLedgerWriter()),
-            new ThrowingCommitter());
+            new ThrowingCommitter(),
+            TimeProvider.System);
     }
 
     private static TriageConfiguration Configuration(bool withRole, bool withGrant)
@@ -75,6 +76,10 @@ public sealed class SourceToolSurfaceTests
         public Task<TriageLedgerEntry> AppendAsync(
             TriageLedgerAppendRequest request,
             CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<IReadOnlyList<TriageLedgerEntry>> AppendBatchAsync(
+            IReadOnlyList<TriageLedgerAppendRequest> requests,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 
     private sealed class ThrowingLedgerReader : ITriageLedgerReader
@@ -86,17 +91,17 @@ public sealed class SourceToolSurfaceTests
         public Task<int> CountPolicyDecisionsAsync(
             TriageJob job,
             string toolName,
-            string scope,
+            ToolRuleScope scope,
             TriageLedgerDecision decision,
             CancellationToken cancellationToken) => throw new NotSupportedException();
 
         public Task<bool> HasSuccessfulToolResultAsync(
             TriageJob job,
             string toolName,
-            string scope,
+            ToolRuleScope scope,
             CancellationToken cancellationToken) => throw new NotSupportedException();
 
-        public Task<IReadOnlyList<TriageLedgerEntry>> ReadByFaultIdAsync(
+        public Task<IReadOnlyList<FaultLedgerEntry>> ReadByFaultIdAsync(
             Guid faultId,
             string tenantId,
             CancellationToken cancellationToken) => throw new NotSupportedException();

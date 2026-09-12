@@ -11,6 +11,7 @@ tests/
 scripts/
 archive/
 .env
+.env.production
 *.user
 *.suo
 *.log

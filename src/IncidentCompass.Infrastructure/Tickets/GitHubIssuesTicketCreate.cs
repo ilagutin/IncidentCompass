@@ -189,6 +189,7 @@ public sealed partial class GitHubIssuesTicketCreate : IExternalActionTool, IDis
             return Failure("dispatch_outcome_unknown");
         }
     }
+
     private static ExternalActionExecutionResult Failure(string code) =>
         GitHubIssueCreateResponseParser.Failure(code);
 

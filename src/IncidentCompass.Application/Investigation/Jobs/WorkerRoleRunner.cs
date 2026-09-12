@@ -1,13 +1,16 @@
-using System.Text.Json;
 using IncidentCompass.Application.Core.ModelClients;
 using IncidentCompass.Application.Intake.Configuration;
 using IncidentCompass.Domain.Incidents;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace IncidentCompass.Application.Investigation.Jobs;
 
-internal sealed class WorkerRoleRunner(
+internal sealed partial class WorkerRoleRunner(
     InvestigationModelCaller modelCaller,
-    WorkerToolCallExecutor toolCallExecutor)
+    WorkerToolCallExecutor toolCallExecutor,
+    TriageLedgerAppender ledgerAppender,
+    ILogger<WorkerRoleRunner>? logger = null)
 {
     /// <summary>
     /// Turns the worker's bound allows beyond one per granted tool and one per configured reprompt.
@@ -15,6 +18,15 @@ internal sealed class WorkerRoleRunner(
     /// one bounds orchestrator work turns for the whole attempt, while this bounds a single worker.
     /// </summary>
     private const int WorkerTurnSlack = 4;
+
+    /// <summary>
+    /// The classification that opens every worker reprompt rationale in the ledger. The appender
+    /// charges its length against <see cref="TriageLedgerAppender.MaxRepromptRationaleLength" />, so
+    /// this prefix is never what gets cut and never eats into the diagnostic that follows it.
+    /// </summary>
+    internal const string RepromptRationalePrefix = "worker_output_reprompt: ";
+
+    private readonly ILogger logger = logger ?? NullLogger<WorkerRoleRunner>.Instance;
 
     public async Task<string> RunAsync(
         TriageJob job,
@@ -68,23 +80,36 @@ internal sealed class WorkerRoleRunner(
 
             try
             {
-                AnalysisWorkerOutputSchemaValidator.Validate(response.Content, role.OutputSchema, roleName);
-                return response.Content;
+                return AnalysisWorkerOutputSchemaValidator.Validate(response.Content, role.OutputSchema, roleName);
             }
-            catch (Exception exception) when (IsRepromptableWorkerOutput(exception))
+            catch (WorkerOutputValidationException exception)
             {
                 if (reprompts >= configuration.Orchestrator.Budget.MaxReprompts)
                 {
-                    throw new InvalidOperationException(
-                        "Worker output remained invalid after bounded reprompts: " + exception.Message,
-                        exception);
+                    throw new WorkerOutputInvalidException(exception);
                 }
 
                 reprompts++;
+                var safeDiagnostic = exception.GetSafeDiagnostic(
+                    TriageLedgerAppender.MaxRepromptRationaleLength);
+                LogWorkerReprompted(
+                    logger,
+                    job.Id,
+                    job.Attempt,
+                    roleName,
+                    reprompts,
+                    configuration.Orchestrator.Budget.MaxReprompts,
+                    safeDiagnostic);
+                await ledgerAppender.AppendRepromptBudgetEventAsync(
+                    job,
+                    roleName,
+                    RepromptRationalePrefix,
+                    safeDiagnostic,
+                    cancellationToken);
                 messages.Add(new AiChatMessage(AiMessageRole.Assistant, response.Content));
                 messages.Add(new AiChatMessage(
                     AiMessageRole.User,
-                    "Validation error: " + exception.Message + " Return only JSON matching the configured schema."));
+                    TriageInvestigationPromptBuilder.BuildWorkerCorrectionPrompt(exception, role.OutputSchema)));
             }
         }
 
@@ -93,17 +118,16 @@ internal sealed class WorkerRoleRunner(
             "Worker exceeded the bounded tool/reprompt turn limit.");
     }
 
-    /// <summary>
-    /// Only the worker's own output failing schema validation may be reprompted: the model can correct
-    /// its JSON on the next bounded turn. <see cref="AnalysisWorkerOutputSchemaValidator"/> reports
-    /// those as <see cref="InvalidOperationException"/> (schema shape) or <see cref="JsonException"/>
-    /// (unparsable output or schema). Budget exhaustion and governance denial are deliberate
-    /// fail-closed stops that must leave this loop and dead-letter the attempt, so they are excluded
-    /// by classification rather than by where a throw happens to sit relative to the try block.
-    /// </summary>
-    private static bool IsRepromptableWorkerOutput(Exception exception)
-    {
-        return exception is InvalidOperationException or JsonException &&
-            TriageNonRetryableFailureClassifier.TryGetErrorCode(exception) is null;
-    }
+    [LoggerMessage(
+        EventId = 3402,
+        Level = LogLevel.Warning,
+        Message = "Worker {Role} for triage job {JobId} attempt {Attempt} was reprompted after output validation failed ({Reprompt}/{MaxReprompts}): {ValidationDiagnostic}")]
+    private static partial void LogWorkerReprompted(
+        ILogger logger,
+        Guid jobId,
+        int attempt,
+        string role,
+        int reprompt,
+        int maxReprompts,
+        string validationDiagnostic);
 }

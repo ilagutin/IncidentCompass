@@ -7,7 +7,7 @@ using Npgsql;
 namespace IncidentCompass.IntegrationTests;
 
 /// <summary>
-/// IC-BL-072: the OTLP byte cap does not bound how many records a compact protobuf export carries,
+/// the OTLP byte cap does not bound how many records a compact protobuf export carries,
 /// so a separate per-request record bound rejects an over-limit export before any command is
 /// dispatched. These tests hold the all-or-nothing property: an over-limit export must leave no
 /// signal, fault or triage job behind, and an export exactly at the limit must still be ingested.

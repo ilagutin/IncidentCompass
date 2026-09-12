@@ -1,4 +1,4 @@
--- DORMANT: reserved for IC-BL-010 governed tool execution work.
+-- DORMANT: reserved for governed tool execution work.
 CREATE TABLE IF NOT EXISTS incidentcompass.tool_audit_logs (
     id uuid PRIMARY KEY,
     conversation_id uuid NOT NULL,

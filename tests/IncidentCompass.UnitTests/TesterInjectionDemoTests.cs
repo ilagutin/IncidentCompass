@@ -40,7 +40,7 @@ public sealed class TesterInjectionDemoTests
     }
 
     [Fact]
-    public void ExistingFourScenarios_RemainUnchanged()
+    public void CreateAll_PinsScenarioCatalogAndVariesFingerprintButNotSummaryPerEnvelope()
     {
         var scenarios = DemoScenario.CreateAll("run");
         Assert.Collection(

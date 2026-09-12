@@ -4,6 +4,7 @@ using System.Text.Json.Nodes;
 using IncidentCompass.Application.Core.Serialization;
 using IncidentCompass.Application.Governance.PostReportActions;
 using IncidentCompass.Application.Notifications;
+using IncidentCompass.Application.Remediation;
 using IncidentCompass.Application.Tickets;
 using IncidentCompass.Domain.Incidents.Actions;
 
@@ -69,6 +70,9 @@ public static class ActionTerminalValidator
         TelegramNotificationWorkflow.ToolIdValue => ActionCategory.Notification,
         TicketCreateTool.ToolId => ActionCategory.TicketCreate,
         TicketUpdatePostReportActionWorkflow.UpdateToolId => ActionCategory.TicketUpdate,
+        BranchPushToolDescriptor.ToolId => ActionCategory.BranchPush,
+        PullRequestToolDescriptor.ToolId => ActionCategory.PrCreate,
+        TicketBacklinkDescriptor.ToolId => ActionCategory.TicketUpdate,
         _ => null
     };
 

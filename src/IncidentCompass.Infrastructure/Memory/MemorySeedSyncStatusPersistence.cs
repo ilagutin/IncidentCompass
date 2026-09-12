@@ -54,11 +54,16 @@ internal sealed partial class MemorySeedSyncStatusPersistence(
         }
     }
 
+    /// <summary>
+    /// Awaits the abandoned save purely to observe it. The caller has already given up on the save
+    /// and logged why, so every outcome is expected here and nothing is rethrown: an unobserved
+    /// faulted task would otherwise surface later as a process-level <c>UnobservedTaskException</c>.
+    /// </summary>
     private static async Task ObserveSaveAsync(Task saveTask)
     {
         try
         {
-            await saveTask.ConfigureAwait(false);
+            await saveTask;
         }
         catch
         {

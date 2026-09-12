@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using IncidentCompass.Application.Core.Errors;
 using IncidentCompass.Application.Core.ModelClients;
 using IncidentCompass.Application.Core.ModelGateway;
 using IncidentCompass.Application.Core.Resilience;
@@ -469,7 +470,10 @@ public sealed class TriageInvestigationLoopTests(PostgresRepositoryFixture postg
         {
             if (Interlocked.Increment(ref requestCount) == 1)
             {
-                throw new AiModelException("test-provider", "Service unavailable.");
+                throw new AiModelException(
+                    "test-provider",
+                    "Service unavailable.",
+                    failureKind: ProviderFailureKind.Unavailable);
             }
 
             return inner.CompleteAsync(request, cancellationToken);

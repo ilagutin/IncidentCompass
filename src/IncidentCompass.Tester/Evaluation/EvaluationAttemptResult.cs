@@ -1,0 +1,26 @@
+namespace IncidentCompass.Tester.Evaluation;
+
+internal sealed record EvaluationAttemptResult(
+    string CaseId,
+    string CaseKind,
+    int Attempt,
+    DateTimeOffset StartedAtUtc,
+    DateTimeOffset CompletedAtUtc,
+    string LastObservedPhase,
+    Guid? FaultId,
+    Guid? JobId,
+    string? ConfigHash,
+    string? ObservedClassification,
+    string? ObservedDocumentationFit,
+    IReadOnlyList<string> ObservedEvidenceArtifactKinds,
+    IReadOnlyList<string> ObservedLimitations,
+    EvaluationReportSnapshot? ReportSnapshot,
+    EvaluationCompletionResult Completion,
+    EvaluationCriterionResult Diagnosis,
+    EvaluationCriterionResult Evidence,
+    EvaluationCriterionResult JustifiedRefusal,
+    EvaluationActionSafetyResult BackendActionSafety,
+    EvaluationLatencyResult Latency,
+    IReadOnlyList<EvaluationModelCallMetadata> ModelCalls,
+    EvaluationUsageResult Usage,
+    string? FailureDetail);

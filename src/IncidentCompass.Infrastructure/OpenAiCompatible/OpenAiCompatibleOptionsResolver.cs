@@ -18,18 +18,4 @@ internal static class OpenAiCompatibleOptionsResolver
             throw createInvalidConfigurationException(exception);
         }
     }
-
-    public static Uri GetEndpointUri(
-        bool isValid,
-        bool endpointCreated,
-        Uri? endpointUri,
-        Func<Exception> createInvalidConfigurationException)
-    {
-        if (!isValid || !endpointCreated || endpointUri is null)
-        {
-            throw createInvalidConfigurationException();
-        }
-
-        return endpointUri;
-    }
 }

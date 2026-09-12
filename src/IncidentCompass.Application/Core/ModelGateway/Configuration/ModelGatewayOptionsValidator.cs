@@ -8,10 +8,6 @@ internal sealed class ModelGatewayOptionsValidator : IValidateOptions<ModelGatew
     {
         var valid =
             !string.IsNullOrWhiteSpace(options.Provider) &&
-            !string.IsNullOrWhiteSpace(options.DefaultModel) &&
-            !string.IsNullOrWhiteSpace(options.StrongModel) &&
-            !string.IsNullOrWhiteSpace(options.CheapModel) &&
-            !string.IsNullOrWhiteSpace(options.EvaluationModel) &&
             !double.IsNaN(options.MinTemperature) &&
             !double.IsInfinity(options.MinTemperature) &&
             !double.IsNaN(options.MaxTemperature) &&
@@ -25,8 +21,7 @@ internal sealed class ModelGatewayOptionsValidator : IValidateOptions<ModelGatew
             options.MaxOutputTokensLimit > 0 &&
             options.DefaultMaxOutputTokens is > 0 &&
             options.DefaultMaxOutputTokens <= options.MaxOutputTokensLimit &&
-            options.MaxCorrelationIdLength is > 0 and <= 128 &&
-            options.AllowedModels.All(static model => !string.IsNullOrWhiteSpace(model));
+            options.MaxCorrelationIdLength is > 0 and <= 128;
 
         return valid
             ? ValidateOptionsResult.Success

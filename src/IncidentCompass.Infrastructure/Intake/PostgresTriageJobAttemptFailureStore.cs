@@ -1,5 +1,6 @@
 using IncidentCompass.Application.Investigation.Jobs;
 using IncidentCompass.Domain.Incidents;
+using IncidentCompass.Infrastructure.Governance;
 using IncidentCompass.Infrastructure.Postgres;
 using Npgsql;
 
@@ -31,6 +32,14 @@ internal sealed class PostgresTriageJobAttemptFailureStore(
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         try
         {
+            await LockJobAsync(connection, transaction, job.Id, cancellationToken);
+            await RecordModelCallAccountingAsync(
+                connection,
+                transaction,
+                job,
+                failure.ModelCallAccounting,
+                now,
+                cancellationToken);
             var updated = await RecordFailureCoreAsync(connection, transaction, job, workerId, failure, now, cancellationToken);
             if (updated && failure.Status == TriageJobStatus.DeadLettered)
             {
@@ -43,6 +52,90 @@ internal sealed class PostgresTriageJobAttemptFailureStore(
         {
             await transaction.RollbackAsync(CancellationToken.None);
             throw;
+        }
+    }
+
+    private static async Task LockJobAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        Guid jobId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = new NpgsqlCommand("""
+            SELECT id
+            FROM incidentcompass.triage_jobs
+            WHERE id = @job_id
+            FOR UPDATE;
+            """, connection, transaction);
+        command.AddParameter("job_id", jobId);
+        if (await command.ExecuteScalarAsync(cancellationToken) is null)
+        {
+            throw new InvalidOperationException("The triage job for attempt-failure accounting does not exist.");
+        }
+    }
+
+    private static async Task RecordModelCallAccountingAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        TriageJob job,
+        InvestigationModelCallAccounting? accounting,
+        DateTimeOffset createdAtUtc,
+        CancellationToken cancellationToken)
+    {
+        if (accounting is null)
+        {
+            return;
+        }
+
+        ValidateAccounting(accounting);
+        if (await HasModelCallAccountingAsync(connection, transaction, job, accounting.PayloadRef, cancellationToken))
+        {
+            return;
+        }
+
+        foreach (var request in accounting.CreateLedgerRequests(job))
+        {
+            await PostgresTriageLedgerEntryInserter.InsertAsync(
+                connection,
+                transaction,
+                request,
+                createdAtUtc,
+                cancellationToken);
+        }
+    }
+
+    private static async Task<bool> HasModelCallAccountingAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        TriageJob job,
+        string payloadRef,
+        CancellationToken cancellationToken)
+    {
+        await using var command = new NpgsqlCommand("""
+            SELECT EXISTS (
+                SELECT 1
+                FROM incidentcompass.triage_ledger
+                WHERE job_id = @job_id
+                  AND attempt = @attempt
+                  AND event_type = 'ModelCall'
+                  AND payload_ref = @payload_ref);
+            """, connection, transaction);
+        command.AddParameter("job_id", job.Id);
+        command.AddParameter("attempt", job.Attempt);
+        command.AddParameter("payload_ref", payloadRef);
+        return (bool)(await command.ExecuteScalarAsync(cancellationToken))!;
+    }
+
+    private static void ValidateAccounting(InvestigationModelCallAccounting accounting)
+    {
+        if (accounting.Metadata.CallId != accounting.CallId)
+        {
+            throw new ArgumentException("Model-call accounting identifiers must match.", nameof(accounting));
+        }
+
+        if (accounting.ChargeTokens is < 0)
+        {
+            throw new ArgumentException("Model-call token charge cannot be negative.", nameof(accounting));
         }
     }
 

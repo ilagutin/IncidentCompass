@@ -3,7 +3,6 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using IncidentCompass.Application.Governance.ActionApprovals;
-using IncidentCompass.Application.Tickets;
 using IncidentCompass.Domain.Incidents.Actions;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -111,38 +110,101 @@ public sealed class ExternalActionAuditEndpointTests(PostgresRepositoryFixture p
         Assert.Contains("ix_action_approvals_external_resource", plan, StringComparison.Ordinal);
     }
 
-    private static async Task<Guid> CompleteAsync(
+    /// <summary>
+    /// The inverse direction of the exact pair lookup above: from an incident to every external
+    /// resource its governed actions touched. The two together are what makes a pivot possible - an
+    /// operator holding a GitHub issue number reaches the fault through <c>faultId</c> on the item,
+    /// and the fault reaches the rest of that incident's external footprint through this filter.
+    /// </summary>
+    /// <remarks>
+    /// Tenant scoping here is not a second mechanism. The fault predicate carries no tenant term of
+    /// its own; it composes with the tenant predicate that already scopes every shape of this query,
+    /// which is why a fault id belonging to another tenant has to return nothing rather than a
+    /// filtered subset. The assertion that it returns byte-identical output to a fault id that does
+    /// not exist at all is the point: an operator cannot use this to learn that another tenant's
+    /// fault is real.
+    /// </remarks>
+    [DockerAvailableFact]
+    public async Task FaultFilterCorrelatesOneIncidentsExternalResourcesAndStaysTenantScoped()
+    {
+        await using var database = await ActionApprovalDatabase.CreateAsync(postgres);
+        var incident = await ActionApprovalTestSupport.SeedOriginAsync(database.ConnectionString, "tenant-a");
+        var otherIncident = await ActionApprovalTestSupport.SeedOriginAsync(database.ConnectionString, "tenant-a");
+        var foreignIncident = await ActionApprovalTestSupport.SeedOriginAsync(database.ConnectionString, "tenant-b");
+        var firstIssue = await CompleteAsync(database.ConnectionString, incident, "42", "correlation-first");
+        var secondIssue = await CompleteAsync(database.ConnectionString, incident, "43", "correlation-second");
+        var unrelatedIssue = await CompleteAsync(
+            database.ConnectionString, otherIncident, "77", "correlation-unrelated");
+        var foreignIssue = await CompleteAsync(
+            database.ConnectionString, foreignIncident, "84", "correlation-foreign");
+
+        var capturedLogs = new List<string>();
+        using var factory = CreateFactory(database.ConnectionString, capturedLogs);
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            BaseAddress = new Uri("https://localhost")
+        });
+
+        using var correlated = await SendAsync(client, $"/api/v1/action-approvals?faultId={incident.FaultId}");
+        var correlatedBody = await correlated.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        using var foreignFault = await SendAsync(
+            client, $"/api/v1/action-approvals?faultId={foreignIncident.FaultId}");
+        var foreignBody = await foreignFault.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        using var absentFault = await SendAsync(client, $"/api/v1/action-approvals?faultId={Guid.NewGuid()}");
+        var absentBody = await absentFault.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        using var pivot = await SendAsync(
+            client, "/api/v1/action-approvals?externalResourceKind=github_issue&externalResourceId=42");
+        var pivotBody = await pivot.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+
+        Assert.True(correlated.IsSuccessStatusCode, correlatedBody);
+        Assert.Equal(
+            new[] { firstIssue, secondIssue }.Order().ToArray(),
+            ReadActionIds(correlatedBody).Order().ToArray());
+        Assert.Equal(
+            ["42", "43"],
+            ReadValues(correlatedBody, "externalResourceId").Order(StringComparer.Ordinal).ToArray());
+        Assert.All(
+            ReadValues(correlatedBody, "faultId"),
+            value => Assert.Equal(incident.FaultId.ToString(), value));
+        Assert.DoesNotContain(unrelatedIssue.ToString(), correlatedBody, StringComparison.OrdinalIgnoreCase);
+
+        Assert.Equal(HttpStatusCode.OK, foreignFault.StatusCode);
+        Assert.Empty(ReadActionIds(foreignBody));
+        Assert.Equal(absentBody, foreignBody);
+        Assert.DoesNotContain(foreignIssue.ToString(), foreignBody, StringComparison.OrdinalIgnoreCase);
+
+        // The pivot the two directions exist to support, and the reason `faultId` is on the item.
+        Assert.Equal([incident.FaultId.ToString()], ReadValues(pivotBody, "faultId").ToArray());
+
+        // `result_payload` is the raw provider body. Neither direction may render it, and the
+        // provider-shaped keys inside it are the cheapest sentinel for that.
+        var publicText = correlatedBody + foreignBody + absentBody + pivotBody;
+        Assert.DoesNotContain("issueNumber", publicText, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"provider\"", publicText, StringComparison.Ordinal);
+        Assert.DoesNotContain(OperatorKey, publicText + string.Join('\n', capturedLogs), StringComparison.Ordinal);
+
+        var plan = await ReadFaultQueryPlanAsync(database.ConnectionString, incident.FaultId);
+        Assert.Contains("ix_action_approvals_tenant_fault", plan, StringComparison.Ordinal);
+    }
+
+    private static Guid[] ReadActionIds(string body) =>
+        ReadValues(body, "id").Select(Guid.Parse).ToArray();
+
+    private static string[] ReadValues(string body, string propertyName)
+    {
+        using var document = JsonDocument.Parse(body);
+        return document.RootElement.GetProperty("actions").EnumerateArray()
+            .Select(item => item.GetProperty(propertyName).GetString()!)
+            .ToArray();
+    }
+
+    private static Task<Guid> CompleteAsync(
         string connectionString,
         ActionApprovalOriginFixture origin,
         string issueNumber,
-        string proposalKey)
-    {
-        using var services = ActionApprovalTestSupport.CreateServices(connectionString);
-        var proposal = ActionApprovalTestSupport.Proposal(
-            origin, proposalKey, automaticallyApproved: true) with
-        {
-            LogicalTargetId = TicketCreateTool.LogicalTargetId
-        };
-        var action = (await services.GetRequiredService<IActionProposalRepository>().CreateAsync(
-            proposal,
-            TestContext.Current.CancellationToken)).Action;
-        var claim = await services.GetRequiredService<IActionDispatchRepository>().TryClaimAsync(
-            action.Id, "endpoint-projection-worker", TimeSpan.FromMinutes(1),
-            TestContext.Current.CancellationToken);
-        Assert.NotNull(claim);
-        var completed = await services.GetRequiredService<IActionDispatchRepository>().CompleteAsync(
-            new ActionTerminalRequest(
-                action.Id,
-                claim!.Fence,
-                ActionApprovalState.Executed,
-                Encoding.UTF8.GetBytes($"{{\"issueNumber\":\"{issueNumber}\",\"provider\":\"github\"}}"),
-                "GitHub accepted the issue.",
-                null,
-                ExternalActionAuditProjection.GitHubIssueCreated(issueNumber)),
-            TestContext.Current.CancellationToken);
-        Assert.True(completed);
-        return action.Id;
-    }
+        string proposalKey) =>
+        ActionApprovalTestSupport.CompleteGitHubIssueAsync(
+            connectionString, origin, issueNumber, proposalKey, "endpoint-projection-worker");
 
     private static async Task<Guid> CompleteFailureAsync(
         string connectionString,
@@ -241,6 +303,31 @@ public sealed class ExternalActionAuditEndpointTests(PostgresRepositoryFixture p
             ORDER BY completed_at_utc DESC, id DESC
             LIMIT 51;
             """, connection);
+        var lines = new List<string>();
+        await using var reader = await command.ExecuteReaderAsync(TestContext.Current.CancellationToken);
+        while (await reader.ReadAsync(TestContext.Current.CancellationToken))
+        {
+            lines.Add(reader.GetString(0));
+        }
+
+        return string.Join('\n', lines);
+    }
+
+    private static async Task<string> ReadFaultQueryPlanAsync(string connectionString, Guid faultId)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = new NpgsqlCommand("""
+            SET enable_seqscan = off;
+            EXPLAIN (COSTS OFF)
+            SELECT id
+            FROM incidentcompass.action_approvals
+            WHERE tenant_id = 'tenant-a'
+              AND fault_id = @fault_id
+            ORDER BY created_at_utc DESC, id DESC
+            LIMIT 51;
+            """, connection);
+        command.Parameters.AddWithValue("fault_id", faultId);
         var lines = new List<string>();
         await using var reader = await command.ExecuteReaderAsync(TestContext.Current.CancellationToken);
         while (await reader.ReadAsync(TestContext.Current.CancellationToken))

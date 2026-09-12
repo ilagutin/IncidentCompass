@@ -1,7 +1,9 @@
+using IncidentCompass.Application.Core.Errors;
 using IncidentCompass.Application.Core.ModelGateway;
 using IncidentCompass.Application.Core.Resilience;
 using IncidentCompass.Application.Intake.Configuration;
 using IncidentCompass.Application.Investigation.Jobs;
+using IncidentCompass.Application.Investigation.Reports;
 using IncidentCompass.Domain.Incidents;
 using Microsoft.Extensions.Options;
 
@@ -22,6 +24,7 @@ public sealed class TriageJobRunnerNonRetryableFailureTests
         { TriageBudgetExhaustedException.WallClockReachedBeforeCallCode, "The triage attempt wall-clock budget was reached before the next model call." },
         { TriageBudgetExhaustedException.ContextWindowExceededCode, "The triage prompt exceeds the configured context window." },
         { TriageBudgetExhaustedException.OrchestratorTurnLimitReachedCode, "Orchestrator exceeded the bounded investigation turn limit before publish_report." },
+        { TriageBudgetExhaustedException.OrchestratorRepromptLimitReachedCode, "publish_report remained invalid after bounded reprompts." },
         { TriageBudgetExhaustedException.MaxWorkersReachedCode, "The triage attempt worker budget was reached before delegation." },
         { TriageBudgetExhaustedException.WorkerTurnLimitReachedCode, "Worker exceeded the bounded tool/reprompt turn limit." }
     };
@@ -84,7 +87,30 @@ public sealed class TriageJobRunnerNonRetryableFailureTests
     }
 
     [Fact]
-    public async Task ProcessClaimedAsync_ExhaustionWrappedByBoundedRepromptStillDeadLetters()
+    public async Task ProcessClaimedAsync_InvalidWorkerOutputDeadLettersImmediatelyWithFixedReason()
+    {
+        const string modelControlledDiagnostic = "MODEL_OUTPUT_MUST_NOT_BE_STORED";
+        var recorder = new RecordingRuntimeRepository();
+        var validationFailure = new WorkerOutputValidationException(
+            ["analysis worker output is not valid JSON: " + modelControlledDiagnostic],
+            violationsTruncated: false);
+        var runner = CreateRunner(
+            recorder,
+            new ThrowingProcessor(new WorkerOutputInvalidException(validationFailure)));
+
+        await ProcessAsync(runner, attempt: 1, maxAttempts: 5);
+
+        var failure = Assert.Single(recorder.Failures);
+        Assert.Equal(TriageJobStatus.DeadLettered, failure.Status);
+        Assert.Equal(WorkerOutputInvalidException.ErrorCode, failure.ErrorCode);
+        Assert.Equal(WorkerOutputInvalidException.StoredReason, failure.ErrorMessage);
+        Assert.DoesNotContain(modelControlledDiagnostic, failure.ErrorMessage, StringComparison.Ordinal);
+        Assert.Null(failure.NextAttemptAtUtc);
+        Assert.Equal(TriageJobRetryBudgetDisposition.ConsumeAttempt, failure.RetryBudgetDisposition);
+    }
+
+    [Fact]
+    public async Task ProcessClaimedAsync_ExhaustionWrappedByAnUntypedFailureStillDeadLetters()
     {
         var recorder = new RecordingRuntimeRepository();
         var inner = new TriageBudgetExhaustedException(
@@ -92,13 +118,46 @@ public sealed class TriageJobRunnerNonRetryableFailureTests
             "The triage attempt token budget was reached before the next model call.");
         var runner = CreateRunner(
             recorder,
-            new ThrowingProcessor(new InvalidOperationException("Bounded reprompt wrapper.", inner)));
+            new ThrowingProcessor(new InvalidOperationException("Untyped wrapper.", inner)));
 
         await ProcessAsync(runner, attempt: 1, maxAttempts: 5);
 
         var failure = Assert.Single(recorder.Failures);
         Assert.Equal(TriageJobStatus.DeadLettered, failure.Status);
         Assert.Equal(TriageBudgetExhaustedException.MaxTokensReachedCode, failure.ErrorCode);
+    }
+
+    /// <summary>
+    /// A spent orchestrator reprompt allowance carries the validation failure it could not correct.
+    /// The disposition must come from the bounded limit that was actually reached, not from the
+    /// carried cause, and the attempt must dead-letter with attempts still left on the job.
+    /// </summary>
+    [Fact]
+    public async Task ProcessClaimedAsync_RepromptLimitDeadLettersUnderItsOwnCodeWithAttemptsRemaining()
+    {
+        var recorder = new RecordingRuntimeRepository();
+        var runner = CreateRunner(
+            recorder,
+            new ThrowingProcessor(new TriageBudgetExhaustedException(
+                TriageBudgetExhaustedException.OrchestratorRepromptLimitReachedCode,
+                "publish_report remained invalid after bounded reprompts.",
+                new TriageReportValidationException("report validation diagnostic"))));
+
+        await ProcessAsync(runner, attempt: 1, maxAttempts: 5);
+
+        var failure = Assert.Single(recorder.Failures);
+        Assert.Equal(TriageJobStatus.DeadLettered, failure.Status);
+        Assert.Equal(
+            TriageBudgetExhaustedException.OrchestratorRepromptLimitReachedCode,
+            failure.ErrorCode);
+        Assert.Equal(
+            $"{TriageBudgetExhaustedException.OrchestratorRepromptLimitReachedCode}: {nameof(TriageBudgetExhaustedException)}.",
+            failure.ErrorMessage);
+        // No next attempt time and no second recorded failure: the retry budget is not spent on a
+        // limit that the same configuration snapshot would reach again.
+        Assert.Null(failure.NextAttemptAtUtc);
+        Assert.NotEqual("triage_job_attempt_failed", failure.ErrorCode);
+        Assert.Equal(TriageJobRetryBudgetDisposition.ConsumeAttempt, failure.RetryBudgetDisposition);
     }
 
     [Fact]
@@ -152,11 +211,14 @@ public sealed class TriageJobRunnerNonRetryableFailureTests
             new FixedTimeProvider(now));
         var runner = CreateRunner(
             recorder,
-            new ThrowingProcessor(new AiModelException("test-provider", "Service unavailable.")),
+            new ThrowingProcessor(new AiModelException(
+                "test-provider",
+                "Service unavailable.",
+                failureKind: ProviderFailureKind.Unavailable)),
             tracker,
             new FixedTimeProvider(now));
 
-        await ProcessAsync(runner, attempt: 3, maxAttempts: 1);
+        await ProcessAsync(runner, attempt: 1, maxAttempts: 1);
 
         var failure = Assert.Single(recorder.Failures);
         Assert.Equal(TriageJobStatus.RetryPending, failure.Status);
@@ -167,7 +229,7 @@ public sealed class TriageJobRunnerNonRetryableFailureTests
     }
 
     [Fact]
-    public async Task ProcessClaimedAsync_ProviderOutageWrappingExhaustionStillWins()
+    public async Task ProcessClaimedAsync_NonRetryableFailureInsideProviderWrapperTakesPrecedence()
     {
         var now = DateTimeOffset.UtcNow;
         var recorder = new RecordingRuntimeRepository();
@@ -178,15 +240,19 @@ public sealed class TriageJobRunnerNonRetryableFailureTests
             recorder,
             new ThrowingProcessor(new InvalidOperationException(
                 "Outage surfaced alongside exhaustion.",
-                new AiModelException("test-provider", "Service unavailable.", innerException: exhaustion))),
+                new AiModelException(
+                    "test-provider",
+                    "Nonsensical provider wrapper.",
+                    innerException: exhaustion,
+                    failureKind: ProviderFailureKind.Unavailable))),
             timeProvider: new FixedTimeProvider(now));
 
         await ProcessAsync(runner, attempt: 1, maxAttempts: 5);
 
         var failure = Assert.Single(recorder.Failures);
-        Assert.Equal(TriageJobStatus.RetryPending, failure.Status);
-        Assert.Equal("provider_unavailable", failure.ErrorCode);
-        Assert.Equal(TriageJobRetryBudgetDisposition.DoNotConsumeAttempt, failure.RetryBudgetDisposition);
+        Assert.Equal(TriageJobStatus.DeadLettered, failure.Status);
+        Assert.Equal(TriageBudgetExhaustedException.MaxTokensReachedCode, failure.ErrorCode);
+        Assert.Equal(TriageJobRetryBudgetDisposition.ConsumeAttempt, failure.RetryBudgetDisposition);
     }
 
     [Fact]

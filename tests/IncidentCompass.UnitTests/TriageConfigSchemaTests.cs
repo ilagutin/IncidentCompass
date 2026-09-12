@@ -9,14 +9,23 @@ public sealed class TriageConfigSchemaTests
 {
     private static readonly Lazy<JsonSchema> Schema = new(BuildSchema);
 
+    /// <summary>
+    /// Every triage configuration the repository carries, discovered rather than listed: the shipped
+    /// one, the evaluation one and the integration test fixtures are all loaded by the same loader,
+    /// so a configuration that drifts out of the published schema is a defect wherever it lives, and
+    /// adding a configuration must not silently add an unchecked one.
+    /// </summary>
     [Fact]
-    public void EveryShippedConfiguration_MatchesPublishedSchema()
+    public void EveryConfigurationInTheRepository_MatchesPublishedSchema()
     {
-        foreach (var configurationPath in ShippedConfigurationPaths())
+        var configurationPaths = TriageConfigurationFileLocator.FindAll();
+
+        TriageConfigurationFileLocator.AssertDiscoveryCoversEveryKnownConfiguration(configurationPaths);
+        foreach (var configurationPath in configurationPaths)
         {
             var result = Evaluate(LoadConfiguration(configurationPath));
 
-            Assert.True(result.IsValid, $"Shipped configuration is schema-invalid: {configurationPath}");
+            Assert.True(result.IsValid, $"Configuration is schema-invalid: {configurationPath}");
         }
     }
 
@@ -105,15 +114,5 @@ public sealed class TriageConfigSchemaTests
     }
 
     private static JsonNode LoadConfiguration(string? path = null) =>
-        JsonNode.Parse(File.ReadAllText(path ?? ShippedConfigurationPaths().First()))!;
-
-    private static IReadOnlyCollection<string> ShippedConfigurationPaths()
-    {
-        var root = RepositoryRootLocator.Find();
-        return [
-            Path.Combine(root, "config", "incidentcompass.config.json"),
-            Path.Combine(root, "tests", "IncidentCompass.IntegrationTests", "Fixtures", "test-triage-config", "incidentcompass.config.json")
-        ];
-    }
-
+        JsonNode.Parse(File.ReadAllText(path ?? TriageConfigurationFileLocator.Shipped()))!;
 }

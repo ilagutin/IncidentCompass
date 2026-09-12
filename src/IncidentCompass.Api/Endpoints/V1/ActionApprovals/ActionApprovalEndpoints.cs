@@ -17,7 +17,7 @@ internal static class ActionApprovalEndpoints
 
         approvals.MapGet(string.Empty, ListAsync)
             .WithName("ListActionApprovals")
-            .WithSummary("List tenant-scoped action approvals with paired external-resource filtering.")
+            .WithSummary("List tenant-scoped action approvals by paired external resource or by fault.")
             .Produces<ActionApprovalListResponse>()
             .ProducesProblem(StatusCodes.Status400BadRequest)
             .Produces(StatusCodes.Status401Unauthorized)
@@ -64,6 +64,7 @@ internal static class ActionApprovalEndpoints
         string? cursor,
         string? externalResourceKind,
         string? externalResourceId,
+        Guid? faultId,
         IApplicationDispatcher dispatcher,
         CancellationToken cancellationToken) =>
         Results.Ok(await dispatcher.DispatchAsync<ListActionApprovalsQuery, ActionApprovalListResponse>(
@@ -72,7 +73,8 @@ internal static class ActionApprovalEndpoints
                 limit,
                 cursor,
                 externalResourceKind,
-                externalResourceId),
+                externalResourceId,
+                faultId),
             cancellationToken));
 
     private static async Task<IResult> GetAsync(

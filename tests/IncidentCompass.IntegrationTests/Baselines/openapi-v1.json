@@ -104,6 +104,27 @@
         }
       }
     },
+    "/api/v1/health/memory-corpus": {
+      "get": {
+        "tags": [
+          "v1"
+        ],
+        "summary": "Metadata-only memory corpus status: configured embedding route, the route that built the active corpus, and counts.",
+        "operationId": "GetMemoryCorpusStatus",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryCorpusSnapshot"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/users/me": {
       "get": {
         "tags": [
@@ -566,7 +587,7 @@
         "tags": [
           "action-approvals"
         ],
-        "summary": "List tenant-scoped action approvals with paired external-resource filtering.",
+        "summary": "List tenant-scoped action approvals by paired external resource or by fault.",
         "operationId": "ListActionApprovals",
         "parameters": [
           {
@@ -607,6 +628,14 @@
             "in": "query",
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "faultId",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
             }
           }
         ],
@@ -1033,6 +1062,7 @@
           "status",
           "approvalContractVersion",
           "originReportId",
+          "faultId",
           "toolId",
           "category",
           "mode",
@@ -1069,6 +1099,10 @@
             "format": "int32"
           },
           "originReportId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "faultId": {
             "type": "string",
             "format": "uuid"
           },
@@ -1224,12 +1258,15 @@
           "totalTokens",
           "pricedCallCount",
           "unpricedCallCount",
+          "estimatedUsageCallCount",
+          "estimatedUsageTotalTokens",
           "spendTotals"
         ],
         "type": "object",
         "properties": {
           "hourUtc": {
             "type": "string",
+            "description": "The start of the UTC hour these totals cover.",
             "format": "date-time"
           },
           "callCount": {
@@ -1238,6 +1275,7 @@
               "integer",
               "string"
             ],
+            "description": "Every durable model-call row in the hour, successful or not.",
             "format": "int64"
           },
           "inputTokens": {
@@ -1246,6 +1284,7 @@
               "integer",
               "string"
             ],
+            "description": "Input tokens across the calls whose usage metadata was valid.",
             "format": "int64"
           },
           "outputTokens": {
@@ -1254,6 +1293,7 @@
               "integer",
               "string"
             ],
+            "description": "Output tokens across the calls whose usage metadata was valid.",
             "format": "int64"
           },
           "totalTokens": {
@@ -1262,6 +1302,7 @@
               "integer",
               "string"
             ],
+            "description": "Total tokens across the calls whose usage metadata was valid.",
             "format": "int64"
           },
           "pricedCallCount": {
@@ -1270,6 +1311,7 @@
               "integer",
               "string"
             ],
+            "description": "Calls that produced spend, all of them provider-reported.",
             "format": "int64"
           },
           "unpricedCallCount": {
@@ -1278,15 +1320,36 @@
               "integer",
               "string"
             ],
+            "description": "Calls that produced no spend, for any reason.",
+            "format": "int64"
+          },
+          "estimatedUsageCallCount": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "description": "Calls whose token counts this system estimated rather than received.",
+            "format": "int64"
+          },
+          "estimatedUsageTotalTokens": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "description": "How many of the hour\u0027s total tokens came from those calls.",
             "format": "int64"
           },
           "spendTotals": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/CostRollupSpend"
-            }
+            },
+            "description": "Exact spend per currency, never converted or combined."
           }
-        }
+        },
+        "description": "One UTC hour of recorded model usage for one tenant."
       },
       "CostRollupResponse": {
         "required": [
@@ -1482,6 +1545,7 @@
           "tokensDelta",
           "workersDelta",
           "payloadRef",
+          "payloadState",
           "configHash",
           "createdAtUtc"
         ],
@@ -1569,6 +1633,9 @@
               "null",
               "string"
             ]
+          },
+          "payloadState": {
+            "type": "string"
           },
           "configHash": {
             "type": "string"
@@ -1790,6 +1857,123 @@
       },
       "JsonElement": {},
       "JsonNode": {},
+      "MemoryCorpusSnapshot": {
+        "required": [
+          "tenantId",
+          "owner",
+          "state",
+          "rebuildRequired",
+          "configuredRouteId",
+          "configuredProviderId",
+          "configuredModel",
+          "activeGeneration",
+          "activeRouteId",
+          "activeProviderId",
+          "activeEmbeddingProvider",
+          "activeEmbeddingModel",
+          "activeEmbeddingDimensions",
+          "activeItemCount",
+          "activeChunkCount",
+          "activeEmbeddingIdentityCount",
+          "publishedAtUtc"
+        ],
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "string"
+          },
+          "owner": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "rebuildRequired": {
+            "type": "boolean"
+          },
+          "configuredRouteId": {
+            "type": "string"
+          },
+          "configuredProviderId": {
+            "type": "string"
+          },
+          "configuredModel": {
+            "type": "string"
+          },
+          "activeGeneration": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "uuid"
+          },
+          "activeRouteId": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "activeProviderId": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "activeEmbeddingProvider": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "activeEmbeddingModel": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "activeEmbeddingDimensions": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "activeItemCount": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "activeChunkCount": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "activeEmbeddingIdentityCount": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "publishedAtUtc": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          }
+        },
+        "description": "The metadata-only view of one owner\u0027s memory corpus: what route it is configured to use, what\nroute actually built it, how much of it there is, and whether those agree."
+      },
       "MemorySeedSyncSnapshot": {
         "required": [
           "enabled",
@@ -1902,7 +2086,9 @@
           "status",
           "attempt",
           "configHash",
-          "createdAtUtc"
+          "createdAtUtc",
+          "lastErrorCode",
+          "nextAttemptAtUtc"
         ],
         "type": "object",
         "properties": {
@@ -1927,8 +2113,22 @@
           "createdAtUtc": {
             "type": "string",
             "format": "date-time"
+          },
+          "lastErrorCode": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "nextAttemptAtUtc": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
           }
-        }
+        },
+        "description": "The caller-visible state of the fault\u0027s current triage job."
       },
       "TriageReportDetailsResponse": {
         "required": [
@@ -2017,6 +2217,15 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/TriageReportEvidenceResponse"
+            }
+          },
+          "modelProvenance": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/TriageReportModelParticipant"
             }
           }
         }
@@ -2175,6 +2384,59 @@
             ]
           }
         }
+      },
+      "TriageReportModelParticipant": {
+        "required": [
+          "callKind",
+          "role",
+          "routeId",
+          "provider",
+          "model",
+          "callCount"
+        ],
+        "type": "object",
+        "properties": {
+          "callKind": {
+            "type": "string",
+            "description": "The model-call kind that this model answered: \u0060orchestrator\u0060 or \u0060worker\u0060."
+          },
+          "role": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "The worker role that this model answered for, or \u0060null\u0060 for orchestrator calls."
+          },
+          "routeId": {
+            "type": "string",
+            "description": "The configured route whose call this model answered."
+          },
+          "provider": {
+            "type": "string",
+            "description": "The adapter identifier that reported the answer."
+          },
+          "model": {
+            "type": "string",
+            "description": "The provider model name that reported the answer."
+          },
+          "callCount": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "description": "How many calls in the attempt this exact combination answered.",
+            "format": "int32"
+          },
+          "providerId": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "description": "The configured provider entry the route named, or \u0060null\u0060 when the ledger row does not say."
+          }
+        },
+        "description": "One distinct model that answered during the job attempt that produced a published report."
       }
     },
     "securitySchemes": {

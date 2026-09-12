@@ -1,6 +1,6 @@
 namespace IncidentCompass.Worker;
 
-public sealed class PostReportActionEvaluationOptions
+internal sealed class PostReportActionEvaluationOptions
 {
     public const string SectionName = "IncidentCompass:PostReportActions";
 

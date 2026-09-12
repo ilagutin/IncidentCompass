@@ -5,6 +5,7 @@ using IncidentCompass.Application.Core.ModelClients;
 using IncidentCompass.Application.Core.Security;
 using IncidentCompass.Application.Governance.ActionApprovals;
 using IncidentCompass.Application.Governance.Ledger;
+using IncidentCompass.Application.Governance.Tools;
 using IncidentCompass.Application.Intake.Artifacts;
 using IncidentCompass.Application.Intake.Configuration;
 using IncidentCompass.Application.Intake.FaultGrouping;
@@ -35,11 +36,11 @@ public sealed class MemoryOnlyCompositionTests
             serviceProvider.GetRequiredService<MemoryOnlyUserContext>());
         services.AddSingleton<IBackgroundUserContext>(serviceProvider =>
             serviceProvider.GetRequiredService<MemoryOnlyUserContext>());
-        // IngestSignalCommandValidator (Phase 1 intake) depends on ITriageConfigurationRepository,
+        // IngestSignalCommandValidator (intake) depends on ITriageConfigurationRepository,
         // another Infrastructure-provided port. Same reasoning as above: supply a trivial
         // in-memory stand-in instead of pulling in IncidentCompass.Infrastructure.
         services.AddSingleton<ITriageConfigurationRepository, InMemoryTriageConfigurationRepository>();
-        // FaultGroupingCoordinator/GroundedFactsAssembler/GetFaultQueryHandler (Phase 1 intake)
+        // FaultGroupingCoordinator/GroundedFactsAssembler/GetFaultQueryHandler (intake)
         // depend on these repository ports, all Infrastructure-provided. Same reasoning as above:
         // supply trivial in-memory stand-ins instead of pulling in IncidentCompass.Infrastructure.
         services.AddSingleton<ISignalRepository, InMemorySignalRepository>();
@@ -257,6 +258,12 @@ public sealed class MemoryOnlyCompositionTests
         public Task ReconcileSeedCorpusAsync(
             MemorySeedCorpus corpus,
             CancellationToken cancellationToken) => Task.CompletedTask;
+
+        public Task<MemoryCorpusInventory> GetCorpusInventoryAsync(
+            string tenantId,
+            string owner,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(new MemoryCorpusInventory(null, [], 0, 0));
     }
 
 
@@ -269,20 +276,20 @@ public sealed class MemoryOnlyCompositionTests
         public Task<int> CountPolicyDecisionsAsync(
             TriageJob job,
             string toolName,
-            string scope,
+            ToolRuleScope scope,
             TriageLedgerDecision decision,
             CancellationToken cancellationToken) => Task.FromResult(0);
 
         public Task<bool> HasSuccessfulToolResultAsync(
             TriageJob job,
             string toolName,
-            string scope,
+            ToolRuleScope scope,
             CancellationToken cancellationToken) => Task.FromResult(false);
 
-        public Task<IReadOnlyList<TriageLedgerEntry>> ReadByFaultIdAsync(
+        public Task<IReadOnlyList<FaultLedgerEntry>> ReadByFaultIdAsync(
             Guid faultId,
             string tenantId,
-            CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<TriageLedgerEntry>>([]);
+            CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<FaultLedgerEntry>>([]);
     }
     private sealed class InMemoryModelCostRollupRepository : IModelCostRollupRepository
     {

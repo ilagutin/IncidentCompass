@@ -71,17 +71,38 @@ IncidentCompass.Application/
     Validation/
 ```
 
-`Core/`, `Governance/`, `Intake/`, `Investigation/`, `Memory/`, `Observability/`, `SourceContext/` and `Tickets/` are the current
-folders. `Governance/` contains the common worker-tool contract, validation primitives, triage
+`Core/`, `Governance/`, `Intake/`, `Investigation/`, `Memory/`, `Notifications/`, `Observability/`,
+`Remediation/`, `SourceContext/` and `Tickets/` are the current folders, and `ArchitectureTests`
+enforces exactly that list. `Governance/` contains the common worker-tool contract, validation primitives, triage
 ledger ports and post-report action approval contracts/use cases, including the deterministic approved
 action dispatcher. PostgreSQL action approval, provenance, claim, recovery and terminal-transition
 implementations stay under `Infrastructure/Governance/ActionApprovals/`.
 The single live tool rule engine and the immediate/action capability contracts live under
 `Governance/Tools/`; investigation-only execution orchestration stays under `Investigation/Jobs/`.
-`Memory/` contains memory_search contracts, seed records and retrieval orchestration.
+`Memory/` contains memory_search contracts, seed records, retrieval orchestration and the corpus
+generation identity plus the pure evaluator that decides what a corpus is relative to the configured
+embedding route. Seed scanning, the synchronization pass, the operator `memory status` and
+`memory rebuild` commands and the PostgreSQL generation writer stay under `Infrastructure/Memory/`.
+Payload retention is split the same way the data is: `Intake/Retention/` owns compaction of raw
+signal payloads and `Investigation/Retention/` owns reaping of non-current-attempt artifacts, each a
+persistence port plus the bounded callable operation that turns the shared `RetentionOptions` window
+into a cutoff. The single-statement SQL, its exclusion list and the index that bounds each scan stay
+in the matching `Infrastructure/` folder.
 `Observability/CostRollup/` contains the tenant-scoped read request, validator, response and
 persistence port. ModelCall JSON parsing, effective-price ambiguity handling and PostgreSQL query
 details stay under `Infrastructure/Observability/`; API endpoints remain transport-only.
+`Remediation/` contains the post-report remediation pass: the disposable-workspace port, the answer
+extractor that decides whether a model reply is a unified diff, the prompt builder, the bounded runner
+the durable diff record with its persistence port, the read port that loads one published report's
+job, fault and cited source evidence, and the post-report workflow that schedules a pass and maps its
+outcome onto the intent. Materialization, tree identity, diff parsing, diff application and the
+abandoned-workspace reaper stay in `Infrastructure/SourceContext/`, where the read boundary's own
+primitives and the workspace-root option already live, and `Infrastructure/Remediation/` holds only
+the adapter that composes them and the two PostgreSQL adapters. The workflow is registered from the
+Worker beside the other post-report workflows, not from `AddApplication`: it is a schedule, and the
+Worker is where schedules live. The runner deliberately reaches `Investigation/Jobs/`'s bounded model caller rather
+than owning a call path, so admission, the provider deadline, ledger accounting and route fail-over stay
+in one place; that is the one cross-folder dependency the feature has and it is the point of it.
 `SourceContext/` contains the provider-neutral read port, bounded signal frame extraction and tool;
 filesystem roots, canonicalization and file reads stay in Infrastructure. Report-level context
 outcome contracts and backend limitation policy live under `Investigation/Reports/Context/`.
@@ -95,7 +116,11 @@ approval and dispatch path, never a worker role tool.
 The Worker keeps triage-job and approved-action scheduling in separate pump/task-set types. The action
 pump owns only bounded polling, task observation and shutdown draining; current-policy checks, exact
 payload dispatch and terminal workflow decisions remain in Application, while database fencing remains
-in Infrastructure.
+in Infrastructure. Retention follows the same split: the Worker owns when a pass happens - the
+schedule options, their validator, the pump that runs one bounded pass of each operation in one scope,
+and the hosted service around it - while what a pass does stays in the Application operations. A
+schedule is a property of a host, so it is bound from the Worker's own configuration section rather
+than from the shared `RetentionOptions` that both operations read.
 
 Use `Query.cs` instead of `Command.cs` when the use case is read-only. Avoid repeating the full folder context in file names, such as `GetCurrentUserQuery.cs`, when `Users/GetCurrent/Query.cs` already communicates the intent.
 
@@ -111,6 +136,19 @@ Application requests run through the internal dispatcher pipeline before the han
 - `RequestValidationBehavior` runs all FluentValidation validators for the request type and throws `RequestValidationException` when rule failures exist.
 
 Add a new behavior only for cross-cutting workflow concerns that should apply consistently across many request types. Keep feature-specific policy in the feature folder instead of hiding it in a global behavior.
+
+Behavior boundaries:
+
+- A behavior is an application concern, not a replacement for HTTP middleware. HTTP-only concerns
+  stay in `IncidentCompass.Api`.
+- A behavior may open a persistence transaction, but the transaction itself is implemented by
+  Infrastructure.
+- Model-call telemetry stays on the Worker investigation path through durable `ModelCall` ledger
+  events rather than a global behavior.
+- The dispatcher is a small internal type. MediatR is not a required dependency; see
+  `docs/trade-offs.md` for the replacement seam if a team prefers it.
+- Out of scope for this pipeline: event sourcing, separate read/write databases and a dependency on
+  a commercial mediator package.
 
 ## Handler Shape
 
@@ -146,6 +184,11 @@ Examples:
 Infrastructure exception types must not appear in `ApiExceptionHandler` switch cases except for bootstrap-time configuration errors, such as `PostgresConnectionConfigurationException` mapped to 500 during startup.
 
 Rationale: the API exception handler depends only on Application and Domain exception contracts. Adding a new Infrastructure adapter must not require changes in the API layer.
+
+## Async Conventions
+
+- Do not call `ConfigureAwait(false)`. Both hosts are application hosts (ASP.NET Core and the generic host) with no synchronization context, and this solution ships no library that a caller could host differently, so the call changes nothing and only makes await sites read inconsistently.
+- Awaiting a task purely to observe it, rather than to use its result, needs a comment saying so. An abandoned faulted task surfaces later as a process-level `UnobservedTaskException`, which is not obvious from the empty `catch` alone.
 
 ## Workflow States and Error Mapping
 

@@ -15,7 +15,7 @@ internal sealed class TriageConfigurationLoadException : InvalidOperationExcepti
     public static TriageConfigurationLoadException UnsupportedKind(string kind)
     {
         return new TriageConfigurationLoadException(
-            $"Triage configuration source kind '{kind}' is not supported (only 'File' is supported in Phase 2).");
+            $"Triage configuration source kind '{kind}' is not supported (only 'File' is supported).");
     }
 
     public static TriageConfigurationLoadException ConfigFileMissing(string path)

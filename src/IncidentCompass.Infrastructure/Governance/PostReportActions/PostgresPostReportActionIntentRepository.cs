@@ -36,6 +36,7 @@ internal sealed class PostgresPostReportActionIntentRepository(
             return (IReadOnlyList<PostReportActionIntentCandidate>)rows;
         });
     }
+
     public Task<PostReportActionIntentClaim?> TryClaimAsync(
         Guid intentId,
         string claimOwner,
@@ -53,6 +54,7 @@ internal sealed class PostgresPostReportActionIntentRepository(
             () => ClaimTransactionAsync(
                 intentId, claimOwner, leaseDuration, maximumAttempts, cancellationToken));
     }
+
     public Task<bool> RenewLeaseAsync(
         Guid intentId,
         string claimOwner,
@@ -68,6 +70,7 @@ internal sealed class PostgresPostReportActionIntentRepository(
               AND claim_fence = @fence AND claim_until_utc > clock_timestamp();
             """, cancellationToken, ("owner", claimOwner), ("duration", leaseDuration));
     }
+
     public Task<bool> CompleteAsync(
         Guid intentId,
         Guid claimFence,
@@ -105,6 +108,7 @@ internal sealed class PostgresPostReportActionIntentRepository(
               AND claim_until_utc > clock_timestamp();
             """, cancellationToken, ("code", errorCode), ("delay", retryDelay), ("maximum", maximumAttempts));
     }
+
     public Task<bool> DeadLetterAsync(
         Guid intentId,
         Guid claimFence,
@@ -121,6 +125,7 @@ internal sealed class PostgresPostReportActionIntentRepository(
               AND claim_until_utc > clock_timestamp();
             """, cancellationToken, ("code", errorCode));
     }
+
     private async Task<PostReportActionIntentClaim?> ClaimTransactionAsync(Guid intentId,
         string owner,
         TimeSpan leaseDuration,
@@ -179,6 +184,7 @@ internal sealed class PostgresPostReportActionIntentRepository(
             throw;
         }
     }
+
     private async Task<bool> TransitionAsync(Guid intentId,
         Guid fence,
         string sql,

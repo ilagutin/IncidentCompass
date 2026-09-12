@@ -56,10 +56,11 @@ public sealed class TicketToolSurfaceTests
             : [];
 
     private static WorkerToolCallExecutor CreateExecutor() => new(
-        [new TicketSearchTool(new UnavailableTicketSearchDouble(), TimeProvider.System)],
+        [new TicketSearchTool(new UnavailableTicketSearchDouble())],
         new ToolRuleEngine(new ThrowingLedgerReader()),
         new TriageLedgerAppender(new ThrowingLedgerWriter()),
-        new ThrowingCommitter());
+        new ThrowingCommitter(),
+        TimeProvider.System);
 
     private static TriageConfiguration Configuration(bool withRole, bool withGrant)
     {
@@ -92,6 +93,11 @@ public sealed class TicketToolSurfaceTests
     {
         public Task<TriageLedgerEntry> AppendAsync(TriageLedgerAppendRequest request, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
+
+        public Task<IReadOnlyList<TriageLedgerEntry>> AppendBatchAsync(
+            IReadOnlyList<TriageLedgerAppendRequest> requests,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
     }
 
     private sealed class ThrowingLedgerReader : ITriageLedgerReader
@@ -100,14 +106,14 @@ public sealed class TicketToolSurfaceTests
             throw new NotSupportedException();
 
         public Task<int> CountPolicyDecisionsAsync(
-            TriageJob job, string toolName, string scope, TriageLedgerDecision decision, CancellationToken cancellationToken) =>
+            TriageJob job, string toolName, ToolRuleScope scope, TriageLedgerDecision decision, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
         public Task<bool> HasSuccessfulToolResultAsync(
-            TriageJob job, string toolName, string scope, CancellationToken cancellationToken) =>
+            TriageJob job, string toolName, ToolRuleScope scope, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
-        public Task<IReadOnlyList<TriageLedgerEntry>> ReadByFaultIdAsync(
+        public Task<IReadOnlyList<FaultLedgerEntry>> ReadByFaultIdAsync(
             Guid faultId, string tenantId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
     }

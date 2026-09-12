@@ -1,8 +1,10 @@
 name: publish-release
 
 on:
-  # Primary path: a squash merge of a release PR updates VERSION on main.
+  # Primary path: merging a release PR updates VERSION on main.
   # The workflow reads VERSION, tags the current main HEAD and publishes the release.
+  # After a rebase merge that HEAD is the last commit of the PR, which is not
+  # necessarily the commit that changed VERSION.
   push:
     branches:
       - main
@@ -126,38 +128,18 @@ jobs:
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
           echo "notes_file=${notes_file}" >> "${GITHUB_OUTPUT}"
 
-      - name: Detect NuGet lock files
-        id: nuget-locks
-        shell: bash
-        run: |
-          set -euo pipefail
-          if find . -name packages.lock.json -not -path "*/bin/*" -not -path "*/obj/*" | grep -q .; then
-            echo "found=true" >> "${GITHUB_OUTPUT}"
-          else
-            echo "found=false" >> "${GITHUB_OUTPUT}"
-          fi
-
-      - name: Setup .NET with NuGet cache
-        if: steps.nuget-locks.outputs.found == 'true'
+      # Locked restore is the only path. Directory.Build.props sets RestorePackagesWithLockFile,
+      # every project commits a packages.lock.json, and a missing or stale one must fail the
+      # release rather than silently resolve a different graph.
+      - name: Setup .NET
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: 10.0.x
           cache: true
           cache-dependency-path: '**/packages.lock.json'
 
-      - name: Setup .NET
-        if: steps.nuget-locks.outputs.found != 'true'
-        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
-        with:
-          dotnet-version: 10.0.x
-
-      - name: Restore locked dependencies
-        if: steps.nuget-locks.outputs.found == 'true'
+      - name: Restore
         run: dotnet restore IncidentCompass.slnx --locked-mode
-
-      - name: Restore dependencies
-        if: steps.nuget-locks.outputs.found != 'true'
-        run: dotnet restore IncidentCompass.slnx
 
       - name: Build
         run: dotnet build IncidentCompass.slnx --configuration Release --no-restore
@@ -168,6 +150,10 @@ jobs:
       - name: Code organization gate
         shell: pwsh
         run: ./scripts/code-organization-gate.ps1
+
+      - name: Internal reference gate
+        shell: pwsh
+        run: ./scripts/internal-reference-gate.ps1
 
       - name: Vulnerability scan
         shell: pwsh

@@ -2,7 +2,7 @@ using IncidentCompass.Application.Governance.PostReportActions;
 
 namespace IncidentCompass.Worker;
 
-public sealed partial class PostReportActionEvaluationLeaseRenewer(
+internal sealed partial class PostReportActionEvaluationLeaseRenewer(
     ILogger<PostReportActionEvaluationLeaseRenewer> logger)
 {
     private static readonly TimeSpan MinimumRenewalInterval = TimeSpan.FromMilliseconds(100);

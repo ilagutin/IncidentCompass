@@ -2,11 +2,11 @@ using IncidentCompass.Application.Governance.ActionApprovals;
 
 namespace IncidentCompass.Worker;
 
-public sealed class WorkerActionPump(
+internal sealed class WorkerActionPump(
     IServiceScopeFactory serviceScopeFactory,
     ILogger<WorkerActionPump> logger)
 {
-    private readonly WorkerActionTaskSet activeActions = new(logger);
+    private readonly ClaimedTaskSet activeActions = WorkerActionTaskSet.Create(logger);
 
     public int ActiveActionCount => activeActions.Count;
 

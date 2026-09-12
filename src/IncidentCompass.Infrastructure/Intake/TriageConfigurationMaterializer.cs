@@ -6,6 +6,8 @@ namespace IncidentCompass.Infrastructure.Intake;
 
 internal sealed class TriageConfigurationMaterializer(TriageConfigurationLoadValidator validator)
 {
+    private static readonly JsonSerializerOptions SerializerOptions = CreateSerializerOptions();
+
     public TriageConfiguration Materialize(
         string configHash,
         JsonNode configNode,
@@ -40,13 +42,54 @@ internal sealed class TriageConfigurationMaterializer(TriageConfigurationLoadVal
         try
         {
             using var document = JsonDocument.Parse(configNode.ToJsonString());
-            return JsonSerializer.Deserialize<SerializedTriageConfiguration>(document.RootElement)!
+            return JsonSerializer.Deserialize<SerializedTriageConfiguration>(document.RootElement, SerializerOptions)!
                 ?? throw TriageConfigurationLoadException.InvalidJson("triage configuration", new JsonException("Empty document."));
+        }
+        catch (JsonException exception)
+            when (TryDescribeRejectedReasoning(exception, out var settingName, out var configuredValue))
+        {
+            throw TriageConfigurationLoadException.InvalidSetting(
+                settingName,
+                configuredValue,
+                "one of: off, low, medium, high");
         }
         catch (JsonException exception)
         {
             throw TriageConfigurationLoadException.InvalidJson("triage configuration", exception);
         }
+    }
+
+    /// <summary>
+    /// Recovers the setting path and the operator-authored value from a reasoning token that
+    /// <see cref="AiReasoningLevelJsonConverter"/> rejected, so the load failure names the value
+    /// that was actually configured instead of a placeholder.
+    /// </summary>
+    private static bool TryDescribeRejectedReasoning(
+        JsonException exception,
+        out string settingName,
+        out string configuredValue)
+    {
+        settingName = string.Empty;
+        configuredValue = string.Empty;
+
+        if (exception.Path is not { } path ||
+            !path.StartsWith("$.", StringComparison.Ordinal) ||
+            !path.EndsWith(".Reasoning", StringComparison.Ordinal) ||
+            exception.Data[AiReasoningLevelJsonConverter.ConfiguredValueKey] is not string rejectedValue)
+        {
+            return false;
+        }
+
+        settingName = path[2..];
+        configuredValue = rejectedValue;
+        return true;
+    }
+
+    private static JsonSerializerOptions CreateSerializerOptions()
+    {
+        var options = new JsonSerializerOptions();
+        options.Converters.Add(new AiReasoningLevelJsonConverter());
+        return options;
     }
 
     private static Dictionary<string, T> RequireDictionary<T>(

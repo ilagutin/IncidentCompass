@@ -1,0 +1,56 @@
+{
+  "$schema": "../../config/incidentcompass.schema.json",
+  "Providers": {
+    "local-oai": { "Kind": "OpenAICompatible", "Endpoint": "${INCIDENTCOMPASS_LLM_BASE_URL:-http://localhost:1234}", "ApiKeySecretRef": "INCIDENTCOMPASS_LLM_API_KEY" }
+  },
+  "Routes": {
+    "analysis-chat": { "Kind": "Chat", "ProviderId": "local-oai", "Model": "${INCIDENTCOMPASS_LLM_MODEL:-local-model}", "Temperature": 0.1, "MaxOutputTokens": 8000, "ContextWindowTokens": 8192 },
+    "report-chat":   { "Kind": "Chat", "ProviderId": "local-oai", "Model": "${INCIDENTCOMPASS_LLM_MODEL:-local-model}", "Temperature": 0.2, "MaxOutputTokens": 8000, "ContextWindowTokens": 8192 },
+    "memory-embed":  { "Kind": "Embedding", "ProviderId": "local-oai", "Model": "${INCIDENTCOMPASS_EMBEDDINGS_MODEL:-local-embedding-model}" }
+  },
+  "Orchestrator": {
+    "Instructions": "ref:../../config/instructions/orchestrator.md",
+    "RouteId": "report-chat",
+    "Tools": ["delegate", "publish_report"],
+    "Budget": { "MaxWorkers": 6, "MaxTokens": 200000, "MaxWallClockSeconds": 600, "MaxReprompts": 2 }
+  },
+  "Roles": {
+    "analysis": { "RouteId": "analysis-chat", "Instructions": "ref:../../config/instructions/analysis.md", "Tools": [], "OutputSchema": "ref:../../config/schemas/analysis.json" },
+    "memory":   { "RouteId": "analysis-chat", "Instructions": "ref:../../config/instructions/memory.md", "Tools": ["memory_search"], "OutputSchema": "ref:../../config/schemas/memory.json" },
+    "source":   { "RouteId": "analysis-chat", "Instructions": "ref:../../config/instructions/source.md", "Tools": ["source_lookup"], "OutputSchema": "ref:../../config/schemas/source.json" },
+    "tickets":  { "RouteId": "analysis-chat", "Instructions": "ref:../../config/instructions/tickets.md", "Tools": ["ticket_search"], "OutputSchema": "ref:../../config/schemas/tickets.json" }
+  },
+  "Tools": {
+    "memory_search": { "Kind": "internal", "EmbeddingRouteId": "memory-embed", "TopK": 5, "MinScore": 0.25 },
+    "source_lookup": { "Kind": "internal" },
+    "ticket_search": { "Kind": "internal" },
+    "ticket_create": { "Kind": "external_action", "Category": "ticket_create", "LogicalTargetId": "ticket:configured-repository", "Mode": "disabled" },
+    "remediation_diff": { "Kind": "external_action", "Category": "code_write", "LogicalTargetId": "source:configured-workspace", "Mode": "disabled" },
+    "remediation_apply": { "Kind": "external_action", "Category": "code_write", "LogicalTargetId": "source:configured-workspace", "Mode": "disabled" },
+    "branch_push": { "Kind": "external_action", "Category": "branch_push", "LogicalTargetId": "code:configured-repository", "Mode": "disabled" },
+    "pr_create": { "Kind": "external_action", "Category": "pr_create", "LogicalTargetId": "code:configured-repository", "Mode": "disabled" },
+    "ticket_backlink": { "Kind": "external_action", "Category": "ticket_update", "LogicalTargetId": "ticket:configured-repository", "Mode": "disabled" }
+  },
+  "Rules": [
+    { "Type": "rate_cap", "Tool": "*", "Scope": "attempt", "Max": 50 }
+  ],
+  "Actions": { "AllowedTools": [], "DefaultMode": "disabled", "RequireApprovalForAll": false, "ApprovalTtlMinutes": 60, "NotificationRoutes": [] },
+  "Ingestion": { "DefaultTenant": "local", "AllowedSources": ["otel", "user", "tester", "manual"], "Otel": { "ErrorsOnly": true, "ServiceAllowList": [], "SeverityAllowList": [] } },
+  "Redaction": {
+    "AttributeKeys": ["http.request.header.authorization", "db.connection_string", "customer.account.id"],
+    "Patterns": [
+      { "Name": "email", "Pattern": "\\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}\\b", "Replacement": "[REDACTED_EMAIL]", "IgnoreCase": true }
+    ],
+    "UserIdentifierAttributes": ["user.id", "enduser.id", "user.email"]
+  },
+  "FaultGrouping": {
+    "LookbackMinutes": 15,
+    "SilenceWindowMinutes": 30,
+    "FingerprintVersion": 1,
+    "FingerprintRules": [],
+    "SuppressionRules": [],
+    "Recurrence": { "EscalateAfterCount": 3 },
+    "MassIssue": { "MinNeighborCount": 5, "MinFingerprintStrength": "strong" }
+  },
+  "CurrentReleases": { "checkout-api": "0.2" }
+}

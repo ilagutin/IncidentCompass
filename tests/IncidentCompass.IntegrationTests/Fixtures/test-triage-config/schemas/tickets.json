@@ -5,7 +5,7 @@
   "properties": {
     "matched": { "type": "boolean" },
     "items": { "type": "array" },
-    "noMatchReason": { "type": ["string", "null"] }
+    "noMatchReason": { "type": "string" }
   },
   "required": ["matched", "items"]
 }

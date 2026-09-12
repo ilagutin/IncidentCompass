@@ -1,0 +1,61 @@
+{
+  "$schema": "../../../../config/incidentcompass.schema.json",
+  "Providers": {
+    "local-oai": { "Kind": "OpenAICompatible", "Endpoint": "http://localhost:1234/v1", "ApiKeySecretRef": "LOCAL_OAI_KEY" }
+  },
+  "Routes": {
+    "analysis-chat": { "Kind": "Chat", "ProviderId": "local-oai", "Model": "local-model", "Temperature": 0.1, "MaxOutputTokens": 2000, "ContextWindowTokens": 8192 },
+    "report-chat":   { "Kind": "Chat", "ProviderId": "local-oai", "Model": "local-model", "Temperature": 0.2, "MaxOutputTokens": 8000, "ContextWindowTokens": 8192 },
+    "memory-embed":  { "Kind": "Embedding", "ProviderId": "local-oai", "Model": "mock-memory-embedding-v1" }
+  },
+  "Orchestrator": {
+    "Instructions": "ref:instructions/orchestrator.md",
+    "RouteId": "report-chat",
+    "Tools": ["delegate", "publish_report"],
+    "Budget": { "MaxWorkers": 6, "MaxTokens": 200000, "MaxWallClockSeconds": 120, "MaxReprompts": 2 }
+  },
+  "Roles": {
+    "analysis": { "RouteId": "analysis-chat", "Instructions": "ref:instructions/analysis.md", "Tools": [],                "OutputSchema": "ref:schemas/analysis.json" },
+    "memory":   { "RouteId": "analysis-chat", "Instructions": "ref:instructions/memory.md",   "Tools": ["memory_search"], "OutputSchema": "ref:schemas/memory.json" },
+    "source":   { "RouteId": "analysis-chat", "Instructions": "ref:instructions/source.md",   "Tools": ["source_lookup"], "OutputSchema": "ref:schemas/source.json" },
+    "tickets":  { "RouteId": "analysis-chat", "Instructions": "ref:instructions/tickets.md",  "Tools": ["ticket_search"], "OutputSchema": "ref:schemas/tickets.json" }
+  },
+  "Tools": {
+    "memory_search": { "Kind": "internal", "EmbeddingRouteId": "memory-embed", "TopK": 5, "MinScore": 0.25 },
+    "source_lookup": { "Kind": "internal" },
+    "ticket_search": { "Kind": "internal" },
+    "ticket_update": { "Kind": "external_action", "Category": "ticket_update", "LogicalTargetId": "ticket:configured-repository", "Mode": "live" },
+    "ticket_create": { "Kind": "external_action", "Category": "ticket_create", "LogicalTargetId": "ticket:configured-repository", "Mode": "live" },
+    "remediation_diff": { "Kind": "external_action", "Category": "code_write", "LogicalTargetId": "source:configured-workspace", "Mode": "live" },
+    "remediation_apply": { "Kind": "external_action", "Category": "code_write", "LogicalTargetId": "source:configured-workspace", "Mode": "live" },
+    "branch_push": { "Kind": "external_action", "Category": "branch_push", "LogicalTargetId": "code:configured-repository", "Mode": "live" },
+    "pr_create": { "Kind": "external_action", "Category": "pr_create", "LogicalTargetId": "code:configured-repository", "Mode": "live" },
+    "ticket_backlink": { "Kind": "external_action", "Category": "ticket_update", "LogicalTargetId": "ticket:configured-repository", "Mode": "live" }
+  },
+  "Rules": [
+    { "Type": "rate_cap", "Tool": "*", "Scope": "attempt", "Max": 50 }
+  ],
+  "Actions": {
+    "AllowedTools": ["ticket_update", "ticket_create", "remediation_diff", "remediation_apply", "branch_push", "pr_create", "ticket_backlink"],
+    "DefaultMode": "live",
+    "RequireApprovalForAll": false,
+    "ApprovalTtlMinutes": 60,
+    "NotificationRoutes": []
+  },
+  "Ingestion": { "DefaultTenant": "local", "AllowedSources": ["otel", "user", "tester", "manual"] },
+  "Redaction": {
+    "AttributeKeys": [],
+    "Patterns": [],
+    "UserIdentifierAttributes": []
+  },
+  "FaultGrouping": {
+    "LookbackMinutes": 15,
+    "SilenceWindowMinutes": 1,
+    "FingerprintVersion": 1,
+    "FingerprintRules": [],
+    "SuppressionRules": [],
+    "Recurrence": { "EscalateAfterCount": 2 },
+    "MassIssue": { "MinNeighborCount": 5, "MinFingerprintStrength": "strong" }
+  },
+  "CurrentReleases": { "checkout": "2026.09.11.1" }
+}

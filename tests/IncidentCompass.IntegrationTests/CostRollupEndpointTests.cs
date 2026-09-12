@@ -149,9 +149,10 @@ public sealed class CostRollupEndpointTests(PostgresRepositoryFixture postgres)
         await ActionApprovalTestSupport.ExecuteAsync(connectionString, """
             INSERT INTO incidentcompass.ai_model_pricing (
                 id, provider, model, currency, input_token_price_per_million,
-                output_token_price_per_million, effective_from_utc, effective_to_utc)
+                output_token_price_per_million, effective_from_utc, effective_to_utc,
+                administered_by)
             VALUES (@id, 'private-provider', 'private-model', 'USD', 1, 2,
-                '2026-08-03T00:00:00Z', '2026-08-04T00:00:00Z');
+                '2026-08-03T00:00:00Z', '2026-08-04T00:00:00Z', 'test:cost-rollup-endpoint');
             """, ("id", Guid.NewGuid()));
 
     private static Task SeedCallAsync(
@@ -172,12 +173,13 @@ public sealed class CostRollupEndpointTests(PostgresRepositoryFixture postgres)
             {
                 kind = "orchestrator",
                 routeId = "safe-private-route",
-                provider = "private-provider",
+                provider = "openai-compatible",
                 model = "private-model",
                 usageSource = "provider",
                 inputTokens = input,
                 outputTokens = output,
-                totalTokens = total
+                totalTokens = total,
+                providerId = "private-provider"
             })));
 
     private static void AssertHour(string body, long input, long output, long total, decimal amount)
@@ -190,6 +192,11 @@ public sealed class CostRollupEndpointTests(PostgresRepositoryFixture postgres)
         Assert.Equal(total, hour.GetProperty("totalTokens").GetInt64());
         Assert.Equal(1, hour.GetProperty("pricedCallCount").GetInt64());
         Assert.Equal(0, hour.GetProperty("unpricedCallCount").GetInt64());
+
+        // The spend above is provider-reported throughout, and the response says so rather than
+        // leaving a reader to assume it.
+        Assert.Equal(0, hour.GetProperty("estimatedUsageCallCount").GetInt64());
+        Assert.Equal(0, hour.GetProperty("estimatedUsageTotalTokens").GetInt64());
         var spend = Assert.Single(hour.GetProperty("spendTotals").EnumerateArray());
         Assert.Equal("USD", spend.GetProperty("currency").GetString());
         Assert.Equal(amount, spend.GetProperty("amount").GetDecimal());

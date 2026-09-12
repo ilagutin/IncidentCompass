@@ -19,6 +19,7 @@ internal sealed partial class WorkerToolCallExecutor(
     ToolRuleEngine ruleEngine,
     TriageLedgerAppender ledgerAppender,
     ITriageToolResultCommitter toolResultCommitter,
+    TimeProvider timeProvider,
     IRuntimeTelemetry? telemetry = null,
     ILogger<WorkerToolCallExecutor>? logger = null)
 {
@@ -105,13 +106,27 @@ internal sealed partial class WorkerToolCallExecutor(
             cancellationToken);
         if (execution.Status == ToolExecutionStatus.Succeeded)
         {
-            await CommitSucceededAsync(job, roleName, toolCall.Name, execution.Output, execution.Artifacts, cancellationToken);
+            // Redaction happens once, here, for both surfaces the connector text reaches: the tool
+            // message this turn returns to the model and every durable artifact the commit writes.
+            // A tool cannot do this itself - it hands back drafts, not artifacts - so a new tool
+            // cannot forget it.
+            var redactedOutput = RedactedToolArtifactFactory.RedactOutput(
+                execution.Output,
+                configuration.Redaction);
+            await CommitSucceededAsync(
+                job, configuration, roleName, toolCall.Name, redactedOutput, execution.Artifacts, cancellationToken);
             telemetry?.RecordToolCall(RuntimeTelemetryOutcome.Succeeded);
             LogWorkerToolExecuted(logger, job.Id, job.Attempt, roleName, toolCall.Name);
-            return execution.Output.GetRawText();
+            return redactedOutput.Output.GetRawText();
         }
 
-        var errorReason = execution.ErrorMessage ?? "Tool execution failed.";
+        // The failure path reaches the same two surfaces the success path does - this turn's tool
+        // message and durable ledger state - so the message a tool failed with is redacted on the way
+        // out too. Nothing shipped builds it from connector text, and this is what keeps that from
+        // being something a new tool can quietly change.
+        var errorReason = RedactedToolArtifactFactory.RedactReason(
+            execution.ErrorMessage ?? "Tool execution failed.",
+            configuration.Redaction);
         await AppendExecutedToolFailureAsync(job, roleName, toolCall.Name, execution.Status.ToString(), errorReason, cancellationToken);
         telemetry?.RecordToolCall(RuntimeTelemetryOutcome.Failed);
         LogWorkerToolExecutionFailed(
@@ -136,16 +151,20 @@ internal sealed partial class WorkerToolCallExecutor(
     {
         if (tool is null)
         {
-            LogWorkerToolDenied(logger, job.Id, job.Attempt, roleName, toolCall.Name, "tool_not_registered");
-            return ToolRulePolicyResult.Denied("tool_not_registered");
+            LogWorkerToolDenied(
+                logger, job.Id, job.Attempt, roleName, toolCall.Name, ToolPolicyDenialReasons.ToolNotRegistered);
+            return ToolRulePolicyResult.Denied(ToolPolicyDenialReasons.ToolNotRegistered);
         }
 
         if (validation is null || !validation.IsValid)
         {
             // The validator message can echo model-supplied arguments, so only the bounded
-            // classification token reaches the log; the full reason stays in the durable ledger.
-            LogWorkerToolDenied(logger, job.Id, job.Attempt, roleName, toolCall.Name, "tool_arguments_invalid");
-            return ToolRulePolicyResult.Denied(validation?.ErrorMessage ?? "tool_arguments_invalid");
+            // classification token reaches the log; the full reason stays in the durable ledger, where
+            // it is the detail behind the same reason code the log records.
+            LogWorkerToolDenied(
+                logger, job.Id, job.Attempt, roleName, toolCall.Name, ToolPolicyDenialReasons.ToolArgumentsInvalid);
+            return ToolRulePolicyResult.Denied(
+                ToolPolicyDenialReasons.ToolArgumentsInvalid, validation?.ErrorMessage);
         }
 
         return await ruleEngine.DecideImmediateAsync(job, configuration, roleName, toolCall.Name, cancellationToken);
@@ -153,21 +172,27 @@ internal sealed partial class WorkerToolCallExecutor(
 
     private async Task CommitSucceededAsync(
         TriageJob job,
+        TriageConfiguration configuration,
         string roleName,
         string toolName,
-        JsonElement output,
-        IReadOnlyCollection<TriageArtifact>? artifacts,
+        RedactedToolOutput redactedOutput,
+        IReadOnlyCollection<ToolArtifactDraft>? drafts,
         CancellationToken cancellationToken)
     {
-        var canonicalPayload = CanonicalJsonSerializer.Canonicalize(JsonNode.Parse(output.GetRawText())!);
+        var createdAtUtc = timeProvider.GetUtcNow();
+        var artifacts = (drafts ?? [])
+            .Select(draft => RedactedToolArtifactFactory.Create(job, draft, configuration.Redaction, createdAtUtc))
+            .ToArray();
+        var canonicalPayload = CanonicalJsonSerializer.Canonicalize(JsonNode.Parse(redactedOutput.Output.GetRawText())!);
         await toolResultCommitter.CommitSucceededAsync(
             new TriageToolResultCommitRequest(
                 job,
                 roleName,
                 toolName,
-                output,
+                redactedOutput.Output,
                 CanonicalJsonSerializer.ComputeSha256Hex(canonicalPayload),
                 "Tool completed successfully.",
+                redactedOutput.RedactionApplied,
                 artifacts),
             cancellationToken);
     }

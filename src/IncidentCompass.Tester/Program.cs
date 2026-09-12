@@ -1,4 +1,26 @@
 using IncidentCompass.Tester;
+using IncidentCompass.Tester.Evaluation;
+
+if (args.Contains("--evaluation", StringComparer.OrdinalIgnoreCase))
+{
+    var evaluationOptions = EvaluationOptions.Parse(args);
+    using var evaluationCancellation = new EvaluationCancellationSource();
+    using var evaluationClient = new HttpClient
+    {
+        BaseAddress = evaluationOptions.BaseUrl,
+        Timeout = evaluationOptions.RequestTimeout
+    };
+    try
+    {
+        return await new EvaluationRunner(evaluationClient, evaluationOptions)
+            .RunAsync(evaluationCancellation.Token);
+    }
+    catch (OperationCanceledException) when (evaluationCancellation.Token.IsCancellationRequested)
+    {
+        Console.Error.WriteLine("Evaluation cancelled after retaining the latest bounded checkpoint.");
+        return 130;
+    }
+}
 
 var options = TesterOptions.Parse(
     args,

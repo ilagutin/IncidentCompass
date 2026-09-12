@@ -1,4 +1,4 @@
--- Phase 2 durable triage ledger. Events are appended as they occur; ordering is assigned by
+-- Durable triage ledger. Events are appended as they occur; ordering is assigned by
 -- PostgreSQL identity, never by application-side MAX(id)+1 logic.
 
 CREATE TABLE IF NOT EXISTS incidentcompass.triage_ledger (

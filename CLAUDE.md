@@ -1,4 +1,4 @@
-# AGENTS.md
+# Agent Operating Contract
 
 Treat this file as the operating contract for future coding agents and human maintainers.
 
@@ -28,24 +28,51 @@ Before making non-trivial changes, read the relevant public docs:
 - Keep the solution a layered monolith (a single `Application` project with feature folders; layer
   boundaries are by convention + `ArchitectureTests`, not enforced module assemblies).
 - `Domain` must not depend on `Application`, `Infrastructure`, `Api`, `Worker`, provider SDKs or persistence libraries.
-- `Application` is a single project with populated feature folders: `Core/`, `Intake/`,
-  `Investigation/`, `Memory/` and `Governance/`.
+- `Application` is a single project with populated feature folders: `Core/`, `Governance/`,
+  `Intake/`, `Investigation/`, `Memory/`, `Notifications/`, `Observability/`, `Remediation/`,
+  `SourceContext/` and `Tickets/`. `ArchitectureTests` enforces exactly this list; adding a folder
+  means changing both.
 - `Core/` holds the dispatcher, identity/correlation, model/embedding gateway abstractions and shared options.
 - `Intake/` holds source normalization, redaction, fingerprinting, fault grouping, triage-job creation and grounded intake artifacts.
+  `Intake/Configuration/` also holds the deserialized triage-configuration model for the whole system:
+  provider, route, role, tool, rule and orchestrator-budget settings. Every feature that needs triage
+  configuration reads it from there. That location is historical, not a claim that those settings are
+  intake-specific.
 - `Investigation/` holds Worker job orchestration, config rehydration, bounded model calls, delegation,
   worker-tool execution and grounded report publication contracts.
 - `Memory/` holds incident-memory contracts and the governed `memory_search` tool.
+- `Remediation/` holds the post-report remediation pass: the bounded model request that asks for a
+  unified diff over a grounded report and its cited source evidence, the disposable-workspace port
+  that names a base tree and applies one candidate diff to a copy of it, and the durable exact-diff
+  record. The model call runs on `Investigation/`'s bounded caller under its own call kind rather
+  than on a second set of rails, so admission, the provider deadline, ledger accounting and route
+  fail-over stay in one place. Nothing here executes a test or starts a process, and the record says
+  so.
 - `Governance/` holds live triage-ledger contracts, worker-tool contracts and validation primitives.
   `ToolRuleEngine` is the single tool-policy decision path shared by immediate Worker reads and
   backend-owned post-report action proposals.
+- `Notifications/`, `SourceContext/` and `Tickets/` are top-level feature folders that own different
+  pieces: `Notifications/` holds route selection, the Worker-owned workflow and the non-secret
+  `telegram_notify` action descriptor, with no port interface and no worker tool; `SourceContext/`
+  holds the `ISourceContextLookup` port and the governed `source_lookup` worker tool, with no action
+  descriptor; `Tickets/` holds provider-neutral ports, the governed `ticket_search` worker tool and
+  the non-secret `ticket_create` action descriptor. They sit beside `Governance/` rather than inside
+  it: `Governance/Tools/` owns the shared tool contract and the single rule engine, not any
+  feature's own tool or descriptor.
+- `Observability/` holds the tenant-scoped model-cost rollup read model and its persistence port.
 - `Infrastructure` implements PostgreSQL persistence, configuration loading, model/embedding clients,
   incident memory and other Application ports.
 - Live model observability uses structured application logs plus durable `ModelCall` and `BudgetEvent`
   entries in the triage ledger. Full rendered prompt/body logging remains disabled.
 - `Api` maps HTTP input/output, OpenAPI metadata and foreground user context only.
-- `Worker` runs the database-backed claim loop and governed investigation processing, composing only
-  `Application` and `Infrastructure`.
-- Hosts compose `AddApplication` + `AddInfrastructure` (+ `AddApi`/`AddWorker`) rather than per-feature registration.
+- `Worker` runs the database-backed claim loop, governed investigation processing and the periodic
+  data-retention pass, composing only `Application` and `Infrastructure`. It owns when a scheduled
+  pass happens; `Application` owns what the pass does.
+- `Tester` is an HTTP-only demo and evaluation driver with no project references. It speaks to the API
+  as a black box, so it deliberately declares its own copies of Domain and Application concepts, such
+  as `EvaluationJobStatus` and `EvaluationModelCallMetadata`, instead of sharing types.
+- Hosts compose four registrations: `AddApplication` + `AddInfrastructure` + `AddPostgresMigrations`
+  (+ `AddApi`/`AddWorker`) rather than per-feature registration.
 - Provider-specific DTOs, HTTP details, SQL details and SDK concepts must not leak into Application or Domain contracts.
 
 ## Current Design Decisions
@@ -116,6 +143,7 @@ dotnet test --solution IncidentCompass.slnx
 dotnet format IncidentCompass.slnx --verify-no-changes --verbosity minimal
 powershell -ExecutionPolicy Bypass -File scripts\package-vulnerability-gate.ps1
 powershell -ExecutionPolicy Bypass -File scripts\code-organization-gate.ps1
+powershell -ExecutionPolicy Bypass -File scripts\internal-reference-gate.ps1
 ```
 
 After changing a package version in `Directory.Packages.props`, regenerate every lock file with

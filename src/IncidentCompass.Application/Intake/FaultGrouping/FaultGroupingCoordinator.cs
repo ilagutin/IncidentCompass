@@ -35,6 +35,7 @@ public sealed class FaultGroupingCoordinator(
             }
         }
     }
+
     private async Task<FaultGroupingOutcome> ResolveCoreAsync(
         Signal draftSignal,
         TriageConfiguration configuration,
@@ -80,6 +81,7 @@ public sealed class FaultGroupingCoordinator(
         }
         return await CreateNewFaultAsync(draftSignal, closedFault?.Id, configuration, now, cancellationToken);
     }
+
     private async Task<FaultGroupingOutcome> AttachToOpenFaultAsync(
         Signal draftSignal,
         Fault openFault,
@@ -100,6 +102,7 @@ public sealed class FaultGroupingCoordinator(
             },
             cancellationToken);
     }
+
     private async Task<Fault> LockOpenFaultAsync(Guid faultId, CancellationToken cancellationToken) =>
         (await faultRepository.FindByIdForUpdateAsync(faultId, cancellationToken)) is { Status: FaultStatus.Queued or FaultStatus.Analyzing } currentFault
             ? currentFault : throw new FaultGroupingStateChangedException(faultId);
@@ -177,6 +180,7 @@ public sealed class FaultGroupingCoordinator(
 
         return new FaultGroupingOutcome(fault, job, IsNewFault: true, IsNewJob: true, IsSuppressed: false);
     }
+
     private async Task<Fault> AttachToRaceWinnerAsync(
         Signal draftSignal,
         TriageConfiguration configuration,

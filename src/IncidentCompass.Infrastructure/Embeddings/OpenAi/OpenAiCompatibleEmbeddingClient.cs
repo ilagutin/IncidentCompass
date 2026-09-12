@@ -1,17 +1,19 @@
 using IncidentCompass.Application.Core.Embeddings;
 using IncidentCompass.Infrastructure.Configuration;
+using IncidentCompass.Infrastructure.OpenAiCompatible;
 using Microsoft.Extensions.Options;
 
 namespace IncidentCompass.Infrastructure.Embeddings.OpenAi;
 
 internal sealed class OpenAiCompatibleEmbeddingClient(
     HttpClient httpClient,
-    IOptions<OpenAiCompatibleEmbeddingClientOptions> options)
+    IOptions<OpenAiCompatibleEmbeddingClientOptions> options,
+    OpenAiCompatibleProviderProfileResolver providerProfileResolver)
     : IEmbeddingClient
 {
     private readonly OpenAiEmbeddingExecutor executor = new(
         httpClient,
-        new OpenAiEmbeddingOptionsResolver(options),
+        new OpenAiEmbeddingOptionsResolver(options, providerProfileResolver),
         new OpenAiEmbeddingRequestFactory(),
         new OpenAiEmbeddingResponseMapper(),
         new OpenAiEmbeddingErrorMapper(),

@@ -15,7 +15,7 @@ public interface IAiModelClient
     /// Completes a chat request through the configured model provider.
     /// </summary>
     /// <remarks>
-    /// Implementations must not log rendered prompt text, tool arguments containing user data, provider credentials or raw provider responses unless a separate redaction and opt-in policy owns that logging.
+    /// Implementations must not log rendered prompt text, tool arguments containing user data, provider credentials or raw provider responses. There is no opt-in that relaxes this: the guarantee is that an implementation has no output sink at all, which <c>ModelGatewayLoggingGuardTests</c> asserts over the directories holding this contract and its adapters. See the Logging section of <c>docs/security-model.md</c>.
     /// If a provider returns usage metadata, implementations must preserve it in the response without inventing token counts.
     /// </remarks>
     Task<AiModelResponse> CompleteAsync(

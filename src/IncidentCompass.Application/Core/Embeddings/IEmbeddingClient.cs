@@ -6,7 +6,7 @@ namespace IncidentCompass.Application.Core.Embeddings;
 /// <remarks>
 /// Implementations must be safe to use from multiple concurrent request scopes and must not retain mutable request state between calls.
 /// Provider SDK, HTTP and serialization failures must be normalized to application-level provider exceptions before crossing this boundary.
-/// Implementations must not log input text, provider credentials, raw embedding vectors or full provider responses.
+/// Implementations must not log input text, provider credentials, raw embedding vectors or full provider responses. As with <see cref="ModelClients.IAiModelClient" />, that is enforced by having no output sink rather than by a setting; <c>ModelGatewayLoggingGuardTests</c> asserts it over this contract's directory and its adapters.
 /// </remarks>
 public interface IEmbeddingClient
 {

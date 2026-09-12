@@ -106,6 +106,7 @@ public sealed class IngestSignalCommandHandler(
             ? $"trace:{signal.TraceId}:span:{signal.SpanId}"
             : null;
     }
+
     private static Signal BuildSignal(
         NormalizedSignal redacted,
         FingerprintResult fingerprint,

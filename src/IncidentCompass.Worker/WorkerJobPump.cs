@@ -5,14 +5,14 @@ using IncidentCompass.Domain.Incidents;
 
 namespace IncidentCompass.Worker;
 
-public sealed partial class WorkerJobPump(
+internal sealed partial class WorkerJobPump(
     IServiceScopeFactory serviceScopeFactory,
     WorkerJobLeaseRenewer leaseRenewer,
     ILogger<WorkerJobPump> logger,
     IProviderOutageTracker? providerOutageTracker = null,
     IRuntimeTelemetry? telemetry = null)
 {
-    private readonly WorkerJobTaskSet activeJobs = new(logger);
+    private readonly ClaimedTaskSet activeJobs = WorkerJobTaskSet.Create(logger);
 
     public int ActiveJobCount => activeJobs.Count;
 

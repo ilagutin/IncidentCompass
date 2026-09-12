@@ -26,8 +26,7 @@ public sealed class MemoryDocumentationStatusTests
         };
         var tool = new MemorySearchTool(
             new StaticEmbeddingClient(),
-            new StaticMemoryRepository(matches),
-            TimeProvider.System);
+            new StaticMemoryRepository(matches));
         var validation = tool.Validate(Arguments("checkout timeout"));
 
         var result = await tool.ExecuteAsync(
@@ -43,13 +42,13 @@ public sealed class MemoryDocumentationStatusTests
             item.GetProperty("targetCurrentRelease").GetString()));
 
         Assert.NotNull(result.Artifacts);
-        var artifacts = result.Artifacts.ToArray();
-        Assert.Equal(4, artifacts.Length);
+        var drafts = result.Artifacts.ToArray();
+        Assert.Equal(4, drafts.Length);
         Assert.Equal(ExpectedDocumentationStatuses,
-            artifacts.Select(static artifact => artifact.RedactedPayload.GetProperty("documentationStatus").GetString()));
-        Assert.All(artifacts, artifact => Assert.Equal(
+            drafts.Select(static draft => draft.Payload["documentationStatus"]!.GetValue<string>()));
+        Assert.All(drafts, draft => Assert.Equal(
             "2026.07.13.2",
-            artifact.RedactedPayload.GetProperty("targetCurrentRelease").GetString()));
+            draft.Payload["targetCurrentRelease"]!.GetValue<string>()));
     }
 
     [Theory]
@@ -174,6 +173,14 @@ public sealed class MemoryDocumentationStatusTests
         }
 
         public Task ReconcileSeedCorpusAsync(MemorySeedCorpus corpus, CancellationToken cancellationToken)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<MemoryCorpusInventory> GetCorpusInventoryAsync(
+            string tenantId,
+            string owner,
+            CancellationToken cancellationToken)
         {
             throw new NotSupportedException();
         }

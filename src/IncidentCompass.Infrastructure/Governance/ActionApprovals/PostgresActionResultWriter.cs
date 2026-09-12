@@ -29,6 +29,13 @@ internal static class PostgresActionResultWriter
             ["resultSummary"] = resultSummary,
             ["failureCode"] = failureCode
         }.ToJsonString();
+
+        // redaction_applied is left unwritten, so the row carries NULL: no redaction pass ran on the
+        // way here. This payload is the dispatched action's own result and backend-derived status
+        // rather than connector text meeting the redactor, and NULL is the column's "no boundary
+        // recorded an outcome" value, which is deliberately not the same claim as false.
+        // ActionResult is also not a citable evidence kind, so no report marker reads this row
+        // today; the reason NULL is correct is the first one, not the second.
         await using var command = new NpgsqlCommand("""
             INSERT INTO incidentcompass.triage_artifacts (
                 id, job_id, attempt, kind, domain_ref, redacted_payload, content_hash, created_at_utc)

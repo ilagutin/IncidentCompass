@@ -1,7 +1,10 @@
 # Quickstart
 
-This guide runs IncidentCompass against OpenAI-compatible model and embedding endpoints. Mock
-providers are reserved for automated tests and explicit `-Mock` checks.
+This is the runnable path. Every command needed to build, configure and run IncidentCompass locally
+is on this page. It runs against OpenAI-compatible model and embedding endpoints; mock providers are
+reserved for automated tests and explicit `-Mock` checks.
+[Local demo walkthrough](local-demo.md) covers what the demo contains and how to read its output,
+and does not repeat these commands.
 
 ## Prerequisites
 
@@ -29,13 +32,11 @@ Run the compose demo:
 powershell -ExecutionPolicy Bypass -File scripts/demo.ps1
 ~~~
 
-The script builds the API, Worker and Tester images, starts PostgreSQL/API/Worker, waits for
-the API health endpoint on its resolved host port, then runs the Tester against the local scenarios. Compose
-health checks also gate API readiness and Worker process startup before the Tester runs. The printed
-table includes FaultId, ReportId, is_mass_issue, Classification, ledger URL, report URL and the check result.
-The fifth scenario parses the exact reviewed injection fixture, waits for its report and fails if a
-bounded readback of that exact fault ledger contains an action proposal, approval decision, dispatch
-start or completion.
+The script builds the API, Worker and Tester images, starts PostgreSQL, the API, the Worker and the
+Collector, waits for the API health endpoint on its resolved host port, then runs the Tester against
+the local scenarios. The printed table includes FaultId, ReportId, is_mass_issue, Classification,
+ledger URL, report URL and the check result. [Local demo walkthrough](local-demo.md) describes the
+service layout, each scenario and what the table means.
 
 Useful variants:
 
@@ -46,11 +47,6 @@ powershell -ExecutionPolicy Bypass -File scripts/demo.ps1 -Mock
 
 `-NoBuild` reuses existing images. `-Mock` adds `compose.mock.yml` and is intended for automated or
 deterministic checks, not for validating the product against an actual model.
-
-The injection row is disabled-policy packaging evidence, not provider-delivery evidence. Tester does
-not call the approval API, enable an action or contact Telegram/GitHub. Mandatory-Docker integration
-coverage separately proves configured-policy and requested-only approval behavior with in-process
-recording handlers and zero external provider calls.
 
 Compose host mappings default to API `5198` and PostgreSQL `5432`. Override collisions in the
 ignored `.env` file without changing container-to-container URLs:
@@ -70,10 +66,34 @@ volume and once with the retained volume. Reset the mock composition only when a
 docker compose -f docker-compose.yml -f compose.mock.yml --profile demo down --volumes
 ~~~
 
+Stop the demo services with:
+
+~~~powershell
+docker compose --profile demo down
+~~~
+
 Host-port overrides do not alter the fixed internal addresses `api:8080`, `postgres:5432` or
-`otel-collector:4318`. The mock override changes only model and embedding providers. GitHub and
-Telegram use fixed production authorities, so their automated doubles are in-process recording
-handlers rather than Compose services or configurable endpoint overrides.
+`otel-collector:4318`. The mock override changes only model and embedding providers.
+
+## How Long A First Run Takes
+
+The numbers below are ceilings, not measurements. This repository does not publish an observed wall
+clock for the real-provider path, because that path is dominated by the speed of the model server
+you point it at.
+
+- Image build and container start come first, and `scripts/demo.ps1` then waits up to 3 minutes for
+  the API health endpoint before failing.
+- The Tester bounds itself at 13 minutes per scenario and 75 minutes for the whole run, which covers
+  the OTLP export plus the five table scenarios.
+- Inside a scenario, one investigation attempt is bounded by the shipped 600-second
+  `Orchestrator.Budget.MaxWallClockSeconds`, and one chat HTTP attempt by the 300-second provider
+  timeout.
+
+`-Mock` swaps in deterministic in-process model and embedding providers, so no model server is
+called and none of the provider latency is present. What remains is image build, PostgreSQL
+initialization and container startup. That makes the mock run the fastest way to see the governed
+path end to end, and the sensible first run when the question is whether the stack is wired
+correctly rather than how a model answers.
 
 ## OTLP Collector Demo
 
@@ -86,13 +106,6 @@ No custom Collector processor synthesizes IncidentCompass fields, and Collector-
 The shipped `Ingestion.Otel` settings default to `ErrorsOnly: true`. Service and severity allow-lists are
 empty by default, meaning they do not filter. Metrics, profiles, compressed payloads and protobuf JSON are
 not accepted by this release.
-
-
-Stop demo services with:
-
-~~~powershell
-docker compose --profile demo down
-~~~
 
 ## Local Configuration
 
@@ -112,8 +125,42 @@ file are the model names used by the Worker investigation loop:
 - `INCIDENTCOMPASS_LLM_MODEL` controls chat routes such as `analysis-chat` and `report-chat`.
 - `INCIDENTCOMPASS_EMBEDDINGS_MODEL` controls the `memory-embed` route used by `memory_search`.
 
-`IncidentCompass__ModelGateway__DefaultModel` is still validated as gateway configuration, but it is
-not the source of truth for triage route calls. The route config is.
+The host `ModelGateway` and `Embeddings` sections configure the provider, the request ceilings and
+the transport. They carry no model name of their own: the route config is the source of truth for
+which model a triage call uses.
+
+The shipped local-safe profile uses these ceilings:
+
+| Setting | Default |
+|---|---|
+| Chat `ModelGateway:OpenAiCompatible:TimeoutSeconds`, per HTTP attempt | 300 seconds |
+| Embedding `Embeddings:OpenAiCompatible:TimeoutSeconds`, per HTTP attempt | 30 seconds |
+| `Orchestrator.Budget.MaxWallClockSeconds`, per investigation attempt | 600 seconds |
+| `analysis-chat` and `report-chat` `MaxOutputTokens`, per call | 8000 each |
+| `analysis-chat` and `report-chat` `ContextWindowTokens` | 8192 each |
+| `Orchestrator.Budget.MaxWorkers` | 6 |
+| `Orchestrator.Budget.MaxTokens` | 200000 |
+| `Orchestrator.Budget.MaxReprompts` | 2 |
+| `Orchestrator.Budget.MaxTurns` | 16 (code default; the shipped config does not set it) |
+
+This is one profile for slower local generation, not a target spend or expected run duration.
+`ContextWindowTokens` limits the backend's estimate of prompt size for a route; it does not reserve
+or subtract the route's output-token allowance.
+The remaining investigation wall clock can cancel a call before its provider timeout. Cloud
+operators can tighten `IncidentCompass__ModelGateway__OpenAiCompatible__TimeoutSeconds` through
+normal host configuration and lower the route and orchestrator ceilings in their triage config.
+Until streaming stall detection is available, allowing longer generation also delays detection of
+a real stall.
+
+Chat routes can optionally include `"Reasoning": "off"`, `"low"`, `"medium"` or `"high"`. If
+the value is absent, no reasoning-specific provider field is sent and existing routes keep their
+current behavior. `MaxOutputTokens` is unchanged: on most servers it remains a limit shared by
+reasoning and the final answer.
+
+A chat route can also name another chat route as its `"FallbackRouteId"`. A call the provider fails
+with an outage or its own timeout is then retried once on that route, inside the same attempt
+deadline and charged for both calls; the shipped routes declare none. See `docs/model-gateway.md`,
+"Route Fallback".
 
 The checked-in config references `config/incidentcompass.schema.json` for editor completion and
 structural feedback. Run the same semantic validator used at startup before launching either host:
@@ -201,6 +248,34 @@ The default is startup-only synchronization. To apply file edits and removals wi
 `IncidentCompass__Memory__Seed__RuntimeResyncIntervalSeconds` value from 1 through 86400. The metadata-only
 status is available at `GET /api/v1/health/memory-sync`. The Worker persists this metadata by the configured memory seed tenant and owner, so the API reports the Worker-persisted synchronization snapshot rather than its own local singleton. It is not a Worker liveness probe. When hosts are configured separately, they must use the same memory seed tenant and owner; the standard Compose file supplies the shared values. Seeding is idempotent for the same owner/source/content hash/version.
 
+### Changing The Embedding Route
+
+A seeded corpus belongs to the embedding route that built it. `memory_search` filters candidates by
+the query embedding's provider, model and dimensions, so changing `INCIDENTCOMPASS_EMBEDDINGS_MODEL`,
+pointing `memory-embed` at a different provider entry, or switching the host between the mock and
+OpenAI-compatible embedding adapters leaves the existing corpus unreachable until it is re-embedded.
+
+Startup does not re-embed it for you. A pass that finds the configured route no longer matches the
+corpus publishes nothing, leaves every previously seeded item active and retrievable under the route
+that built it, and reports `memory_embedding_route_changed` on `GET /api/v1/health/memory-sync` with
+a degraded `memory_seed_sync` health check. `GET /api/v1/health/memory-corpus` shows the configured
+route beside the route the active corpus was built under, with item and chunk counts.
+
+Re-embedding is an explicit operator action on either host, and takes the same memory seed settings
+as seeding does:
+
+~~~powershell
+dotnet run --project src/IncidentCompass.Worker -- memory status
+dotnet run --project src/IncidentCompass.Worker -- memory rebuild
+~~~
+
+`memory status` exits 1 when a rebuild is needed and 0 otherwise. `memory rebuild` re-embeds every
+reviewed file under the configured route and publishes the result as one new generation: it becomes
+current only after every embedding and every database write has succeeded, so a provider failure or
+a cancelled run leaves the previous corpus current and searchable. A rebuild and a concurrent
+startup synchronization serialize on the same owner-scoped corpus lock, and a rebuild never touches
+another seed owner's corpus.
+
 Run the API:
 
 ~~~powershell
@@ -240,6 +315,15 @@ $env:IncidentCompass__ModelGateway__OpenAiCompatible__ChatCompletionsPath = "/v1
 $env:IncidentCompass__ModelGateway__OpenAiCompatible__ApiKey = "local-dev-key"
 $env:IncidentCompass__ModelGateway__OpenAiCompatible__AllowInsecureHttpForLoopback = "true"
 ~~~
+
+To enable reasoning for a logical provider, configure its explicit request protocol under
+`IncidentCompass:ModelGateway:OpenAiCompatible:ReasoningModes`. The map key must match the route's
+`ProviderId`; its value is `Disabled`, `ReasoningEffort` or `ChatTemplateKwargs`. This selection is
+not inferred from the model name. `ReasoningEffort` sends lowercase `reasoning_effort` values, with
+`off` mapped to `none`. `ChatTemplateKwargs` sends
+`chat_template_kwargs.enable_thinking`, mapping `off` to `false` and every enabled level to `true`;
+it does not preserve intensity, and a local server may ignore it. A missing mapping sends no
+reasoning-specific field.
 
 For embeddings:
 

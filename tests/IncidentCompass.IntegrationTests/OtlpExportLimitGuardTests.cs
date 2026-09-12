@@ -7,7 +7,7 @@ using Microsoft.Extensions.Options;
 namespace IncidentCompass.IntegrationTests;
 
 /// <summary>
-/// IC-BL-072: exercises <see cref="OtlpExportLimitGuard" /> directly (it is internal, visible here
+/// exercises <see cref="OtlpExportLimitGuard" /> directly (it is internal, visible here
 /// via InternalsVisibleTo) so the rejection decision and its log event can be asserted without a
 /// database. The rejection log must carry the observed record count and the configured limit, and
 /// must never carry record content, attributes or resource attributes.

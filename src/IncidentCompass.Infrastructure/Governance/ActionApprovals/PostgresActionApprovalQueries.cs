@@ -16,6 +16,16 @@ internal static class PostgresActionApprovalQueries
             ? string.Empty
             : " AND a.external_resource_kind = @external_resource_kind" +
               " AND a.external_resource_id = @external_resource_id";
+        // The fault predicate is the inverse direction of the exact external-resource lookup: it
+        // answers "which external resources did this incident touch" from the same rows that answer
+        // "which incident produced this external resource". Like the external-resource predicate it
+        // is appended only when it is used, because a `@fault_id IS NULL OR ...` form would keep the
+        // planner off `ix_action_approvals_tenant_fault`. Tenant scoping is not part of it: the
+        // `a.tenant_id` predicate below already scopes every shape of this query, so a fault id
+        // belonging to another tenant simply matches nothing.
+        var faultPredicate = filter.FaultId is null
+            ? string.Empty
+            : " AND a.fault_id = @fault_id";
         var sortColumn = filter.ExternalResourceKind is null
             ? "a.created_at_utc"
             : "a.completed_at_utc";
@@ -24,7 +34,7 @@ internal static class PostgresActionApprovalQueries
             FROM incidentcompass.action_approvals a
             WHERE a.tenant_id = @tenant_id
               AND (@status::text IS NULL OR a.state = @status)
-            """ + externalResourcePredicate +
+            """ + externalResourcePredicate + faultPredicate +
             " AND (@before_created::timestamptz IS NULL OR " + sortColumn + " < @before_created" +
             " OR (" + sortColumn + " = @before_created AND a.id < @before_id::uuid))" +
             " ORDER BY " + sortColumn + " DESC, a.id DESC " + """
@@ -36,6 +46,11 @@ internal static class PostgresActionApprovalQueries
         {
             command.AddParameter("external_resource_kind", filter.ExternalResourceKind);
             command.AddParameter("external_resource_id", filter.ExternalResourceId);
+        }
+
+        if (filter.FaultId is not null)
+        {
+            command.AddParameter("fault_id", filter.FaultId.Value);
         }
 
         command.AddParameter("before_created", filter.BeforeCreatedAtUtc);

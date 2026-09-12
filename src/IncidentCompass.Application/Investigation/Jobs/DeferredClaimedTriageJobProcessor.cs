@@ -12,6 +12,6 @@ internal sealed class DeferredClaimedTriageJobProcessor : IClaimedTriageJobProce
         CancellationToken cancellationToken)
     {
         throw new InvalidOperationException(
-            "The governed triage job processor is not wired. AddInfrastructure provides the Phase 2 orchestrator loop.");
+            "The governed triage job processor is not wired. AddInfrastructure provides the orchestrator loop.");
     }
 }

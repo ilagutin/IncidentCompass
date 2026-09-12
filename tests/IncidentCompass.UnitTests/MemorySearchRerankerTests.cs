@@ -3,6 +3,7 @@ using System.Text.Json;
 using IncidentCompass.Application.Core.Embeddings;
 using IncidentCompass.Application.Governance.Tools;
 using IncidentCompass.Application.Intake.Configuration;
+using IncidentCompass.Application.Investigation.Jobs;
 using IncidentCompass.Application.Memory;
 using IncidentCompass.Domain.Incidents;
 
@@ -92,7 +93,7 @@ public sealed class MemorySearchRerankerTests
         var embedding = new CountingEmbeddingClient();
         var repository = new CountingMemoryRepository(
             Enumerable.Range(1, 8).Select(index => Match(index, 0.9)).ToArray());
-        var tool = new MemorySearchTool(embedding, repository, TimeProvider.System);
+        var tool = new MemorySearchTool(embedding, repository);
         var validation = tool.Validate(JsonSerializer.SerializeToElement(new { query = "checkout timeout" }));
 
         var result = await tool.ExecuteAsync(
@@ -107,12 +108,36 @@ public sealed class MemorySearchRerankerTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_MissingEmbeddingRouteFailsClosedBeforeEmbeddingOrMemorySearch()
+    {
+        var embedding = new CountingEmbeddingClient();
+        var repository = new CountingMemoryRepository([]);
+        var tool = new MemorySearchTool(embedding, repository);
+        var configuration = Configuration() with
+        {
+            Routes = new Dictionary<string, TriageRouteSettings>(StringComparer.Ordinal)
+        };
+        var validation = tool.Validate(JsonSerializer.SerializeToElement(new { query = "checkout timeout" }));
+
+        var exception = await Assert.ThrowsAsync<TriageGovernanceDeniedException>(
+            () => tool.ExecuteAsync(
+                Context(configuration),
+                validation.SanitizedArguments,
+                TestContext.Current.CancellationToken));
+
+        Assert.Equal(TriageGovernanceDeniedException.MemorySearchRouteMissingCode, exception.ErrorCode);
+        Assert.Contains("memory-embed", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("Tools.memory_search.EmbeddingRouteId", exception.Message, StringComparison.Ordinal);
+        Assert.Equal(0, embedding.CallCount);
+        Assert.Equal(0, repository.SearchCount);
+    }
+
+    [Fact]
     public void Validate_RejectsCallerOwnedRankingWeightsAndFilters()
     {
         var tool = new MemorySearchTool(
             new CountingEmbeddingClient(),
-            new CountingMemoryRepository([]),
-            TimeProvider.System);
+            new CountingMemoryRepository([]));
 
         var withWeight = tool.Validate(JsonSerializer.SerializeToElement(new
         {
@@ -222,6 +247,11 @@ public sealed class MemorySearchRerankerTests
 
         public Task ReconcileSeedCorpusAsync(
             MemorySeedCorpus corpus,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<MemoryCorpusInventory> GetCorpusInventoryAsync(
+            string tenantId,
+            string owner,
             CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 }

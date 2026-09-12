@@ -1,8 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
+    <!-- Domain arrives transitively through Application, the same way it reaches Api and Worker.
+         Redeclaring it here would be the only place in the solution that names it twice. -->
     <ProjectReference Include="..\IncidentCompass.Application\IncidentCompass.Application.csproj" />
-    <ProjectReference Include="..\IncidentCompass.Domain\IncidentCompass.Domain.csproj" />
   </ItemGroup>
 
   <ItemGroup>
@@ -30,10 +31,8 @@
          resolver; the shared OpenAiCompatible retry policy; PostgresDocumentationFitResolver;
          and PostgresMigrationLedger. Those types stay instantiable because they are composed
          through constructor injection (see docs/model-gateway.md) rather than being static
-         utility classes. The ModelGateway/OpenAi collaborators no longer appear here: IC-BL-075
-         folded OpenAiModelJson, OpenAiModelRetryPolicy, OpenAiModelOptionsResolver and
-         OpenAiModelCompletionExecutor into OpenAiCompatibleModelClient and made the remaining
-         request factory, response mapper and error mapper static. -->
+         utility classes. ModelGateway/OpenAi request factories, response mappers and error
+         mappers are static and do not need this suppression. -->
     <NoWarn>$(NoWarn);CA1822</NoWarn>
   </PropertyGroup>
 

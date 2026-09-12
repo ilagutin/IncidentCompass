@@ -13,6 +13,7 @@ internal sealed class SourceContextOptionsValidator : IValidateOptions<SourceCon
         RequireRange(options.MaxExcerptLines, 1, 100, nameof(options.MaxExcerptLines), failures);
         ValidateExtensions(options.AllowedExtensions, failures);
         ValidateRoots(options.Roots, failures);
+        ValidateWorkspaceRoot(options.WorkspaceRoot, failures);
         return failures.Count == 0 ? ValidateOptionsResult.Success : ValidateOptionsResult.Fail(failures);
     }
 
@@ -31,6 +32,20 @@ internal sealed class SourceContextOptionsValidator : IValidateOptions<SourceCon
             {
                 failures.Add("AllowedExtensions entries must be dot-prefixed file extensions.");
             }
+        }
+    }
+
+    /// <summary>
+    /// An unset workspace root means remediation is off, which is the shipped state and not a
+    /// misconfiguration. A set one must be absolute, for the same reason a monitored root must: a
+    /// relative path resolves against whatever the host's working directory happens to be, and the
+    /// directory copies are written into is not a thing to leave to that.
+    /// </summary>
+    private static void ValidateWorkspaceRoot(string? workspaceRoot, List<string> failures)
+    {
+        if (workspaceRoot is not null && !IsAbsolutePath(workspaceRoot))
+        {
+            failures.Add("WorkspaceRoot must be absolute when it is set.");
         }
     }
 

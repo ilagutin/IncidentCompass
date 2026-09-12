@@ -1,0 +1,114 @@
+name: ${INCIDENTCOMPASS_COMPOSE_PROJECT:?set INCIDENTCOMPASS_COMPOSE_PROJECT}
+
+x-production-environment: &production-environment
+  ConnectionStrings__IncidentCompass: Host=postgres;Port=5432;Database=${POSTGRES_DB:?set POSTGRES_DB};Username=${POSTGRES_USER:?set POSTGRES_USER};Password=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+  IncidentCompass__ConfigSource__Path: /app/config/incidentcompass.config.json
+  IncidentCompass__ModelGateway__Provider: OpenAICompatible
+  IncidentCompass__ModelGateway__OpenAiCompatible__BaseUrl: ${INCIDENTCOMPASS_LLM_BASE_URL:?set INCIDENTCOMPASS_LLM_BASE_URL}
+  IncidentCompass__ModelGateway__OpenAiCompatible__ChatCompletionsPath: ${INCIDENTCOMPASS_LLM_CHAT_COMPLETIONS_PATH:?set INCIDENTCOMPASS_LLM_CHAT_COMPLETIONS_PATH}
+  IncidentCompass__ModelGateway__OpenAiCompatible__ApiKey: ${INCIDENTCOMPASS_LLM_API_KEY:?set INCIDENTCOMPASS_LLM_API_KEY}
+  IncidentCompass__ModelGateway__OpenAiCompatible__AllowInsecureHttpForLoopback: ${INCIDENTCOMPASS_ALLOW_INSECURE_LOOPBACK_PROVIDER:-false}
+  IncidentCompass__Embeddings__Provider: OpenAICompatible
+  IncidentCompass__Embeddings__OpenAiCompatible__BaseUrl: ${INCIDENTCOMPASS_EMBEDDINGS_BASE_URL:?set INCIDENTCOMPASS_EMBEDDINGS_BASE_URL}
+  IncidentCompass__Embeddings__OpenAiCompatible__EmbeddingsPath: ${INCIDENTCOMPASS_EMBEDDINGS_PATH:?set INCIDENTCOMPASS_EMBEDDINGS_PATH}
+  IncidentCompass__Embeddings__OpenAiCompatible__ApiKey: ${INCIDENTCOMPASS_EMBEDDINGS_API_KEY:?set INCIDENTCOMPASS_EMBEDDINGS_API_KEY}
+  IncidentCompass__Embeddings__OpenAiCompatible__AllowInsecureHttpForLoopback: ${INCIDENTCOMPASS_ALLOW_INSECURE_LOOPBACK_PROVIDER:-false}
+  INCIDENTCOMPASS_LLM_BASE_URL: ${INCIDENTCOMPASS_LLM_BASE_URL:?set INCIDENTCOMPASS_LLM_BASE_URL}
+  INCIDENTCOMPASS_LLM_MODEL: ${INCIDENTCOMPASS_LLM_MODEL:?set INCIDENTCOMPASS_LLM_MODEL}
+  INCIDENTCOMPASS_LLM_API_KEY: ${INCIDENTCOMPASS_LLM_API_KEY:?set INCIDENTCOMPASS_LLM_API_KEY}
+  INCIDENTCOMPASS_EMBEDDINGS_MODEL: ${INCIDENTCOMPASS_EMBEDDINGS_MODEL:?set INCIDENTCOMPASS_EMBEDDINGS_MODEL}
+
+x-bounded-logs: &bounded-logs
+  driver: json-file
+  options:
+    max-size: ${INCIDENTCOMPASS_LOG_MAX_SIZE:-10m}
+    max-file: ${INCIDENTCOMPASS_LOG_MAX_FILES:-5}
+
+services:
+  postgres:
+    # docker-compose.yml gives these three names local demo fallbacks, and a service this overlay
+    # does not re-declare keeps them. Redeclaring them here with ':?' means the database server this
+    # file starts can never come up on the demo database name, user or password, whatever the rest
+    # of the file happens to require elsewhere.
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    ports: !override
+      - "127.0.0.1:${IC_POSTGRES_PORT:-5432}:5432"
+    restart: unless-stopped
+    logging: *bounded-logs
+
+  api:
+    image: incidentcompass-api:${INCIDENTCOMPASS_IMAGE_TAG:-local}
+    environment:
+      <<: *production-environment
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_URLS: http://+:8080
+      IncidentCompass__ApiKeyAuth__Enabled: ${INCIDENTCOMPASS_API_KEY_AUTH_ENABLED:?set INCIDENTCOMPASS_API_KEY_AUTH_ENABLED}
+      IncidentCompass__ApiKeyAuth__PermitLimit: ${INCIDENTCOMPASS_API_KEY_PERMIT_LIMIT:-60}
+      IncidentCompass__ApiKeyAuth__WindowSeconds: ${INCIDENTCOMPASS_API_KEY_WINDOW_SECONDS:-60}
+      IncidentCompass__ApiKeyAuth__Credentials__0__KeyId: ${INCIDENTCOMPASS_API_KEY_ID:?set INCIDENTCOMPASS_API_KEY_ID}
+      IncidentCompass__ApiKeyAuth__Credentials__0__TenantId: ${INCIDENTCOMPASS_TENANT_ID:?set INCIDENTCOMPASS_TENANT_ID}
+      IncidentCompass__ApiKeyAuth__Credentials__0__Sha256Digest: ${INCIDENTCOMPASS_API_KEY_SHA256:?set INCIDENTCOMPASS_API_KEY_SHA256}
+      IncidentCompass__DemoAuth__Enabled: "false"
+      IncidentCompass__DemoAuth__AllowInNonDevelopment: "false"
+      IncidentCompass__Memory__Seed__Enabled: "false"
+    ports: !override
+      - "127.0.0.1:${IC_API_PORT:-5198}:8080"
+    restart: unless-stopped
+    logging: *bounded-logs
+
+  worker:
+    image: incidentcompass-worker:${INCIDENTCOMPASS_IMAGE_TAG:-local}
+    environment:
+      <<: *production-environment
+      DOTNET_ENVIRONMENT: Production
+      IncidentCompass__Memory__Seed__Enabled: ${INCIDENTCOMPASS_MEMORY_SEED_ENABLED:-true}
+      IncidentCompass__Memory__Seed__TenantId: ${INCIDENTCOMPASS_TENANT_ID:?set INCIDENTCOMPASS_TENANT_ID}
+      IncidentCompass__Memory__Seed__Owner: ${INCIDENTCOMPASS_MEMORY_SEED_OWNER:-production}
+      IncidentCompass__Memory__Seed__SourceDirectory: /app/samples
+      IncidentCompass__SourceContext__Roots__0__ServiceName: ${INCIDENTCOMPASS_SOURCE_SERVICE:?set INCIDENTCOMPASS_SOURCE_SERVICE}
+      IncidentCompass__SourceContext__Roots__0__Release: ${INCIDENTCOMPASS_SOURCE_RELEASE:?set INCIDENTCOMPASS_SOURCE_RELEASE}
+      IncidentCompass__SourceContext__Roots__0__RootPath: /monitored-source
+      IncidentCompass__Tickets__GitHub__Owner: ${INCIDENTCOMPASS_GITHUB_OWNER:?set INCIDENTCOMPASS_GITHUB_OWNER}
+      IncidentCompass__Tickets__GitHub__Repository: ${INCIDENTCOMPASS_GITHUB_REPOSITORY:?set INCIDENTCOMPASS_GITHUB_REPOSITORY}
+      IncidentCompass__Tickets__GitHub__Token: ${INCIDENTCOMPASS_GITHUB_TOKEN:?set INCIDENTCOMPASS_GITHUB_TOKEN}
+      # Code publication reuses the owner, repository and token above. Leaving this unset means
+      # `branch_push` is not configured on this host and every push refuses; setting it also means the
+      # token above now needs write access to repository contents, not only to issues.
+      IncidentCompass__Publication__GitHub__BaseBranch: ${INCIDENTCOMPASS_GITHUB_BASE_BRANCH:-}
+      IncidentCompass__Telegram__Enabled: ${INCIDENTCOMPASS_TELEGRAM_ENABLED:-false}
+      IncidentCompass__Telegram__RouteId: ${INCIDENTCOMPASS_TELEGRAM_ROUTE_ID:-}
+      IncidentCompass__Telegram__ChatId: ${INCIDENTCOMPASS_TELEGRAM_CHAT_ID:-}
+      IncidentCompass__Telegram__BotToken: ${INCIDENTCOMPASS_TELEGRAM_BOT_TOKEN:-}
+    volumes:
+      - type: bind
+        source: ${INCIDENTCOMPASS_SOURCE_ROOT:?set INCIDENTCOMPASS_SOURCE_ROOT}
+        target: /monitored-source
+        read_only: true
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    restart: unless-stopped
+    logging: *bounded-logs
+
+  postgres-restore:
+    image: pgvector/pgvector:pg16
+    profiles: ["recovery"]
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    # Checked over TCP, not the Unix socket: on a fresh volume the image entrypoint first
+    # brings up a temporary socket-only server, and a socket check reports ready against it
+    # while port 5432 still refuses the connection the API actually makes.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U ${POSTGRES_USER:?set POSTGRES_USER} -d ${POSTGRES_DB:?set POSTGRES_DB}"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 5s
+    restart: "no"
+    logging: *bounded-logs

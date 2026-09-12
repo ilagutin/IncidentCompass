@@ -1,4 +1,5 @@
 using IncidentCompass.Application.Core.ModelClients;
+using IncidentCompass.Application.Core.ModelGateway;
 using IncidentCompass.Application.Core.Observability;
 using IncidentCompass.Application.Core.Resilience;
 using IncidentCompass.Application.Governance.Ledger;
@@ -8,6 +9,22 @@ using Microsoft.Extensions.Logging.Abstractions;
 
 namespace IncidentCompass.Application.Investigation.Jobs;
 
+/// <summary>
+/// Dispatches one governed investigation model call, classifies how it ended and, for the failures
+/// a route's declared fallback exists for, dispatches it once more there. Attempt-budget admission
+/// and charging belong to <see cref="TriageAttemptBudgetGate"/>, and durable <c>ModelCall</c>
+/// accounting belongs to <see cref="ModelCallLedgerAccountant"/>; both share this type's logger
+/// instance so log categories and event ids are unchanged by that split.
+/// <para>
+/// Fail-over executes here rather than in the job runner or the provider adapter, and the reason is
+/// the disposition table. The runner maps one provider failure kind to one job disposition; if it
+/// were the runner that retried elsewhere, a single attempt would end carrying two failure kinds and
+/// the table would stop being a statement about anything. Below this type, the adapter sees one
+/// endpoint and one credential and has neither the route table nor the attempt budget, so it could
+/// not decide the second call or pay for it. Here the route, its fallback, the ledger and the one
+/// deadline are all in scope, and what leaves this type is still exactly one outcome.
+/// </para>
+/// </summary>
 internal sealed partial class InvestigationModelCaller(
     IAiModelClient modelClient,
     ITriageLedgerReader ledgerReader,
@@ -17,8 +34,41 @@ internal sealed partial class InvestigationModelCaller(
     IRuntimeTelemetry? telemetry = null,
     ILogger<InvestigationModelCaller>? logger = null)
 {
-    private readonly ILogger logger = logger ?? NullLogger<InvestigationModelCaller>.Instance;
+    private readonly ILogger logger = ResolveLogger(logger);
 
+    private readonly TriageAttemptBudgetGate budgetGate = new(
+        ledgerReader,
+        ledgerAppender,
+        timeProvider,
+        ResolveLogger(logger));
+
+    private readonly ModelCallLedgerAccountant accountant = new(
+        ledgerAppender,
+        ResolveLogger(logger));
+
+    /// <summary>
+    /// Runs one governed model call on <paramref name="route" />, and, when the route declares a
+    /// fallback and the provider failed in a way a different provider could plausibly answer, once
+    /// more on that fallback.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The two calls share one admission and one deadline. Admission is charged once, before the
+    /// primary call: a fail-over is the same logical call reaching a second endpoint, not a new
+    /// request asking the budget for permission again. The deadline is the single
+    /// <see cref="CancellationTokenSource" /> the budget gate created for the primary, handed to the
+    /// fallback unchanged, so the attempt's remaining wall clock is what bounds both calls and no
+    /// configured bound is silently doubled. A fallback that runs into that deadline therefore ends
+    /// as a budget exhaustion, because the attempt really did run out of time.
+    /// </para>
+    /// <para>
+    /// What the runner sees is still one failure kind with one disposition. A fallback that succeeds
+    /// raises nothing; a fallback that fails at the provider raises the primary's failure, because
+    /// the primary's kind is what ended this call and its disposition is the one the disposition
+    /// table promises. The fallback's own accounting rides on that exception, and the primary's was
+    /// already made durable before the second call was allowed to spend anything.
+    /// </para>
+    /// </remarks>
     public async Task<AiModelResponse> CompleteAsync(
         TriageJobCallContext context,
         TriageRouteSettings route,
@@ -26,27 +76,145 @@ internal sealed partial class InvestigationModelCaller(
         IReadOnlyList<AiToolDefinition>? tools,
         CancellationToken cancellationToken)
     {
-        var usageBefore = await EnsureMayStartAsync(context, route, messages, tools, cancellationToken);
+        var usageBefore = await budgetGate.EnsureMayStartAsync(context, route, messages, tools, cancellationToken);
+        using var callCancellation = budgetGate.CreateCallCancellation(context, cancellationToken);
+        try
+        {
+            return await DispatchAsync(
+                context,
+                route,
+                messages,
+                tools,
+                usageBefore,
+                fallbackForRouteId: null,
+                callCancellation.Token,
+                cancellationToken);
+        }
+        catch (InvestigationModelCallFailureException primaryFailure)
+        {
+            var fallback = ModelRouteFallbackPolicy.TryResolve(context, route, primaryFailure);
+
+            // No fallback to take, or no deadline left to spend on one. Either way the primary's
+            // failure stands exactly as it does for a route that declared nothing.
+            if (fallback is null || callCancellation.IsCancellationRequested)
+            {
+                throw;
+            }
+
+            return await CompleteOnFallbackAsync(
+                context,
+                fallback,
+                messages,
+                tools,
+                usageBefore,
+                primaryFailure,
+                callCancellation.Token,
+                cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// Retries a failed call once on <paramref name="fallback" />, reusing the primary's deadline.
+    /// </summary>
+    private async Task<AiModelResponse> CompleteOnFallbackAsync(
+        TriageJobCallContext context,
+        ModelRouteFallback fallback,
+        IReadOnlyList<AiChatMessage> messages,
+        IReadOnlyList<AiToolDefinition>? tools,
+        TriageBudgetLedgerUsage usageBefore,
+        InvestigationModelCallFailureException primaryFailure,
+        CancellationToken callToken,
+        CancellationToken cancellationToken)
+    {
+        var primaryAccounting = primaryFailure.Accounting;
+
+        // The failed call is paid for before the second one is allowed to start. Nothing else would
+        // write it: a fail-over that succeeds ends the attempt in success, and the attempt-failure
+        // path that carries failed accounting today is the path this call is about to avoid.
+        try
+        {
+            await ledgerAppender.AppendModelCallAccountingAsync(
+                context.Job,
+                primaryAccounting,
+                CancellationToken.None);
+        }
+        catch (InvestigationModelCallFailureException accountingFailure)
+        {
+            // The failed call could not be charged, so no fail-over is attempted: the primary's
+            // failure propagates with its accounting still owed, and the attempt-failure path
+            // persists it under the job lock exactly as it does without a fallback.
+            LogFallbackAbandoned(
+                logger,
+                context.Job.Id,
+                context.RouteId,
+                fallback.RouteId,
+                (accountingFailure.InnerException ?? accountingFailure).GetType().Name);
+            throw primaryFailure;
+        }
+
+        LogFallbackStarted(
+            logger,
+            context.Job.Id,
+            context.Role,
+            context.RouteId,
+            fallback.RouteId,
+            primaryAccounting.Metadata.ErrorCode ?? "unknown");
+
+        try
+        {
+            return await DispatchAsync(
+                context with { RouteId = fallback.RouteId },
+                fallback.Route,
+                messages,
+                tools,
+                usageBefore with
+                {
+                    TokensSpent = usageBefore.TokensSpent + (primaryAccounting.ChargeTokens ?? 0)
+                },
+                context.RouteId,
+                callToken,
+                cancellationToken);
+        }
+        catch (InvestigationModelCallFailureException fallbackFailure)
+            when (ProviderOutageExceptionClassifier.FindFailureKind(fallbackFailure) is not null)
+        {
+            // One hop, and the primary's disposition. The new exception carries the fallback's own
+            // accounting, which is what is still owed, over the primary failure, whose provider kind
+            // is what the runner classifies. A fail-over whose ledger append failed carries no
+            // provider exception and is left alone by this filter, so a successful fallback call
+            // whose accounting is pending still reaches the runner unchanged.
+            throw new InvestigationModelCallFailureException(fallbackFailure.Accounting, primaryFailure);
+        }
+    }
+
+    private async Task<AiModelResponse> DispatchAsync(
+        TriageJobCallContext context,
+        TriageRouteSettings route,
+        IReadOnlyList<AiChatMessage> messages,
+        IReadOnlyList<AiToolDefinition>? tools,
+        TriageBudgetLedgerUsage usageBefore,
+        string? fallbackForRouteId,
+        CancellationToken callToken,
+        CancellationToken cancellationToken)
+    {
         var request = new AiModelRequest(
             CorrelationId: context.Job.Id.ToString(),
             Model: route.Model,
             Messages: messages,
             Temperature: route.Temperature,
             MaxOutputTokens: route.MaxOutputTokens,
-            Tools: tools);
+            Tools: tools,
+            ProviderId: route.ProviderId,
+            Reasoning: route.Reasoning);
 
+        var callId = Guid.NewGuid();
         var startedAtUtc = timeProvider.GetUtcNow();
-        using var callCancellation = CreateCallCancellation(context, cancellationToken);
         using var modelTelemetry = telemetry?.StartModelCall();
+        AiModelResponse response;
         try
         {
-            callCancellation.Token.ThrowIfCancellationRequested();
-            var response = await modelClient.CompleteAsync(request, callCancellation.Token);
-            var duration = timeProvider.GetUtcNow() - startedAtUtc;
-            telemetry?.RecordModelCall(RuntimeTelemetryOutcome.Succeeded, duration.TotalMilliseconds);
-            await RecordModelCallAsync(context, request, response, duration, usageBefore, cancellationToken);
-            providerOutageTracker?.RecordProviderSuccess();
-            return response;
+            callToken.ThrowIfCancellationRequested();
+            response = await modelClient.CompleteAsync(request, callToken);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
@@ -72,10 +240,10 @@ internal sealed partial class InvestigationModelCaller(
                 logger, context.Job.Id, context.Role, context.RouteId, context.CallKind, (long)elapsedMs);
             throw;
         }
-        catch (Exception exception)
+        catch (Exception exception) when (FindAiModelException(exception) is { } modelException)
         {
-            var elapsedMs = (timeProvider.GetUtcNow() - startedAtUtc).TotalMilliseconds;
-            telemetry?.RecordModelCall(RuntimeTelemetryOutcome.Failed, elapsedMs);
+            var duration = timeProvider.GetUtcNow() - startedAtUtc;
+            telemetry?.RecordModelCall(RuntimeTelemetryOutcome.Failed, duration.TotalMilliseconds);
             LogModelCallFailed(
                 logger,
                 context.Job.Id,
@@ -83,171 +251,70 @@ internal sealed partial class InvestigationModelCaller(
                 context.RouteId,
                 context.CallKind,
                 exception.GetType().Name,
-                (long)elapsedMs);
+                (long)duration.TotalMilliseconds);
+            throw new InvestigationModelCallFailureException(
+                ModelCallLedgerAccountant.CreateFailureAccounting(
+                    context,
+                    request,
+                    callId,
+                    modelException,
+                    duration,
+                    fallbackForRouteId),
+                exception);
+        }
+        catch (Exception exception)
+        {
+            var duration = timeProvider.GetUtcNow() - startedAtUtc;
+            telemetry?.RecordModelCall(RuntimeTelemetryOutcome.Failed, duration.TotalMilliseconds);
+            LogModelCallFailed(
+                logger,
+                context.Job.Id,
+                context.Role,
+                context.RouteId,
+                context.CallKind,
+                exception.GetType().Name,
+                (long)duration.TotalMilliseconds);
             throw;
         }
+
+        var completedDuration = timeProvider.GetUtcNow() - startedAtUtc;
+        telemetry?.RecordModelCall(RuntimeTelemetryOutcome.Succeeded, completedDuration.TotalMilliseconds);
+        var chargedTokens = await accountant.RecordSuccessAsync(
+            context,
+            request,
+            response,
+            callId,
+            completedDuration,
+            fallbackForRouteId,
+            CancellationToken.None);
+        await budgetGate.ChargeTokensAsync(context, chargedTokens, usageBefore, CancellationToken.None);
+
+        // Only a call on the route's own provider clears claim backpressure. A fallback answering is
+        // evidence about the fallback's provider and none at all about the one that just failed, and
+        // clearing on it would resume claiming against a provider that is still down.
+        if (fallbackForRouteId is null)
+        {
+            providerOutageTracker?.RecordProviderSuccess();
+        }
+
+        return response;
     }
 
-    private async Task<TriageBudgetLedgerUsage> EnsureMayStartAsync(
-        TriageJobCallContext context,
-        TriageRouteSettings route,
-        IReadOnlyList<AiChatMessage> messages,
-        IReadOnlyList<AiToolDefinition>? tools,
-        CancellationToken cancellationToken)
+    private static ILogger<InvestigationModelCaller> ResolveLogger(ILogger<InvestigationModelCaller>? logger) =>
+        logger ?? NullLogger<InvestigationModelCaller>.Instance;
+
+    private static AiModelException? FindAiModelException(Exception exception)
     {
-        var usage = await ledgerReader.ReadBudgetUsageAsync(context.Job, cancellationToken);
-        if (usage.TokensSpent >= context.Configuration.Orchestrator.Budget.MaxTokens)
+        for (Exception? current = exception; current is not null; current = current.InnerException)
         {
-            await ledgerAppender.AppendBudgetEventAsync(
-                context.Job,
-                "max_tokens_reached_before_call: attempt token budget was already reached.",
-                tokensDelta: null,
-                workersDelta: null,
-                cancellationToken: cancellationToken);
-            LogBudgetLimitReached(logger, context.Job.Id, context.Job.Attempt, "max_tokens_reached_before_call");
-            throw new TriageBudgetExhaustedException(
-                TriageBudgetExhaustedException.MaxTokensReachedCode,
-                "The triage attempt token budget was reached before the next model call.");
+            if (current is AiModelException modelException)
+            {
+                return modelException;
+            }
         }
 
-        var elapsed = timeProvider.GetUtcNow() - context.AttemptStartedAtUtc;
-        if (elapsed >= TimeSpan.FromSeconds(context.Configuration.Orchestrator.Budget.MaxWallClockSeconds))
-        {
-            await ledgerAppender.AppendBudgetEventAsync(
-                context.Job,
-                "wall_clock_limit_reached_before_call: attempt wall-clock budget was already reached.",
-                tokensDelta: null,
-                workersDelta: null,
-                cancellationToken: cancellationToken);
-            LogBudgetLimitReached(logger, context.Job.Id, context.Job.Attempt, "wall_clock_limit_reached_before_call");
-            throw new TriageBudgetExhaustedException(
-                TriageBudgetExhaustedException.WallClockReachedBeforeCallCode,
-                "The triage attempt wall-clock budget was reached before the next model call.");
-        }
-
-        var estimatedPromptTokens = TriageTokenEstimator.EstimateMessages(messages, tools);
-        if (route.ContextWindowTokens is { } contextWindowTokens && estimatedPromptTokens >= contextWindowTokens)
-        {
-            await ledgerAppender.AppendBudgetEventAsync(
-                context.Job,
-                "context_window_exceeded: estimated prompt exceeds the route context window.",
-                tokensDelta: null,
-                workersDelta: null,
-                cancellationToken: cancellationToken);
-            LogBudgetLimitReached(logger, context.Job.Id, context.Job.Attempt, "context_window_exceeded");
-            throw new TriageBudgetExhaustedException(
-                TriageBudgetExhaustedException.ContextWindowExceededCode,
-                "The triage prompt exceeds the configured context window.");
-        }
-
-        return usage;
+        return null;
     }
-
-    private CancellationTokenSource CreateCallCancellation(
-        TriageJobCallContext context,
-        CancellationToken cancellationToken)
-    {
-        var elapsed = timeProvider.GetUtcNow() - context.AttemptStartedAtUtc;
-        var remaining = TimeSpan.FromSeconds(context.Configuration.Orchestrator.Budget.MaxWallClockSeconds) - elapsed;
-        var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        if (remaining > TimeSpan.Zero)
-        {
-            linked.CancelAfter(remaining);
-        }
-        else
-        {
-            linked.Cancel();
-        }
-
-        return linked;
-    }
-
-    private async Task RecordModelCallAsync(
-        TriageJobCallContext context,
-        AiModelRequest request,
-        AiModelResponse response,
-        TimeSpan duration,
-        TriageBudgetLedgerUsage usageBefore,
-        CancellationToken cancellationToken)
-    {
-        var estimatedInputTokens = TriageTokenEstimator.EstimateMessages(request.Messages, request.Tools);
-        var estimatedOutputTokens = TriageTokenEstimator.EstimateText(response.Content);
-        var usageSource = response.Usage is { InputTokens: > 0, OutputTokens: > 0, TotalTokens: > 0 } ? "provider" : "estimate";
-        var inputTokens = PositiveOrEstimate(response.Usage?.InputTokens, estimatedInputTokens);
-        var outputTokens = PositiveOrEstimate(response.Usage?.OutputTokens, estimatedOutputTokens);
-        var totalTokens = PositiveOrEstimate(response.Usage?.TotalTokens, inputTokens + outputTokens);
-
-        var metadata = new ModelCallLedgerMetadata(
-            context.CallKind,
-            context.RouteId,
-            response.Model,
-            response.Provider,
-            usageSource,
-            inputTokens,
-            outputTokens,
-            totalTokens,
-            (long)duration.TotalMilliseconds,
-            response.ProposedToolCalls?.Count ?? 0);
-
-        await ledgerAppender.AppendModelCallAsync(context.Job, context.Role, metadata, cancellationToken);
-        LogModelCallCompleted(
-            logger,
-            context.Job.Id,
-            context.Role,
-            metadata.RouteId,
-            metadata.Kind,
-            metadata.Provider,
-            metadata.Model,
-            metadata.UsageSource,
-            metadata.InputTokens,
-            metadata.OutputTokens,
-            metadata.TotalTokens,
-            metadata.DurationMs,
-            metadata.ProposedToolCallCount);
-
-        await ledgerAppender.AppendBudgetEventAsync(
-            context.Job,
-            "model_call_charged: charged model tokens to the attempt budget.",
-            totalTokens,
-            workersDelta: null,
-            cancellationToken: cancellationToken);
-        LogBudgetTokensCharged(logger, context.Job.Id, context.Job.Attempt, totalTokens);
-
-        if (usageBefore.TokensSpent + totalTokens > context.Configuration.Orchestrator.Budget.MaxTokens)
-        {
-            await ledgerAppender.AppendBudgetEventAsync(
-                context.Job,
-                "max_tokens_overshot_after_call: provider usage exceeded the attempt token budget after completion.",
-                tokensDelta: null,
-                workersDelta: null,
-                cancellationToken: cancellationToken);
-            LogBudgetLimitReached(logger, context.Job.Id, context.Job.Attempt, "max_tokens_overshot_after_call");
-        }
-    }
-
-    private static int PositiveOrEstimate(int? reportedTokens, int estimatedTokens)
-    {
-        return reportedTokens is > 0 ? reportedTokens.Value : estimatedTokens;
-    }
-
-    [LoggerMessage(
-        EventId = 3201,
-        Level = LogLevel.Information,
-        Message = "Model call for triage job {JobId} role {Role} route {RouteId} kind {CallKind} completed on {Provider}/{Model} with {UsageSource} usage {InputTokens}/{OutputTokens}/{TotalTokens} tokens in {DurationMs}ms proposing {ProposedToolCallCount} tool calls.")]
-    private static partial void LogModelCallCompleted(
-        ILogger logger,
-        Guid jobId,
-        string? role,
-        string routeId,
-        string callKind,
-        string provider,
-        string model,
-        string usageSource,
-        int inputTokens,
-        int outputTokens,
-        int totalTokens,
-        long durationMs,
-        int proposedToolCallCount);
 
     [LoggerMessage(
         EventId = 3202,
@@ -287,22 +354,25 @@ internal sealed partial class InvestigationModelCaller(
         long durationMs);
 
     [LoggerMessage(
-        EventId = 3211,
-        Level = LogLevel.Debug,
-        Message = "Triage job {JobId} attempt {Attempt} charged {TokensDelta} model tokens to the attempt budget.")]
-    private static partial void LogBudgetTokensCharged(
+        EventId = 3205,
+        Level = LogLevel.Warning,
+        Message = "Model call for triage job {JobId} role {Role} failed on route {RouteId} with {ErrorCode} and is being retried once on fallback route {FallbackRouteId}.")]
+    private static partial void LogFallbackStarted(
         ILogger logger,
         Guid jobId,
-        int attempt,
-        int tokensDelta);
+        string? role,
+        string routeId,
+        string fallbackRouteId,
+        string errorCode);
 
     [LoggerMessage(
-        EventId = 3212,
+        EventId = 3206,
         Level = LogLevel.Warning,
-        Message = "Triage job {JobId} attempt {Attempt} hit budget limit {BudgetReason}.")]
-    private static partial void LogBudgetLimitReached(
+        Message = "Triage job {JobId} did not fail route {RouteId} over to fallback route {FallbackRouteId}: the failed call's accounting could not be made durable ({ExceptionType}).")]
+    private static partial void LogFallbackAbandoned(
         ILogger logger,
         Guid jobId,
-        int attempt,
-        string budgetReason);
+        string routeId,
+        string fallbackRouteId,
+        string exceptionType);
 }

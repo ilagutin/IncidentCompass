@@ -10,9 +10,6 @@ public sealed class EmbeddingOptions
     [RequiredNonBlank]
     public string Provider { get; init; } = "Mock";
 
-    [RequiredNonBlank]
-    public string DefaultModel { get; init; } = "mock-embedding";
-
     [Range(1, 4096)]
     public int MockDimensions { get; init; } = 16;
 

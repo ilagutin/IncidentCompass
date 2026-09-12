@@ -1,3 +1,4 @@
+using System.Text.Json;
 using IncidentCompass.Application.Governance.PostReportActions;
 using IncidentCompass.Application.Governance.PostReportActions.Testing;
 using IncidentCompass.Application.Investigation.Jobs.Testing;
@@ -57,7 +58,13 @@ internal sealed partial class PostgresTriageReportRepository(
             {
                 throw new InvalidOperationException($"Re-triage job '{job.Id}' no longer has its scheduled predecessor.");
             }
-            var reportId = await InsertReportAsync(connection, transaction, job, report, isMassIssue, supersedesReportId, now, cancellationToken);
+            // Derived here rather than accumulated during the run, and derived from the ledger
+            // rather than from anything the orchestrator said: the ledger already holds, per call,
+            // which provider and model actually answered.
+            var modelProvenance = await PostgresReportModelProvenanceReader.ReadAsync(
+                connection, transaction, job, cancellationToken);
+            var reportId = await InsertReportAsync(
+                connection, transaction, job, report, isMassIssue, supersedesReportId, modelProvenance, now, cancellationToken);
             await PostgresTriageEvidenceWriter.ReplaceAsync(connection, transaction, reportId, evidence, now, cancellationToken);
             await MarkFaultTerminalAsync(connection, transaction, job, report.Status, now, cancellationToken);
             await faultInjector.BeforeReportPublishedLedgerEventAsync(cancellationToken);
@@ -82,6 +89,7 @@ internal sealed partial class PostgresTriageReportRepository(
             throw;
         }
     }
+
     private static async Task<bool> MarkJobSucceededAsync(NpgsqlConnection connection,
         NpgsqlTransaction transaction,
         TriageJob job,
@@ -108,6 +116,7 @@ internal sealed partial class PostgresTriageReportRepository(
         command.AddParameter("worker_id", workerId);
         return await command.ExecuteNonQueryAsync(cancellationToken) == 1;
     }
+
     private static async Task<bool?> ReadIsMassIssueAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,
@@ -131,6 +140,7 @@ internal sealed partial class PostgresTriageReportRepository(
         var value = await command.ExecuteScalarAsync(cancellationToken);
         return value is DBNull or null ? null : (bool)value;
     }
+
     private static async Task<Guid> InsertReportAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,
@@ -138,16 +148,19 @@ internal sealed partial class PostgresTriageReportRepository(
         TriageReport report,
         bool? isMassIssue,
         Guid? supersedesReportId,
+        IReadOnlyList<TriageReportModelParticipant> modelProvenance,
         DateTimeOffset now,
         CancellationToken cancellationToken)
     {
         await using var command = new NpgsqlCommand("""
             INSERT INTO incidentcompass.triage_reports (
                 id, job_id, fault_id, supersedes_report_id, status, summary, classification, confidence,
-                is_mass_issue, recommended_next_action, limitations, documentation_fit, config_hash, created_at_utc)
+                is_mass_issue, recommended_next_action, limitations, documentation_fit, model_provenance,
+                config_hash, created_at_utc)
             VALUES (
                 @id, @job_id, @fault_id, @supersedes_report_id, @status, @summary, @classification, @confidence,
-                @is_mass_issue, @recommended_next_action, @limitations, @documentation_fit, @config_hash, @created_at_utc)
+                @is_mass_issue, @recommended_next_action, @limitations, @documentation_fit, @model_provenance,
+                @config_hash, @created_at_utc)
             RETURNING id;
             """, connection, transaction);
         command.AddParameter("id", Guid.NewGuid());
@@ -162,10 +175,12 @@ internal sealed partial class PostgresTriageReportRepository(
         command.AddParameter("recommended_next_action", report.RecommendedNextAction);
         command.AddParameter("limitations", report.Limitations.ToArray());
         command.AddParameter("documentation_fit", report.DocumentationFit.ToString());
+        command.AddJsonbParameter("model_provenance", JsonSerializer.Serialize(modelProvenance));
         command.AddParameter("config_hash", job.ConfigHash);
         command.AddParameter("created_at_utc", now);
         return (Guid)(await command.ExecuteScalarAsync(cancellationToken))!;
     }
+
     private async Task MarkFaultTerminalAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,

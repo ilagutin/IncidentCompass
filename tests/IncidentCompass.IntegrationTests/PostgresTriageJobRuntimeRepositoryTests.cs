@@ -294,6 +294,187 @@ public sealed class PostgresTriageJobRuntimeRepositoryTests(PostgresRepositoryFi
     }
 
     [DockerAvailableFact]
+    public async Task RecordAttemptFailureAsync_KnownFailedUsageAndDispositionCommitOnce()
+    {
+        using var scope = await CreateScopeAsync();
+        var seed = await SeedJobAsync(scope.ConnectionString, "failed-usage-known", "Pending");
+        var repository = scope.Services.GetRequiredService<ITriageJobRuntimeRepository>();
+        var claimed = await repository.ClaimNextAsync(
+            "worker-failed-usage",
+            TimeSpan.FromMinutes(5),
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(claimed);
+        var accounting = CreateAccounting(3596);
+        var failure = new TriageJobAttemptFailure(
+            TriageJobStatus.DeadLettered,
+            "provider_output_limit_reached",
+            "provider_output_limit_reached: InvestigationModelCallFailureException.",
+            NextAttemptAtUtc: null,
+            ModelCallAccounting: accounting);
+
+        await repository.RecordAttemptFailureAsync(
+            claimed,
+            "worker-failed-usage",
+            failure,
+            TestContext.Current.CancellationToken);
+        await repository.RecordAttemptFailureAsync(
+            claimed,
+            "worker-failed-usage",
+            failure,
+            TestContext.Current.CancellationToken);
+
+        var modelCalls = await ScalarAsync<long>(
+            scope.ConnectionString,
+            "SELECT count(*) FROM incidentcompass.triage_ledger WHERE job_id = @job_id AND event_type = 'ModelCall' AND payload_ref = @payload_ref;",
+            ("job_id", seed.JobId),
+            ("payload_ref", accounting.PayloadRef));
+        var charges = await ScalarAsync<long>(
+            scope.ConnectionString,
+            "SELECT count(*) FROM incidentcompass.triage_ledger WHERE job_id = @job_id AND event_type = 'BudgetEvent' AND payload_ref = @payload_ref AND tokens_delta = 3596;",
+            ("job_id", seed.JobId),
+            ("payload_ref", accounting.PayloadRef));
+        var row = await ReadJobStateAsync(scope.ConnectionString, seed.JobId);
+
+        Assert.Equal(1, modelCalls);
+        Assert.Equal(1, charges);
+        Assert.Equal("DeadLettered", row.Status);
+        Assert.Equal("provider_output_limit_reached", row.LastErrorCode);
+    }
+
+    [DockerAvailableFact]
+    public async Task RecordAttemptFailureAsync_ZeroIsChargedButUnknownUsageIsNot()
+    {
+        using var scope = await CreateScopeAsync();
+        var repository = scope.Services.GetRequiredService<ITriageJobRuntimeRepository>();
+        var zeroSeed = await SeedJobAsync(scope.ConnectionString, "failed-usage-zero", "Pending");
+        var zeroClaim = await repository.ClaimNextAsync(
+            "worker-zero-usage",
+            TimeSpan.FromMinutes(5),
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(zeroClaim);
+        var zeroAccounting = CreateAccounting(0);
+        await repository.RecordAttemptFailureAsync(
+            zeroClaim,
+            "worker-zero-usage",
+            CreateRetryFailure(zeroAccounting),
+            TestContext.Current.CancellationToken);
+
+        var unknownSeed = await SeedJobAsync(scope.ConnectionString, "failed-usage-unknown", "Pending");
+        var unknownClaim = await repository.ClaimNextAsync(
+            "worker-unknown-usage",
+            TimeSpan.FromMinutes(5),
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(unknownClaim);
+        var unknownAccounting = CreateAccounting(totalTokens: null);
+        await repository.RecordAttemptFailureAsync(
+            unknownClaim,
+            "worker-unknown-usage",
+            CreateRetryFailure(unknownAccounting),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, await CountAccountingRowsAsync(
+            scope.ConnectionString, zeroSeed.JobId, "BudgetEvent", zeroAccounting.PayloadRef));
+        Assert.Equal(0, await ScalarAsync<int>(
+            scope.ConnectionString,
+            "SELECT tokens_delta FROM incidentcompass.triage_ledger WHERE job_id = @job_id AND event_type = 'BudgetEvent' AND payload_ref = @payload_ref;",
+            ("job_id", zeroSeed.JobId),
+            ("payload_ref", zeroAccounting.PayloadRef)));
+        Assert.Equal(1, await CountAccountingRowsAsync(
+            scope.ConnectionString, unknownSeed.JobId, "ModelCall", unknownAccounting.PayloadRef));
+        Assert.Equal(0, await CountAccountingRowsAsync(
+            scope.ConnectionString, unknownSeed.JobId, "BudgetEvent", unknownAccounting.PayloadRef));
+    }
+
+    [DockerAvailableFact]
+    public async Task RecordAttemptFailureAsync_StaleOwnerAccountingPersistsWithoutMutatingCurrentJob()
+    {
+        using var scope = await CreateScopeAsync();
+        var seed = await SeedJobAsync(scope.ConnectionString, "failed-usage-stale", "Pending");
+        var repository = scope.Services.GetRequiredService<ITriageJobRuntimeRepository>();
+        var claimed = await repository.ClaimNextAsync(
+            "worker-stale-accounting",
+            TimeSpan.FromMinutes(5),
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(claimed);
+        await ExecuteAsync(
+            scope.ConnectionString,
+            "UPDATE incidentcompass.triage_jobs SET attempt = 2, locked_by = 'current-owner' WHERE id = @job_id;",
+            ("job_id", seed.JobId));
+        var accounting = CreateAccounting(17);
+
+        await repository.RecordAttemptFailureAsync(
+            claimed,
+            "worker-stale-accounting",
+            new TriageJobAttemptFailure(
+                TriageJobStatus.DeadLettered,
+                "provider_output_limit_reached",
+                "provider_output_limit_reached: InvestigationModelCallFailureException.",
+                NextAttemptAtUtc: null,
+                ModelCallAccounting: accounting),
+            TestContext.Current.CancellationToken);
+
+        var row = await ReadJobStateAsync(scope.ConnectionString, seed.JobId);
+        Assert.Equal("Processing", row.Status);
+        Assert.Equal("current-owner", row.LockedBy);
+        Assert.Null(row.LastErrorCode);
+        Assert.Equal(1, await CountAccountingRowsAsync(
+            scope.ConnectionString, seed.JobId, "ModelCall", accounting.PayloadRef));
+        Assert.Equal(1, await CountAccountingRowsAsync(
+            scope.ConnectionString, seed.JobId, "BudgetEvent", accounting.PayloadRef));
+    }
+
+    [DockerAvailableFact]
+    public async Task RecordAttemptFailureAsync_LedgerFailureRollsBackAccountingAndDisposition()
+    {
+        using var scope = await CreateScopeAsync();
+        var seed = await SeedJobAsync(scope.ConnectionString, "failed-usage-rollback", "Pending");
+        var repository = scope.Services.GetRequiredService<ITriageJobRuntimeRepository>();
+        var claimed = await repository.ClaimNextAsync(
+            "worker-rollback-accounting",
+            TimeSpan.FromMinutes(5),
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(claimed);
+        var accounting = CreateAccounting(23);
+        var suffix = Guid.NewGuid().ToString("N");
+        var functionName = "fail_budget_" + suffix;
+        var triggerName = "fail_budget_" + suffix;
+        await ExecuteAsync(scope.ConnectionString, $"""
+            CREATE FUNCTION incidentcompass.{functionName}() RETURNS trigger LANGUAGE plpgsql AS $$
+            BEGIN
+                IF NEW.job_id = '{seed.JobId}'::uuid AND NEW.event_type = 'BudgetEvent' THEN
+                    RAISE EXCEPTION 'injected budget failure';
+                END IF;
+                RETURN NEW;
+            END;
+            $$;
+            CREATE TRIGGER {triggerName}
+            BEFORE INSERT ON incidentcompass.triage_ledger
+            FOR EACH ROW EXECUTE FUNCTION incidentcompass.{functionName}();
+            """);
+        try
+        {
+            await Assert.ThrowsAnyAsync<Exception>(() => repository.RecordAttemptFailureAsync(
+                claimed,
+                "worker-rollback-accounting",
+                CreateRetryFailure(accounting),
+                TestContext.Current.CancellationToken));
+        }
+        finally
+        {
+            await ExecuteAsync(scope.ConnectionString, $"""
+                DROP TRIGGER {triggerName} ON incidentcompass.triage_ledger;
+                DROP FUNCTION incidentcompass.{functionName}();
+                """);
+        }
+
+        Assert.Equal(0, await CountAccountingRowsAsync(
+            scope.ConnectionString, seed.JobId, "ModelCall", accounting.PayloadRef));
+        var row = await ReadJobStateAsync(scope.ConnectionString, seed.JobId);
+        Assert.Equal("Processing", row.Status);
+        Assert.Null(row.LastErrorCode);
+    }
+
+    [DockerAvailableFact]
     public async Task InvestigationContext_CurrentAttemptExcludesPriorAttemptArtifacts()
     {
         using var scope = await CreateScopeAsync();
@@ -460,6 +641,49 @@ public sealed class PostgresTriageJobRuntimeRepositoryTests(PostgresRepositoryFi
                 DateTimeOffset.UtcNow.AddMinutes(-1),
                 TriageJobRetryBudgetDisposition.DoNotConsumeAttempt),
             TestContext.Current.CancellationToken);
+
+    private static InvestigationModelCallAccounting CreateAccounting(int? totalTokens)
+    {
+        var callId = Guid.NewGuid();
+        return new InvestigationModelCallAccounting(
+            callId,
+            Role: "analysis",
+            Metadata: new ModelCallLedgerMetadata(
+                Kind: "worker",
+                RouteId: "analysis-chat",
+                Model: "test-model",
+                Provider: "test-provider",
+                UsageSource: totalTokens is null ? "unknown" : "provider",
+                InputTokens: totalTokens is null ? null : 0,
+                OutputTokens: totalTokens,
+                TotalTokens: totalTokens,
+                DurationMs: 100,
+                ProposedToolCallCount: 0,
+                CallId: callId,
+                Outcome: "failed",
+                ErrorCode: "provider_output_limit_reached"),
+            ChargeTokens: totalTokens);
+    }
+
+    private static TriageJobAttemptFailure CreateRetryFailure(InvestigationModelCallAccounting accounting) =>
+        new(
+            TriageJobStatus.RetryPending,
+            "provider_generation_timeout",
+            "provider_generation_timeout: InvestigationModelCallFailureException.",
+            DateTimeOffset.UtcNow.AddMinutes(1),
+            ModelCallAccounting: accounting);
+
+    private static Task<long> CountAccountingRowsAsync(
+        string connectionString,
+        Guid jobId,
+        string eventType,
+        string payloadRef) =>
+        ScalarAsync<long>(
+            connectionString,
+            "SELECT count(*) FROM incidentcompass.triage_ledger WHERE job_id = @job_id AND event_type = @event_type AND payload_ref = @payload_ref;",
+            ("job_id", jobId),
+            ("event_type", eventType),
+            ("payload_ref", payloadRef));
     private static async Task ExecuteAsync(string connectionString, string sql, params (string Name, object Value)[] parameters)
     {
         await using var connection = new NpgsqlConnection(connectionString);

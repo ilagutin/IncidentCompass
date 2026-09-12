@@ -446,8 +446,8 @@ public sealed class IncidentFaultGroupingIngestionTests(PostgresRepositoryFixtur
             ("job_id", first.JobId.Value));
         Assert.Equal(1, openFaultNeighborRows);
 
-        // Phase 1 has no real "close a fault" mechanism yet (that arrives with Phase 5's report
-        // pipeline) -- simulate it directly, backdating well past the configured silence window so
+        // Intake has no "close a fault" mechanism of its own; report publication owns that
+        // transition -- simulate it directly, backdating well past the configured silence window so
         // the next matching signal opens a recurrence fault+job whose NeighborSet counts all 6 real
         // signals above plus itself. completed_at_utc must stay >= created_at_utc (faults_check), so
         // back-date both together.

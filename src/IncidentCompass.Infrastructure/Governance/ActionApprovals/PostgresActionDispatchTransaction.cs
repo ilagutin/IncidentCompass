@@ -1,8 +1,10 @@
 using System.Text;
 using IncidentCompass.Application.Governance.ActionApprovals;
 using IncidentCompass.Application.Governance.ActionApprovals.Testing;
+using IncidentCompass.Application.Governance.PostReportActions;
 using IncidentCompass.Domain.Incidents.Actions;
 using IncidentCompass.Domain.Incidents.Statuses;
+using IncidentCompass.Infrastructure.Governance.PostReportActions;
 using IncidentCompass.Infrastructure.Postgres;
 using Npgsql;
 
@@ -114,6 +116,19 @@ internal sealed class PostgresActionDispatchTransaction(IActionApprovalTransacti
             connection, transaction, origin, TriageLedgerEventType.ActionCompleted, action.ToolId,
             action.DispatchOwner, request.ResultSummary, null, status,
             "artifact:" + artifactId, completed, cancellationToken);
+
+        // A governed action that actually executed may schedule exactly one successor, and this is
+        // where that happens: inside the transaction that records the execution, so the successor's
+        // queue entry cannot exist before the predecessor succeeded and cannot be lost after it did.
+        // ActionSuccessorIntents is the whole of the policy; a tool that schedules nothing gets null
+        // here and this costs one branch.
+        if (ActionSuccessorIntents.SuccessorToolId(
+                action.ToolId, action.Category, action.Mode, request.TerminalState) is { } successor)
+        {
+            await PostgresReportPublicationIntentWriter.InsertSuccessorAsync(
+                connection, transaction, action, successor, completed, cancellationToken);
+        }
+
         return true;
     }
 

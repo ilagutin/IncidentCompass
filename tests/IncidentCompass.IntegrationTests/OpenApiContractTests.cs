@@ -77,9 +77,18 @@ public sealed class OpenApiContractTests
         using var document = JsonDocument.Parse(json);
         var serialized = JsonSerializer.Serialize(document.RootElement, BaselineJsonOptions);
 
-        // System.Text.Json's indented writer emits Environment.NewLine, which is CRLF on
-        // Windows. The repository requires LF (core.eol=lf); normalize so the written baseline
-        // matches regardless of the platform the regeneration script runs on.
-        return serialized.Replace("\r\n", "\n", StringComparison.Ordinal);
+        // Two newlines have to be normalized here and only one of them is about formatting.
+        // System.Text.Json's indented writer emits Environment.NewLine between lines, which is
+        // CRLF on Windows, while the repository requires LF (core.eol=lf).
+        //
+        // Separately, a multi-line XML documentation summary carries the newline of the generated
+        // documentation file into the description it produces, and the serializer escapes it as a
+        // two-character sequence inside the string value. Escaped, it survives a plain CRLF
+        // replacement, so a baseline regenerated on Windows could never match the document
+        // generated on Linux. That asymmetry is invisible on either platform alone and shows up
+        // only when the two meet, which here meant CI.
+        return serialized
+            .Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Replace("\\r\\n", "\\n", StringComparison.Ordinal);
     }
 }

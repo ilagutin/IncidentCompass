@@ -19,7 +19,10 @@ internal sealed class OpenAiEmbeddingExecutor(
         ValidateRequest(request);
 
         var clientOptions = optionsResolver.Get();
-        var endpointUri = optionsResolver.GetEndpointUri(clientOptions);
+        var providerProfile = await optionsResolver.ResolveProviderProfileAsync(
+            request.ProviderId,
+            clientOptions,
+            cancellationToken);
         var payloadJson = requestFactory.CreatePayloadJson(request);
         var maxRetryAttempts = Math.Max(0, clientOptions.MaxRetryAttempts);
 
@@ -29,7 +32,7 @@ internal sealed class OpenAiEmbeddingExecutor(
                 clientOptions,
                 request,
                 payloadJson,
-                endpointUri);
+                providerProfile);
             try
             {
                 var response = await SendAttemptAsync(
@@ -44,22 +47,24 @@ internal sealed class OpenAiEmbeddingExecutor(
                     return response;
                 }
             }
-            catch (TaskCanceledException) when (CanRetryCanceledAttempt(
-                                                   attempt,
-                                                   maxRetryAttempts,
-                                                   cancellationToken))
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (OperationCanceledException) when (attempt < maxRetryAttempts)
             {
                 await DelayBeforeTransportRetryAsync(
                     clientOptions,
                     attempt,
                     cancellationToken);
             }
-            catch (TaskCanceledException exception) when (!cancellationToken.IsCancellationRequested)
+            catch (OperationCanceledException exception)
             {
                 throw errorMapper.Timeout(exception);
             }
             catch (HttpRequestException) when (attempt < maxRetryAttempts)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 await DelayBeforeTransportRetryAsync(
                     clientOptions,
                     attempt,
@@ -67,6 +72,7 @@ internal sealed class OpenAiEmbeddingExecutor(
             }
             catch (HttpRequestException exception)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 throw errorMapper.Transport(exception);
             }
             catch (JsonException exception)
@@ -173,12 +179,6 @@ internal sealed class OpenAiEmbeddingExecutor(
             cancellationToken);
         return true;
     }
-
-    private static bool CanRetryCanceledAttempt(
-        int attempt,
-        int maxRetryAttempts,
-        CancellationToken cancellationToken) =>
-        !cancellationToken.IsCancellationRequested && attempt < maxRetryAttempts;
 
     private Task DelayBeforeTransportRetryAsync(
         OpenAiCompatibleEmbeddingClientOptions clientOptions,

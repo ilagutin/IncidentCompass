@@ -4,16 +4,17 @@ using IncidentCompass.Application.Governance.Tools;
 using IncidentCompass.Application.Intake.Configuration;
 using IncidentCompass.Application.Intake.Normalization;
 using IncidentCompass.Application.Investigation.Jobs;
+using IncidentCompass.Infrastructure.Configuration;
 using static IncidentCompass.Infrastructure.Intake.TriageConfigurationValidationGuards;
 
 namespace IncidentCompass.Infrastructure.Intake;
 
 internal sealed class TriageConfigurationLoadValidator(
     SignalNormalizerRegistry normalizerRegistry,
-    IAgentToolRegistry toolRegistry)
+    IAgentToolRegistry toolRegistry,
+    IModelProviderSecretReader secretReader)
 {
     private static readonly HashSet<string> RouteKinds = new(["Chat", "Embedding"], StringComparer.Ordinal);
-    private static readonly HashSet<string> ProviderKinds = new(["Mock", "OpenAICompatible"], StringComparer.Ordinal);
     private const string MemoryRoleName = "memory";
     private const string MemorySearchToolName = "memory_search";
     private static readonly HashSet<string> OrchestratorTools = new(OrchestratorToolNames.All, StringComparer.Ordinal);
@@ -25,13 +26,14 @@ internal sealed class TriageConfigurationLoadValidator(
         RedactionSettingsLoadValidator.Validate(configuration.Redaction);
         ValidateCurrentReleases(configuration.CurrentReleases);
         ValidateAllowedSources(configuration.Ingestion);
-        ValidateProviders(configuration.Providers);
+        TriageProviderSettingsLoadValidator.Validate(configuration.Providers, secretReader);
         ValidateRoutes(configuration.Providers, configuration.Routes);
         ValidateOrchestrator(configuration.Routes, configuration.Orchestrator);
         ValidateRoles(configuration.Routes, configuration.Tools, configuration.Roles);
         toolValidator.Validate(configuration.Routes, configuration.Tools, configuration.Actions);
         TriageRuleLoadValidator.Validate(configuration.Tools, configuration.Rules);
     }
+
     private void ValidateAllowedSources(IngestionSettings settings)
     {
         foreach (var source in settings.AllowedSources)
@@ -42,6 +44,7 @@ internal sealed class TriageConfigurationLoadValidator(
             }
         }
     }
+
     private static void ValidateCurrentReleases(IReadOnlyDictionary<string, string> currentReleases)
     {
         foreach (var (service, release) in currentReleases)
@@ -50,14 +53,7 @@ internal sealed class TriageConfigurationLoadValidator(
             RequireNonBlank("CurrentReleases." + service, release);
         }
     }
-    private static void ValidateProviders(IReadOnlyDictionary<string, TriageProviderSettings> providers)
-    {
-        foreach (var (providerId, provider) in providers)
-        {
-            RequireKey(providerId, "Providers");
-            RequireKnown("Providers." + providerId + ".Kind", provider.Kind, ProviderKinds);
-        }
-    }
+
     private static void ValidateRoutes(
         IReadOnlyDictionary<string, TriageProviderSettings> providers,
         IReadOnlyDictionary<string, TriageRouteSettings> routes)
@@ -82,8 +78,70 @@ internal sealed class TriageConfigurationLoadValidator(
             {
                 throw Invalid("Routes." + routeId + ".ContextWindowTokens", route.ContextWindowTokens.Value.ToString(CultureInfo.InvariantCulture), "a positive integer when set");
             }
+
+            if (route.Reasoning is { } reasoning && !Enum.IsDefined(reasoning))
+            {
+                throw Invalid(
+                    "Routes." + routeId + ".Reasoning",
+                    ((int)reasoning).ToString(CultureInfo.InvariantCulture),
+                    "one of: off, low, medium, high");
+            }
+
+            if (string.Equals(route.Kind, "Embedding", StringComparison.Ordinal) && route.Reasoning is not null)
+            {
+                throw Invalid(
+                    "Routes." + routeId + ".Reasoning",
+                    route.Reasoning.Value.ToString(),
+                    "unset for an embedding route");
+            }
+
+        }
+
+        // A second pass, so that every route has already been checked against the provider table
+        // before any fallback is resolved. That is what makes "the fallback names a usable provider"
+        // hold without being restated here: a route whose ProviderId names no configured provider
+        // fails the loop above, whichever route happens to point at it and whatever order the two
+        // are declared in.
+        foreach (var (routeId, route) in routes)
+        {
+            ValidateFallbackRoute(routes, routeId, route);
         }
     }
+
+    /// <summary>
+    /// Checks a route's declared fallback while the host is starting, so a fallback that could never
+    /// answer is rejected at load rather than discovered at the first provider failure - which is the
+    /// one moment an operator is least able to act on it, and the moment the declaration exists to
+    /// survive.
+    /// </summary>
+    private static void ValidateFallbackRoute(
+        IReadOnlyDictionary<string, TriageRouteSettings> routes,
+        string routeId,
+        TriageRouteSettings route)
+    {
+        if (route.FallbackRouteId is null)
+        {
+            return;
+        }
+
+        var settingName = "Routes." + routeId + ".FallbackRouteId";
+        RequireNonBlank(settingName, route.FallbackRouteId);
+
+        // Fail-over is executed by the governed chat call path and nothing else reads the
+        // declaration, so an embedding route carrying one would be a promise nothing keeps.
+        if (!string.Equals(route.Kind, "Chat", StringComparison.Ordinal))
+        {
+            throw Invalid(settingName, route.FallbackRouteId, "unset for an embedding route");
+        }
+
+        if (string.Equals(route.FallbackRouteId, routeId, StringComparison.Ordinal))
+        {
+            throw Invalid(settingName, route.FallbackRouteId, "a different route id");
+        }
+
+        RequireChatRoute(routes, route.FallbackRouteId, settingName);
+    }
+
     private static void ValidateOrchestrator(
         IReadOnlyDictionary<string, TriageRouteSettings> routes,
         OrchestratorSettings orchestrator)

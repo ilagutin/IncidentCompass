@@ -43,7 +43,8 @@ internal static class MemoryWorkerOutputParser
                 ReadMemoryString(item, "artifactId"),
                 ReadMemoryString(item, "title"),
                 JsonElementReader.ReadOptionalString(item, "quote", CreateException) ?? string.Empty,
-                ReadOptionalDouble(item, "score")));
+                ReadOptionalDouble(item, "score"),
+                JsonElementReader.ReadOptionalString(item, "documentationStatus", CreateException)));
         }
 
         return items;

@@ -128,8 +128,10 @@ internal sealed class ProposePostReportActionCommandHandler(
     private static bool HasValidPreOriginIdentity(ProposePostReportActionCommand request) =>
         !string.IsNullOrWhiteSpace(request.TenantId) &&
         request.OriginReportId != Guid.Empty &&
-        !string.IsNullOrWhiteSpace(request.ToolId) && request.ToolId.Length <= 128 &&
-        !string.IsNullOrWhiteSpace(request.ProposalKey) && request.ProposalKey.Length <= 256;
+        !string.IsNullOrWhiteSpace(request.ToolId) &&
+        request.ToolId.Length <= AgentToolIdentity.MaximumCharacters &&
+        !string.IsNullOrWhiteSpace(request.ProposalKey) &&
+        request.ProposalKey.Length <= ActionApprovalLimits.MaximumProposalKeyCharacters;
 
     private static PostReportActionProposalResponse Denied(string reasonCode, bool audited) =>
         new(PostReportActionProposalOutcome.Denied, reasonCode, null, false, audited);

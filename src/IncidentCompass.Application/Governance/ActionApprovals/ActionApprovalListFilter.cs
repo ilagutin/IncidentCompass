@@ -8,4 +8,5 @@ public sealed record ActionApprovalListFilter(
     Guid? BeforeActionId,
     int Limit,
     string? ExternalResourceKind = null,
-    string? ExternalResourceId = null);
+    string? ExternalResourceId = null,
+    Guid? FaultId = null);

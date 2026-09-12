@@ -12,7 +12,8 @@ namespace IncidentCompass.IntegrationTests;
 internal sealed class SyntheticExternalActionTool(
     Func<Guid, ReadOnlyMemory<byte>, CancellationToken, Task<ExternalActionExecutionResult>>? execute = null,
     ActionCategory category = ActionCategory.Notification,
-    string toolId = "action_test") : IExternalActionTool
+    string toolId = "action_test",
+    string logicalTargetId = "test:target") : IExternalActionTool
 {
     private readonly Func<Guid, ReadOnlyMemory<byte>, CancellationToken, Task<ExternalActionExecutionResult>> execute =
         execute ?? DefaultExecuteAsync;
@@ -26,7 +27,7 @@ internal sealed class SyntheticExternalActionTool(
 
     public ActionCategory Category { get; } = category;
 
-    public string LogicalTargetId => "test:target";
+    public string LogicalTargetId { get; } = logicalTargetId;
 
     public string AdapterBindingFingerprint { get; set; } = ExternalActionBinding.ComputeFingerprint(
         "synthetic", "test:target", "https://api.example.test", "resource-1");

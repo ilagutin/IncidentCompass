@@ -1,19 +1,86 @@
 using System.Text.Json;
+using IncidentCompass.Application.Core.Text;
 
 namespace IncidentCompass.Application.Investigation.Jobs;
 
 internal static class AnalysisWorkerOutputSchemaValidator
 {
-    public static void Validate(string content, string outputSchema, string roleName)
+    internal const int MaxReportedViolations = 20;
+
+    private const string ObjectSchemaType = "object";
+    private const string ArraySchemaType = "array";
+    private const string StringSchemaType = "string";
+    private const string BooleanSchemaType = "boolean";
+    private const string NumberSchemaType = "number";
+
+    /// <summary>
+    /// The schema <c>type</c> values <c>ValidateElement</c> knows how to evaluate, built from the same
+    /// tokens its switch matches. A type outside this set leaves the worker loop as an
+    /// <see cref="InvalidOperationException" /> rather than as a correctable validation failure, so the
+    /// configuration tests that guard shipped and fixture schemas read the set from here through
+    /// <see cref="IsSupportedSchemaType" /> instead of restating it.
+    /// </summary>
+    private static readonly HashSet<string> SupportedSchemaTypes = new(StringComparer.Ordinal)
     {
-        using var outputDocument = JsonDocument.Parse(content);
-        using var schemaDocument = JsonDocument.Parse(outputSchema);
-        ValidateElement(
-            outputDocument.RootElement,
-            schemaDocument.RootElement,
-            "output",
-            WorkerOutputDiagnosticLabels.Output(roleName),
-            WorkerOutputDiagnosticLabels.Schema(roleName));
+        ObjectSchemaType,
+        ArraySchemaType,
+        StringSchemaType,
+        BooleanSchemaType,
+        NumberSchemaType
+    };
+
+    internal static bool IsSupportedSchemaType(string schemaType) => SupportedSchemaTypes.Contains(schemaType);
+
+    public static string Validate(string content, string outputSchema, string roleName)
+    {
+        using var schemaDocument = ParseSchema(outputSchema, roleName);
+        if (!StrictJsonOutputNormalizer.TryNormalize(content, out var normalizedJson))
+        {
+            throw InvalidJson(roleName);
+        }
+
+        JsonDocument outputDocument;
+        try
+        {
+            outputDocument = JsonDocument.Parse(normalizedJson);
+        }
+        catch (JsonException)
+        {
+            throw InvalidJson(roleName);
+        }
+
+        using (outputDocument)
+        {
+            var violations = new List<string>();
+            var violationsTruncated = false;
+            ValidateElement(
+                outputDocument.RootElement,
+                schemaDocument.RootElement,
+                "output",
+                WorkerOutputDiagnosticLabels.Output(roleName),
+                WorkerOutputDiagnosticLabels.Schema(roleName),
+                violations,
+                ref violationsTruncated);
+            if (violations.Count > 0)
+            {
+                throw new WorkerOutputValidationException(violations, violationsTruncated);
+            }
+        }
+
+        return normalizedJson;
+    }
+
+    private static JsonDocument ParseSchema(string outputSchema, string roleName)
+    {
+        try
+        {
+            return JsonDocument.Parse(outputSchema);
+        }
+        catch (JsonException)
+        {
+            throw new InvalidOperationException(
+                WorkerOutputDiagnosticLabels.Schema(roleName) + " is not valid JSON.");
+        }
     }
 
     private static void ValidateElement(
@@ -21,31 +88,38 @@ internal static class AnalysisWorkerOutputSchemaValidator
         JsonElement schema,
         string path,
         string outputLabel,
-        string schemaLabel)
+        string schemaLabel,
+        List<string> violations,
+        ref bool violationsTruncated)
     {
+        if (violationsTruncated)
+        {
+            return;
+        }
+
         var expectedType = ReadSchemaType(schema, path, schemaLabel);
         switch (expectedType)
         {
-            case "object":
-                ValidateObject(value, schema, path, outputLabel, schemaLabel);
+            case ObjectSchemaType:
+                ValidateObject(value, schema, path, outputLabel, schemaLabel, violations, ref violationsTruncated);
                 break;
-            case "array":
-                ValidateArray(value, schema, path, outputLabel, schemaLabel);
+            case ArraySchemaType:
+                ValidateArray(value, schema, path, outputLabel, schemaLabel, violations, ref violationsTruncated);
                 break;
-            case "string":
-                ValidateString(value, schema, path, outputLabel);
+            case StringSchemaType:
+                ValidateString(value, schema, path, outputLabel, violations, ref violationsTruncated);
                 break;
-            case "boolean":
+            case BooleanSchemaType:
                 if (value.ValueKind is not JsonValueKind.True and not JsonValueKind.False)
                 {
-                    throw Invalid(path, "boolean", outputLabel);
+                    AddViolation(violations, ref violationsTruncated, Invalid(path, BooleanSchemaType, outputLabel));
                 }
 
                 break;
-            case "number":
+            case NumberSchemaType:
                 if (value.ValueKind != JsonValueKind.Number)
                 {
-                    throw Invalid(path, "number", outputLabel);
+                    AddViolation(violations, ref violationsTruncated, Invalid(path, NumberSchemaType, outputLabel));
                 }
 
                 break;
@@ -59,23 +133,28 @@ internal static class AnalysisWorkerOutputSchemaValidator
         JsonElement schema,
         string path,
         string outputLabel,
-        string schemaLabel)
+        string schemaLabel,
+        List<string> violations,
+        ref bool violationsTruncated)
     {
         if (value.ValueKind != JsonValueKind.Object)
         {
-            throw Invalid(path, "object", outputLabel);
+            AddViolation(violations, ref violationsTruncated, Invalid(path, ObjectSchemaType, outputLabel));
+            return;
         }
 
         var hasProperties = TryGetObject(schema, "properties", out var properties);
-        ValidateRequiredProperties(value, schema, path, outputLabel);
+        ValidateRequiredProperties(value, schema, path, outputLabel, violations, ref violationsTruncated);
         if (IsAdditionalPropertiesFalse(schema))
         {
-            foreach (var property in value.EnumerateObject())
+            var unsupportedPropertyCount = value.EnumerateObject().Count(property =>
+                !hasProperties || !properties.TryGetProperty(property.Name, out _));
+            if (unsupportedPropertyCount > 0)
             {
-                if (!hasProperties || !properties.TryGetProperty(property.Name, out _))
-                {
-                    throw new InvalidOperationException($"{outputLabel} contains unsupported property {path}.{property.Name}.");
-                }
+                AddViolation(
+                    violations,
+                    ref violationsTruncated,
+                    $"{outputLabel} contains {unsupportedPropertyCount} unsupported properties at {path}.");
             }
         }
 
@@ -86,9 +165,21 @@ internal static class AnalysisWorkerOutputSchemaValidator
 
         foreach (var propertySchema in properties.EnumerateObject())
         {
+            if (violationsTruncated)
+            {
+                return;
+            }
+
             if (value.TryGetProperty(propertySchema.Name, out var propertyValue))
             {
-                ValidateElement(propertyValue, propertySchema.Value, path + "." + propertySchema.Name, outputLabel, schemaLabel);
+                ValidateElement(
+                    propertyValue,
+                    propertySchema.Value,
+                    path + "." + propertySchema.Name,
+                    outputLabel,
+                    schemaLabel,
+                    violations,
+                    ref violationsTruncated);
             }
         }
     }
@@ -98,11 +189,14 @@ internal static class AnalysisWorkerOutputSchemaValidator
         JsonElement schema,
         string path,
         string outputLabel,
-        string schemaLabel)
+        string schemaLabel,
+        List<string> violations,
+        ref bool violationsTruncated)
     {
         if (value.ValueKind != JsonValueKind.Array)
         {
-            throw Invalid(path, "array", outputLabel);
+            AddViolation(violations, ref violationsTruncated, Invalid(path, ArraySchemaType, outputLabel));
+            return;
         }
 
         if (!TryGetObject(schema, "items", out var itemSchema))
@@ -113,16 +207,35 @@ internal static class AnalysisWorkerOutputSchemaValidator
         var index = 0;
         foreach (var item in value.EnumerateArray())
         {
-            ValidateElement(item, itemSchema, path + "[" + index + "]", outputLabel, schemaLabel);
+            ValidateElement(
+                item,
+                itemSchema,
+                path + "[" + index + "]",
+                outputLabel,
+                schemaLabel,
+                violations,
+                ref violationsTruncated);
+            if (violationsTruncated)
+            {
+                return;
+            }
+
             index++;
         }
     }
 
-    private static void ValidateString(JsonElement value, JsonElement schema, string path, string outputLabel)
+    private static void ValidateString(
+        JsonElement value,
+        JsonElement schema,
+        string path,
+        string outputLabel,
+        List<string> violations,
+        ref bool violationsTruncated)
     {
         if (value.ValueKind != JsonValueKind.String)
         {
-            throw Invalid(path, "string", outputLabel);
+            AddViolation(violations, ref violationsTruncated, Invalid(path, StringSchemaType, outputLabel));
+            return;
         }
 
         if (!schema.TryGetProperty("enum", out var enumElement) || enumElement.ValueKind != JsonValueKind.Array)
@@ -133,16 +246,26 @@ internal static class AnalysisWorkerOutputSchemaValidator
         var actual = value.GetString();
         foreach (var allowed in enumElement.EnumerateArray())
         {
-            if (allowed.ValueKind == JsonValueKind.String && string.Equals(actual, allowed.GetString(), StringComparison.Ordinal))
+            if (allowed.ValueKind == JsonValueKind.String &&
+                string.Equals(actual, allowed.GetString(), StringComparison.Ordinal))
             {
                 return;
             }
         }
 
-        throw new InvalidOperationException($"{outputLabel} value at {path} is not allowed by its output schema.");
+        AddViolation(
+            violations,
+            ref violationsTruncated,
+            $"{outputLabel} value at {path} is not allowed by its output schema.");
     }
 
-    private static void ValidateRequiredProperties(JsonElement value, JsonElement schema, string path, string outputLabel)
+    private static void ValidateRequiredProperties(
+        JsonElement value,
+        JsonElement schema,
+        string path,
+        string outputLabel,
+        List<string> violations,
+        ref bool violationsTruncated)
     {
         if (!schema.TryGetProperty("required", out var required) || required.ValueKind != JsonValueKind.Array)
         {
@@ -151,9 +274,17 @@ internal static class AnalysisWorkerOutputSchemaValidator
 
         foreach (var item in required.EnumerateArray())
         {
+            if (violationsTruncated)
+            {
+                return;
+            }
+
             if (item.ValueKind == JsonValueKind.String && !value.TryGetProperty(item.GetString()!, out _))
             {
-                throw new InvalidOperationException($"{outputLabel} is missing required property {path}.{item.GetString()}.");
+                AddViolation(
+                    violations,
+                    ref violationsTruncated,
+                    $"{outputLabel} is missing required property {path}.{item.GetString()}.");
             }
         }
     }
@@ -187,8 +318,25 @@ internal static class AnalysisWorkerOutputSchemaValidator
             value.ValueKind == JsonValueKind.False;
     }
 
-    private static InvalidOperationException Invalid(string path, string expected, string outputLabel)
+    private static void AddViolation(
+        List<string> violations,
+        ref bool violationsTruncated,
+        string violation)
     {
-        return new InvalidOperationException($"{outputLabel} at {path} must be {expected}.");
+        if (violations.Count < MaxReportedViolations)
+        {
+            violations.Add(violation);
+            return;
+        }
+
+        violationsTruncated = true;
     }
+
+    private static string Invalid(string path, string expected, string outputLabel) =>
+        $"{outputLabel} at {path} must be {expected}.";
+
+    private static WorkerOutputValidationException InvalidJson(string roleName) =>
+        new(
+            [$"{WorkerOutputDiagnosticLabels.Output(roleName)} is not valid JSON or one supported outer JSON fence."],
+            violationsTruncated: false);
 }

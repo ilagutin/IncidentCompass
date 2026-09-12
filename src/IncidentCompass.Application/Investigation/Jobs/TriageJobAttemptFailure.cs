@@ -7,4 +7,5 @@ public sealed record TriageJobAttemptFailure(
     string ErrorCode,
     string ErrorMessage,
     DateTimeOffset? NextAttemptAtUtc,
-    TriageJobRetryBudgetDisposition RetryBudgetDisposition = TriageJobRetryBudgetDisposition.ConsumeAttempt);
+    TriageJobRetryBudgetDisposition RetryBudgetDisposition = TriageJobRetryBudgetDisposition.ConsumeAttempt,
+    InvestigationModelCallAccounting? ModelCallAccounting = null);

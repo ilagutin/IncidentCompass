@@ -3,13 +3,13 @@ using IncidentCompass.Application.Governance.PostReportActions;
 
 namespace IncidentCompass.Worker;
 
-public sealed class PostReportActionEvaluationPump(
+internal sealed class PostReportActionEvaluationPump(
     IServiceScopeFactory serviceScopeFactory,
     PostReportActionWorkflowCatalog catalog,
     PostReportActionEvaluationLeaseRenewer leaseRenewer,
     ILogger<PostReportActionEvaluationPump> logger)
 {
-    private readonly PostReportActionEvaluationTaskSet activeEvaluations = new(logger);
+    private readonly ClaimedTaskSet activeEvaluations = PostReportActionEvaluationTaskSet.Create(logger);
 
     public int ActiveEvaluationCount => activeEvaluations.Count;
 

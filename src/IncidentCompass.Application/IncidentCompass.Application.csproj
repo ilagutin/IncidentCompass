@@ -24,7 +24,7 @@
          reserved-keyword-in-other-languages warning would break that convention project-wide.
          CA1822 fires on ToolRuleEngine, a deliberately instantiable DI-composed governance
          collaborator on the single tool-policy decision path. Making its methods static would
-         remove that seam; backlog item IC-BL-068 owns the shape of this file. -->
+         remove that seam. -->
     <NoWarn>$(NoWarn);CA1716;CA1822</NoWarn>
   </PropertyGroup>
 

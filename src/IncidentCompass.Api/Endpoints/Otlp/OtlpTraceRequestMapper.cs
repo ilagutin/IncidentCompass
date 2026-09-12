@@ -82,6 +82,7 @@ internal static class OtlpTraceRequestMapper
             throw new InvalidOtlpPayloadException($"OTLP {name} must contain exactly {expectedLength} bytes and must not be all zero.");
         }
     }
+
     private static int? DurationMilliseconds(ulong startTimeUnixNano, ulong endTimeUnixNano)
     {
         if (endTimeUnixNano < startTimeUnixNano)

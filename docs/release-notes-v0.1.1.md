@@ -1,5 +1,10 @@
 # IncidentCompass 0.1.1 - MVP hardening patch
 
+> Historical record, partly superseded (2026-09-11): the Development worker lease and the shipped
+> investigation wall-clock budget described below are now 720 and 600 seconds, raised in 0.4.0 for
+> local generation. The invariant that the lease exceeds the budget is unchanged and still tested. See
+> [0.4.0](release-notes-v0.4.0.md) for current behaviour.
+
 IncidentCompass 0.1.1 strengthens the first public reference release without adding a new product
 surface. The patch focuses on correctness, privacy, concurrency safety and reproducible local use.
 

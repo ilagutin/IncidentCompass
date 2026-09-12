@@ -1,9 +1,4 @@
-using System.Security.Cryptography;
-using System.Text;
-using IncidentCompass.Application.Core.Embeddings;
 using IncidentCompass.Application.Core.Observability;
-using IncidentCompass.Application.Intake.Configuration;
-using IncidentCompass.Application.Memory;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -13,7 +8,6 @@ namespace IncidentCompass.Infrastructure.Memory;
 
 internal sealed partial class MemorySeedHostedService(
     IOptions<MemorySeedOptions> options,
-    IHostEnvironment environment,
     IServiceScopeFactory scopeFactory,
     MemorySeedSyncStatus syncStatus,
     MemorySeedSyncStatusPersistence statusPersistence,
@@ -21,7 +15,6 @@ internal sealed partial class MemorySeedHostedService(
     ILogger<MemorySeedHostedService> logger,
     IRuntimeTelemetry? telemetry = null) : IHostedService, IDisposable
 {
-    private const string MemorySearchToolName = "memory_search";
     private CancellationTokenSource? resyncCancellation;
     private Task? resyncTask;
 
@@ -104,22 +97,15 @@ internal sealed partial class MemorySeedHostedService(
         try
         {
             using var scope = scopeFactory.CreateScope();
-            var configurationRepository = scope.ServiceProvider.GetRequiredService<ITriageConfigurationRepository>();
-            var embeddingClient = scope.ServiceProvider.GetRequiredService<IEmbeddingClient>();
-            var memoryRepository = scope.ServiceProvider.GetRequiredService<IMemoryRepository>();
-            var configuration = await configurationRepository.GetCurrentAsync(cancellationToken);
-            var route = ResolveEmbeddingRoute(configuration);
-            var scan = MemorySeedFileLoader.LoadScan(ResolveRootDirectory());
-            var entries = new List<MemorySeedEntry>(scan.Files.Count);
-            foreach (var file in scan.Files)
+            var synchronizer = scope.ServiceProvider.GetRequiredService<MemorySeedSynchronizer>();
+            var outcome = await synchronizer.SynchronizeAsync(MemorySeedSyncMode.Incremental, cancellationToken);
+            if (!outcome.Published)
             {
-                entries.Add(await PrepareSeedAsync(file, route, embeddingClient, memoryRepository, cancellationToken));
+                await RecordRebuildRequiredAsync(outcome, cancellationToken);
+                return;
             }
 
-            var corpus = new MemorySeedCorpus(
-                options.Value.TenantId, options.Value.Owner, Guid.NewGuid(), scan.PresentDirectories, entries);
-            await memoryRepository.ReconcileSeedCorpusAsync(corpus, cancellationToken);
-            syncStatus.RecordSuccess(timeProvider.GetUtcNow(), corpus.Generation);
+            syncStatus.RecordSuccess(timeProvider.GetUtcNow(), outcome.Generation!.Value);
             await statusPersistence.SaveAsync(syncStatus.Snapshot, cancellationToken);
             telemetry?.RecordMemorySync(RuntimeTelemetryOutcome.Succeeded);
         }
@@ -137,59 +123,39 @@ internal sealed partial class MemorySeedHostedService(
         }
     }
 
-    private static TriageRouteSettings ResolveEmbeddingRoute(TriageConfiguration configuration)
-    {
-        if (!configuration.Tools.TryGetValue(MemorySearchToolName, out var tool) ||
-            string.IsNullOrWhiteSpace(tool.EmbeddingRouteId))
-        {
-            throw new InvalidOperationException("memory_search must declare an EmbeddingRouteId before memory seeding can run.");
-        }
-
-        return configuration.Routes[tool.EmbeddingRouteId];
-    }
-
-    private async Task<MemorySeedEntry> PrepareSeedAsync(
-        MemorySeedFile file,
-        TriageRouteSettings route,
-        IEmbeddingClient embeddingClient,
-        IMemoryRepository memoryRepository,
+    /// <summary>
+    /// Reports a route change without failing the host start.
+    /// </summary>
+    /// <remarks>
+    /// This is deliberately not an exception. The corpus is intact, the previous route still
+    /// retrieves it, and a host that refused to start would take the API and the Worker down over a
+    /// configuration edit that a single operator command resolves. What it must not do is look
+    /// healthy, so the status carries an error code and the health check reports degraded.
+    /// </remarks>
+    private async Task RecordRebuildRequiredAsync(
+        MemorySeedSyncOutcome outcome,
         CancellationToken cancellationToken)
     {
-        var contentHash = ComputeSha256Hex(file.Content);
-        var item = CreateItem(file, contentHash);
-        if (await memoryRepository.SeedItemExistsAsync(options.Value.Owner, item, cancellationToken))
-        {
-            return new MemorySeedEntry(item, []);
-        }
-
-        var embedding = await embeddingClient.CreateEmbeddingAsync(
-            new EmbeddingRequest(file.Content, route.Model, "memory-seed:" + file.Source), cancellationToken);
-        var chunk = new MemorySeedChunk(
-            MemorySeedFileLoader.DeterministicId(item.Id + ":0:" + embedding.Provider + ":" + embedding.Model + ":" + embedding.Vector.Count),
-            Position: 0, file.Content, ComputeSha256Hex(file.Content), embedding.Provider, embedding.Model,
-            embedding.Vector.Count, embedding.Vector);
-        return new MemorySeedEntry(item, [chunk]);
+        syncStatus.RecordRebuildRequired(MemoryCorpusErrorCodes.From(outcome.State), outcome.Generation);
+        await statusPersistence.SaveAsync(syncStatus.Snapshot, cancellationToken);
+        telemetry?.RecordMemorySync(RuntimeTelemetryOutcome.Failed);
+        LogRebuildRequired(logger, outcome.State.ToString(), outcome.Route.RouteId, outcome.ItemCount);
     }
-
-    private MemorySeedItem CreateItem(MemorySeedFile file, string contentHash) =>
-        new(MemorySeedFileLoader.DeterministicId(
-                options.Value.TenantId + ":" + options.Value.Owner + ":" + file.Source + ":seed-v3"),
-            options.Value.TenantId, file.Kind, file.Source, file.Title, file.Content, contentHash,
-            Version: 1, file.Tags, file.ServiceName, file.Component, file.ReleaseName);
-
-    private string ResolveRootDirectory()
-    {
-        var sourceDirectory = options.Value.SourceDirectory;
-        return Path.IsPathRooted(sourceDirectory)
-            ? sourceDirectory
-            : Path.GetFullPath(Path.Combine(environment.ContentRootPath, sourceDirectory));
-    }
-
-    private static string ComputeSha256Hex(string value) =>
-        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
 
     [LoggerMessage(2301, LogLevel.Warning, "Memory seed runtime synchronization failed with {FailureType}.")]
     private static partial void LogRuntimeSyncFailed(ILogger logger, string failureType);
+
+    [LoggerMessage(
+        2303,
+        LogLevel.Warning,
+        "Memory seed synchronization published nothing because the corpus is {CorpusState} " +
+        "relative to embedding route {RouteId}; {ActiveItemCount} previously seeded items remain " +
+        "active and retrievable under the route that built them. Run the memory rebuild command.")]
+    private static partial void LogRebuildRequired(
+        ILogger logger,
+        string corpusState,
+        string routeId,
+        int activeItemCount);
 
     public void Dispose()
     {

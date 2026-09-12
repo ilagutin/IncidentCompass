@@ -166,6 +166,22 @@ internal static class PostgresMigrationTestSupport
             reader.IsDBNull(5) ? null : reader.GetFieldValue<DateTimeOffset>(5),
             reader.IsDBNull(6) ? null : reader.GetString(6));
 
+    public static async Task SetMigrationChecksumAsync(
+        string connectionString,
+        int version,
+        string checksum)
+    {
+        await using var connection = await OpenAsync(connectionString);
+        await using var command = new NpgsqlCommand("""
+            UPDATE incidentcompass.schema_migrations
+            SET checksum = $2
+            WHERE version = $1;
+            """, connection);
+        command.Parameters.AddWithValue(version);
+        command.Parameters.AddWithValue(checksum);
+        Assert.Equal(1, await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken));
+    }
+
     public static async Task<int> CountAsync(string connectionString, string tableName) =>
         Convert.ToInt32(await ExecuteScalarAsync(
             connectionString,

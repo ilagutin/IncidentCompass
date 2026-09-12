@@ -240,7 +240,7 @@ public sealed class MemorySearchTests(PostgresRepositoryFixture postgres)
 
         var decisions = await ReadToolLedgerRowsAsync(scope.ConnectionString, ingested.JobId.Value);
         Assert.Contains(decisions, row => row.EventType == "PolicyDecision" && row.ToolName == "memory_search" && row.Decision == "Allowed");
-        Assert.Contains(decisions, row => row.EventType == "PolicyDecision" && row.ToolName == "memory_search" && row.Decision == "Denied" && row.DecisionReason!.Contains("rate_cap exceeded", StringComparison.Ordinal));
+        Assert.Contains(decisions, row => row.EventType == "PolicyDecision" && row.ToolName == "memory_search" && row.Decision == "Denied" && row.DecisionReason!.StartsWith("rate_cap_exceeded:", StringComparison.Ordinal));
     }
 
     private async Task<TestScope> CreateScopeAsync(
@@ -317,6 +317,8 @@ public sealed class MemorySearchTests(PostgresRepositoryFixture postgres)
                 "local",
                 "test",
                 Guid.NewGuid(),
+                new MemoryCorpusIdentity(
+                    "memory-embed", "local-oai", embedding.Provider, embedding.Model, embedding.Vector.Count),
                 new HashSet<string>(StringComparer.Ordinal) { "samples" },
                 [new MemorySeedEntry(item, [chunk])]),
             TestContext.Current.CancellationToken);

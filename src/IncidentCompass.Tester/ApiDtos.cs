@@ -24,7 +24,12 @@ internal sealed record FaultLedgerEvent(
     string? Decision,
     string? Rationale,
     string? PayloadRef,
-    string ConfigHash);
+    string ConfigHash,
+    string? DecisionReason = null,
+    string? ToolStatus = null,
+    int? TokensDelta = null,
+    int? WorkersDelta = null,
+    DateTimeOffset? CreatedAtUtc = null);
 
 internal sealed record TriageReportResponse(
     Guid Id,
@@ -38,7 +43,8 @@ internal sealed record TriageReportResponse(
     IReadOnlyList<string> Limitations,
     string ConfigHash,
     DateTimeOffset CreatedAtUtc,
-    IReadOnlyList<TriageEvidenceResponse> Evidence);
+    IReadOnlyList<TriageEvidenceResponse> Evidence,
+    string DocumentationFit = "Missing");
 
 internal sealed record TriageEvidenceResponse(
     Guid Id,
@@ -55,5 +61,6 @@ internal sealed record TriageEvidenceResponse(
 [JsonSerializable(typeof(IncidentEnvelope))]
 [JsonSerializable(typeof(IngestSignalResponse))]
 [JsonSerializable(typeof(FaultLedgerResponse))]
+[JsonSerializable(typeof(FaultDetailsResponse))]
 [JsonSerializable(typeof(TriageReportResponse))]
 internal sealed partial class TesterJsonContext : JsonSerializerContext;

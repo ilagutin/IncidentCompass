@@ -1,0 +1,54 @@
+{
+  "$schema": "../../../../config/incidentcompass.schema.json",
+  "Providers": {
+    "mock-primary": { "Kind": "Mock" },
+    "mock-secondary": { "Kind": "Mock" }
+  },
+  "Routes": {
+    "analysis-chat": { "Kind": "Chat", "ProviderId": "mock-secondary", "Model": "local-worker-model", "Temperature": 0.1, "MaxOutputTokens": 2000, "ContextWindowTokens": 8192 },
+    "report-chat":   { "Kind": "Chat", "ProviderId": "mock-primary", "Model": "local-orchestrator-model", "Temperature": 0.2, "MaxOutputTokens": 8000, "ContextWindowTokens": 8192 },
+    "memory-embed":  { "Kind": "Embedding", "ProviderId": "mock-primary", "Model": "mock-memory-embedding-v1" }
+  },
+  "Orchestrator": {
+    "Instructions": "ref:../test-triage-config/instructions/orchestrator.md",
+    "RouteId": "report-chat",
+    "Tools": ["delegate", "publish_report"],
+    "Budget": { "MaxWorkers": 6, "MaxTokens": 200000, "MaxWallClockSeconds": 120, "MaxReprompts": 2 }
+  },
+  "Roles": {
+    "analysis": { "RouteId": "analysis-chat", "Instructions": "ref:../test-triage-config/instructions/analysis.md", "Tools": [],                "OutputSchema": "ref:schemas/analysis.json" },
+    "memory":   { "RouteId": "analysis-chat", "Instructions": "ref:../test-triage-config/instructions/memory.md",   "Tools": ["memory_search"], "OutputSchema": "ref:../test-triage-config/schemas/memory.json" },
+    "source":   { "RouteId": "analysis-chat", "Instructions": "ref:../test-triage-config/instructions/source.md",   "Tools": ["source_lookup"], "OutputSchema": "ref:../test-triage-config/schemas/source.json" },
+    "tickets":  { "RouteId": "analysis-chat", "Instructions": "ref:../test-triage-config/instructions/tickets.md",  "Tools": ["ticket_search"], "OutputSchema": "ref:../test-triage-config/schemas/tickets.json" }
+  },
+  "Tools": {
+    "memory_search": { "Kind": "internal", "EmbeddingRouteId": "memory-embed", "TopK": 5, "MinScore": 0.25 },
+    "source_lookup": { "Kind": "internal" },
+    "ticket_search": { "Kind": "internal" },
+    "ticket_create": { "Kind": "external_action", "Category": "ticket_create", "LogicalTargetId": "ticket:configured-repository", "Mode": "disabled" }
+  },
+  "Rules": [
+    { "Type": "rate_cap", "Tool": "*", "Scope": "attempt", "Max": 50 }
+  ],
+  "Actions": { "AllowedTools": [], "DefaultMode": "disabled", "RequireApprovalForAll": false, "ApprovalTtlMinutes": 60, "NotificationRoutes": [] },
+  "Ingestion": { "DefaultTenant": "local", "AllowedSources": ["otel", "user", "tester", "manual"] },
+  "Redaction": {
+    "AttributeKeys": [],
+    "Patterns": [],
+    "UserIdentifierAttributes": []
+  },
+  "FaultGrouping": {
+    "LookbackMinutes": 15,
+    "SilenceWindowMinutes": 1,
+    "FingerprintVersion": 1,
+    "FingerprintRules": [
+      { "Id": "route-only-checkout", "Version": 2, "ServiceName": "rule-checkout", "Inputs": ["ServiceName", "Environment", "ErrorType", "HttpRoute"] }
+    ],
+    "SuppressionRules": [
+      { "Id": "service-extended", "SilenceWindowMinutes": 60, "ServiceName": "suppression-extended" }
+    ],
+    "Recurrence": { "EscalateAfterCount": 2 },
+    "MassIssue": { "MinNeighborCount": 5, "MinFingerprintStrength": "strong" }
+  },
+  "CurrentReleases": { "checkout": "2026.08.28.1" }
+}

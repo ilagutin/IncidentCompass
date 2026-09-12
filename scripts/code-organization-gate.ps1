@@ -147,7 +147,12 @@ foreach ($scope in $scopes) {
             })
         }
 
-        $statusMatches = Select-String -LiteralPath $file.FullName -Pattern $statusStringPattern -AllMatches
+        # A documentation comment is prose, not a persisted representation. `<param name="Failed">`
+        # is the shape that collides: the rule looks for a status written as a bare string literal in
+        # code, and a gate that fires on the documentation of such a field teaches people to rename
+        # the field rather than to stop writing the literal.
+        $statusMatches = Select-String -LiteralPath $file.FullName -Pattern $statusStringPattern -AllMatches |
+            Where-Object { $_.Line.TrimStart() -notmatch '^///' }
         foreach ($statusMatch in $statusMatches) {
             foreach ($match in $statusMatch.Matches) {
                 $findings.Add([pscustomobject]@{

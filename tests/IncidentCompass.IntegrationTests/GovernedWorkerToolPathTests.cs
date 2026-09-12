@@ -48,7 +48,7 @@ public sealed class GovernedWorkerToolPathTests(PostgresRepositoryFixture postgr
 
         Assert.Equal("DeadLettered", job.Status);
         Assert.Contains(decisions, row => row.ToolName == "tool_x" && row.Decision == "Allowed");
-        Assert.Contains(decisions, row => row.ToolName == "tool_x" && row.Decision == "Denied" && row.DecisionReason!.Contains("rate_cap exceeded", StringComparison.Ordinal));
+        Assert.Contains(decisions, row => row.ToolName == "tool_x" && row.Decision == "Denied" && row.DecisionReason!.StartsWith("rate_cap_exceeded:", StringComparison.Ordinal));
         var toolXResult = Assert.Single(toolResults, row => row.ToolName == "tool_x");
         Assert.Equal("Succeeded", toolXResult.ToolStatus);
     }
@@ -344,7 +344,7 @@ public sealed class GovernedWorkerToolPathTests(PostgresRepositoryFixture postgr
 
     private static async Task<IngestSignalResponseDto> PostIngestAsync(HttpClient client)
     {
-        var unique = Guid.NewGuid().ToString("N");
+        var unique = IngestFingerprintUniqueness.Token();
         var response = await client.PostAsJsonAsync(
             "/api/v1/incidents",
             new TesterEnvelopeDto(

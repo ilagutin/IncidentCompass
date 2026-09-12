@@ -15,6 +15,7 @@ using IncidentCompass.Application.Investigation;
 using IncidentCompass.Application.Memory;
 using IncidentCompass.Application.Notifications;
 using IncidentCompass.Application.Observability.CostRollup;
+using IncidentCompass.Application.Remediation;
 using IncidentCompass.Application.SourceContext;
 using IncidentCompass.Application.Tickets;
 using Microsoft.Extensions.Configuration;
@@ -50,6 +51,7 @@ public static class Setup
         services.AddGovernanceCore();
         services.AddInvestigationCore();
         services.AddMemoryCore();
+        services.AddRemediationCore();
         services.AddSourceContextCore();
         services.AddTicketsCore();
         services.TryAddScoped<IRequestHandler<CostRollupQuery, CostRollupResponse>, CostRollupQueryHandler>();
@@ -93,6 +95,14 @@ public static class Setup
         services.TryAddEnumerable(ServiceDescriptor.Singleton<
             IValidateOptions<IngestionLimitsOptions>,
             IngestionLimitsOptionsValidator>());
+
+        services
+            .AddOptions<RetentionOptions>()
+            .Bind(configuration.GetSection(RetentionOptions.SectionName))
+            .ValidateOnStart();
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<
+            IValidateOptions<RetentionOptions>,
+            RetentionOptionsValidator>());
 
         services
             .AddOptions<PseudonymizationOptions>()

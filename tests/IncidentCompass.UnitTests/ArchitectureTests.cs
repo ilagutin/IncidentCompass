@@ -1,10 +1,63 @@
+using System.Text.RegularExpressions;
 using System.Xml.Linq;
+using IncidentCompass.Application.Governance.Tools;
+using IncidentCompass.Domain.Incidents;
 using IncidentCompass.TestSupport;
 
 namespace IncidentCompass.UnitTests;
 
-public sealed class ArchitectureTests
+public sealed partial class ArchitectureTests
 {
+    private const string ApplicationNamespace = "IncidentCompass.Application";
+    private const string ApplicationCoreNamespace = ApplicationNamespace + ".Core";
+    private const string ApplicationCoreNamespacePrefix = ApplicationCoreNamespace + ".";
+
+    private static readonly char[] DeclarationSeparators = [' ', '\t'];
+
+    private static readonly string[] TypeDeclarationModifiers =
+    [
+        "public",
+        "internal",
+        "protected",
+        "private",
+        "file",
+        "new",
+        "sealed",
+        "abstract",
+        "static",
+        "partial",
+        "unsafe"
+    ];
+
+    /// <summary>
+    /// Every file that writes a <c>triage_artifacts</c> row in a shape this test can see, with a
+    /// description of what its payload is. Most entries redact or carry an already-redacted payload;
+    /// an entry that does not says so, because an honest list is more useful than a list that only
+    /// admits safe writers.
+    /// </summary>
+    private static readonly Dictionary<string, string> RedactionBoundaryFiles = new(StringComparer.Ordinal)
+    {
+        ["src/IncidentCompass.Application/Governance/Tools/RedactedToolArtifactFactory.cs"] =
+            "runs redaction over every tool-produced payload and hashes the redacted form",
+        ["src/IncidentCompass.Application/Intake/Artifacts/GroundedFactsAssembler.cs"] =
+            "assembles intake artifacts from the signal that intake already redacted before persisting it",
+        ["src/IncidentCompass.Infrastructure/Intake/PostgresRecurrenceEscalationReTriageScheduler.cs"] =
+            "copies payloads that are already stored in redacted_payload onto the re-triage job",
+        ["src/IncidentCompass.Infrastructure/Intake/PostgresTriageArtifactRepository.cs"] =
+            "is the ITriageArtifactRepository adapter: it persists a TriageArtifact its caller " +
+            "already built at one of the boundaries above and adds no payload of its own",
+        ["src/IncidentCompass.Infrastructure/Investigation/PostgresTriageJobInvestigationContextRepository.cs"] =
+            "rehydrates rows read back out of redacted_payload",
+        ["src/IncidentCompass.Infrastructure/Investigation/PostgresTriageToolResultCommitter.cs"] =
+            "writes the ToolResult row from output the Application layer redacted before handing it over",
+        ["src/IncidentCompass.Infrastructure/Governance/ActionApprovals/PostgresActionProposalWriter.cs"] =
+            "writes the ProposedAction row by direct SQL from the backend-built approval contract " +
+            "(action id, category, mode, canonical payload and hashes), never from connector text",
+        ["src/IncidentCompass.Infrastructure/Governance/ActionApprovals/PostgresActionResultWriter.cs"] =
+            "writes the ActionResult row by direct SQL; its payload is the action's own status, " +
+            "summary and failure code plus the connector response the action executor returned",
+    };
+
     private static readonly HashSet<string> ExactReferenceProjects = new(StringComparer.OrdinalIgnoreCase)
     {
         "IncidentCompass.Domain",
@@ -32,6 +85,47 @@ public sealed class ArchitectureTests
             ],
         ["IncidentCompass.Tester"] = []
     };
+
+    /// <summary>
+    /// The exact package set each inner layer may declare in its own csproj.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Domain: none.</b> It is simple records and enums with no behaviour that needs a library,
+    /// and <c>CLAUDE.md</c> forbids it depending on provider SDKs or persistence libraries. Zero is
+    /// both what it has today and the only line that needs no case-by-case argument.
+    /// </para>
+    /// <para>
+    /// <b>Application: abstractions and the documented validation library.</b> Every entry is
+    /// contract-only. The four <c>Microsoft.Extensions.*</c> packages are the hosting seams the
+    /// layer is composed and observed through - <c>AddApplication</c> needs the dependency-injection
+    /// abstractions, typed options need the configuration and options abstractions, and
+    /// <c>ILogger&lt;T&gt;</c> is how the documented observability model reaches this layer. None of
+    /// them carries an implementation: no host, no configuration provider, no logging sink.
+    /// FluentValidation and its dependency-injection extension are the validation choice
+    /// <c>CLAUDE.md</c> names, and validators run in the dispatcher pipeline that lives here.
+    /// </para>
+    /// <para>
+    /// What is deliberately absent is the whole point: no Npgsql or other driver, no
+    /// <c>System.Net.Http</c>-shaped client package, no provider SDK, no serialization format
+    /// binding. Adding one fails this test rather than passing quietly, and widening the list means
+    /// writing the argument for it here.
+    /// </para>
+    /// </remarks>
+    private static readonly Dictionary<string, string[]> AllowedInnerLayerPackages =
+        new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["IncidentCompass.Domain"] = [],
+            ["IncidentCompass.Application"] =
+                [
+                    "FluentValidation",
+                    "FluentValidation.DependencyInjectionExtensions",
+                    "Microsoft.Extensions.Configuration.Abstractions",
+                    "Microsoft.Extensions.DependencyInjection.Abstractions",
+                    "Microsoft.Extensions.Logging.Abstractions",
+                    "Microsoft.Extensions.Options.ConfigurationExtensions"
+                ]
+        };
 
     [Fact]
     public void SourceProjects_UseOnlyAllowedProjectReferences()
@@ -127,11 +221,26 @@ public sealed class ArchitectureTests
     }
 
     [Fact]
+    public void SourceProjects_DoNotRedeclareDomainAlongsideApplication()
+    {
+        var failures = LoadSourceProjects().Values
+            .Where(project =>
+                project.ProjectReferences.Contains("IncidentCompass.Application", StringComparer.OrdinalIgnoreCase) &&
+                project.ProjectReferences.Contains("IncidentCompass.Domain", StringComparer.OrdinalIgnoreCase))
+            .Select(project =>
+                $"{project.Name} declares IncidentCompass.Domain, which already arrives through IncidentCompass.Application.")
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.Empty(failures);
+    }
+
+    [Fact]
     public void DomainProject_DoesNotDeclareApplicationPorts()
     {
         var domainDirectory = Path.Combine(RepositoryRootLocator.Find(), "src", "IncidentCompass.Domain");
         var filesWithInterfaces = EnumerateSourceFiles(domainDirectory)
-            .Where(filePath => File.ReadAllText(filePath).Contains("interface ", StringComparison.Ordinal))
+            .Where(filePath => File.ReadLines(filePath).Any(IsInterfaceDeclaration))
             .Select(filePath => Path.GetRelativePath(domainDirectory, filePath).Replace('\\', '/'))
             .Order(StringComparer.OrdinalIgnoreCase)
             .ToArray();
@@ -139,6 +248,53 @@ public sealed class ArchitectureTests
         Assert.Empty(filesWithInterfaces);
     }
 
+    /// <summary>
+    /// The OpenAI-compatible model and embedding adapters are the real provider integrations. They
+    /// bind to the gateway contracts in <c>IncidentCompass.Application.Core</c> and to nothing else
+    /// in Application: an adapter that reaches into a feature folder has reached past the port it
+    /// implements, and the primitive it wanted belongs in <c>Core</c> instead. The mock adapters are
+    /// deliberately outside this rule - they script the orchestrator's own tool catalog, which is
+    /// investigation behavior rather than provider behavior.
+    /// The scan is over every occurrence of the namespace root in the file text rather than over
+    /// plain <c>using</c> lines, so <c>using static</c>, a using alias and a fully qualified inline
+    /// reference with no <c>using</c> at all are all caught. <c>using static</c> is idiomatic here:
+    /// the mock script adapter next door already uses one.
+    /// </summary>
+    [Fact]
+    public void OpenAiProviderAdapters_BindOnlyToApplicationCoreContracts()
+    {
+        var repositoryRoot = RepositoryRootLocator.Find();
+        var infrastructureDirectory = Path.Combine(repositoryRoot, "src", "IncidentCompass.Infrastructure");
+        var adapterDirectories = new[]
+        {
+            Path.Combine(infrastructureDirectory, "ModelGateway", "OpenAi"),
+            Path.Combine(infrastructureDirectory, "Embeddings", "OpenAi")
+        };
+        var failures = new List<string>();
+
+        foreach (var adapterDirectory in adapterDirectories)
+        {
+            Assert.True(Directory.Exists(adapterDirectory), $"{adapterDirectory} does not exist.");
+            foreach (var sourcePath in EnumerateSourceFiles(adapterDirectory))
+            {
+                var relativePath = Path.GetRelativePath(repositoryRoot, sourcePath).Replace('\\', '/');
+                failures.AddRange(EnumerateApplicationReferences(File.ReadAllText(sourcePath))
+                    .Where(reference => !IsApplicationCoreReference(reference))
+                    .Distinct(StringComparer.Ordinal)
+                    .Order(StringComparer.Ordinal)
+                    .Select(reference =>
+                        $"{relativePath} references {reference}; the OpenAI-compatible adapters may reference only {ApplicationCoreNamespace}.*."));
+            }
+        }
+
+        Assert.Empty(failures);
+    }
+
+    // The markers below appear nowhere under `src/`, so this test passes by construction today. It
+    // is a forward guard rather than a report of a past failure: Application is a pure orchestration
+    // layer, and README lists MCP product surfaces as out of scope. Shelling out or taking an MCP
+    // SDK dependency from Application would move process I/O and a provider protocol to the wrong
+    // side of the port boundary, and this test fails the first change that tries it.
     [Fact]
     public void ApplicationProject_DoesNotReferenceExternalMcpSdkOrProcessIo()
     {
@@ -156,6 +312,7 @@ public sealed class ArchitectureTests
         {
             AddForbiddenMarkers(
                 failures,
+                "external MCP/process I/O",
                 Path.GetRelativePath(RepositoryRootLocator.Find(), projectPath),
                 File.ReadAllText(projectPath),
                 forbiddenMarkers);
@@ -165,12 +322,87 @@ public sealed class ArchitectureTests
         {
             AddForbiddenMarkers(
                 failures,
+                "external MCP/process I/O",
                 Path.GetRelativePath(RepositoryRootLocator.Find(), sourcePath),
                 File.ReadAllText(sourcePath),
                 forbiddenMarkers);
         }
 
         Assert.Empty(failures);
+    }
+
+    /// <summary>
+    /// A review aid for <c>triage_artifacts.redacted_payload</c>, not a proof about it. It lists the
+    /// files that write that column in the two ordinary shapes - a <c>new TriageArtifact(...)</c>
+    /// expression, and a direct <c>INSERT INTO ... triage_artifacts</c> - and fails when that list
+    /// changes, so a new writer is argued for here instead of appearing quietly. Each entry says what
+    /// its payload actually is; saying so is the point, and an entry is free to describe a payload
+    /// this boundary does not redact.
+    /// <para>
+    /// What it does not do is close the set. It is a text scan, so a <c>with</c> expression on an
+    /// existing artifact, a factory method, fully-qualified construction and SQL assembled at runtime
+    /// all walk straight through it. The real protection is the type contract: an immediate tool
+    /// returns <c>ToolArtifactDraft</c> and cannot express a persisted artifact at all, so a tool that
+    /// skips redaction does not compile. That is asserted separately, below. This test is the
+    /// cheap backstop for everything outside the tool path.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void TriageArtifactWrites_StayOnTheReviewedList()
+    {
+        var repositoryRoot = RepositoryRootLocator.Find();
+        var sourceDirectory = Path.Combine(repositoryRoot, "src");
+        var actual = EnumerateSourceFiles(sourceDirectory)
+            .Where(sourcePath => WritesTriageArtifacts(File.ReadAllText(sourcePath)))
+            .Select(sourcePath => Path.GetRelativePath(repositoryRoot, sourcePath).Replace('\\', '/'))
+            .ToHashSet(StringComparer.Ordinal);
+        var failures = actual
+            .Where(path => !RedactionBoundaryFiles.ContainsKey(path))
+            .Select(path => path +
+                " writes triage_artifacts outside the reviewed list. A worker tool should return a" +
+                " ToolArtifactDraft instead; anything else has to be listed here with a description of" +
+                " what its payload is and where it was redacted.")
+            .Concat(RedactionBoundaryFiles
+                .Where(entry => !actual.Contains(entry.Key))
+                .Select(entry => entry.Key +
+                    " no longer writes triage_artifacts, so drop it from the reviewed list (" +
+                    entry.Value + ")."))
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.Empty(failures);
+    }
+
+    private static bool WritesTriageArtifacts(string source) =>
+        source.Contains("new TriageArtifact(", StringComparison.Ordinal) ||
+        DirectArtifactInsertPattern().IsMatch(source);
+
+    /// <summary>
+    /// The direct-SQL half of the scan. Two writers assemble the row themselves instead of going
+    /// through <c>ITriageArtifactRepository</c>, so matching only the constructor would have left
+    /// them invisible to this list.
+    /// </summary>
+    [GeneratedRegex(@"INSERT\s+INTO\s+incidentcompass\.triage_artifacts", RegexOptions.IgnoreCase)]
+    private static partial Regex DirectArtifactInsertPattern();
+
+    /// <summary>
+    /// The compile-time half of the same rule: an immediate tool hands back drafts, and the executor
+    /// is what turns a draft into a persisted artifact. If this contract is ever widened back to the
+    /// persisted type, tools regain the ability to write an unredacted payload and only a reviewer
+    /// would notice.
+    /// </summary>
+    [Fact]
+    public void ImmediateToolResults_CarryDraftsRatherThanPersistedArtifacts()
+    {
+        var artifacts = typeof(ToolExecutionResult).GetProperty(nameof(ToolExecutionResult.Artifacts));
+
+        Assert.NotNull(artifacts);
+        Assert.Equal(
+            typeof(IReadOnlyCollection<ToolArtifactDraft>),
+            artifacts.PropertyType);
+        Assert.DoesNotContain(
+            typeof(ToolArtifactDraft).GetProperties(),
+            property => property.PropertyType == typeof(TriageArtifact));
     }
 
     [Fact]
@@ -193,9 +425,88 @@ public sealed class ArchitectureTests
             {
                 AddForbiddenMarkers(
                     failures,
+                    "API authentication",
                     Path.GetRelativePath(RepositoryRootLocator.Find(), sourcePath),
                     File.ReadAllText(sourcePath),
                     forbiddenMarkers);
+            }
+        }
+
+        Assert.Empty(failures);
+    }
+
+    /// <summary>
+    /// Provider HTTP detail must not leak into an Application contract. The base of every provider
+    /// error the Application layer declares once carried the provider's <c>HttpStatusCode</c>, which
+    /// a non-HTTP provider adapter has no honest value for; what the status meant belongs in the
+    /// normalized <c>ErrorCode</c> and the <c>ProviderFailureKind</c> enum instead. The transport
+    /// namespace is matched in both of its written forms, plus the message types by name because
+    /// <c>ImplicitUsings</c> puts <c>System.Net.Http</c> in every project's global usings, so a file
+    /// can name them without writing a using directive at all. The bare word
+    /// <c>HttpStatusCode</c> is deliberately not a marker: <c>Intake/Normalization</c> carries an
+    /// <c>httpStatusCode</c> signal attribute as a plain <c>int?</c>, which is an observed property
+    /// of an incident and not a dependency on a transport type.
+    /// </summary>
+    [Fact]
+    public void ProviderTransportTypes_DoNotLeakIntoApplicationOrDomain()
+    {
+        var forbiddenMarkers = new[]
+        {
+            "using System.Net;",
+            "System.Net.",
+            "HttpRequestMessage",
+            "HttpResponseMessage",
+            "HttpRequestException",
+            "HttpClient"
+        };
+        var failures = new List<string>();
+
+        foreach (var projectName in new[] { "IncidentCompass.Application", "IncidentCompass.Domain" })
+        {
+            var projectDirectory = Path.Combine(RepositoryRootLocator.Find(), "src", projectName);
+            foreach (var sourcePath in EnumerateSourceFiles(projectDirectory))
+            {
+                AddForbiddenMarkers(
+                    failures,
+                    "provider transport",
+                    Path.GetRelativePath(RepositoryRootLocator.Find(), sourcePath),
+                    File.ReadAllText(sourcePath),
+                    forbiddenMarkers);
+            }
+        }
+
+        Assert.Empty(failures);
+    }
+
+    /// <summary>
+    /// The layer boundary is a claim about dependencies, and a <c>PackageReference</c> is a
+    /// dependency exactly as much as a <c>ProjectReference</c> is. Reading only project references
+    /// left the two inner layers open: a persistence driver, an HTTP client or a provider SDK added
+    /// to Domain passed every architecture test. Both lists are exact rather than a denylist,
+    /// because the set of packages that would be wrong here is open-ended and the set that is right
+    /// is small enough to write down and argue for.
+    /// </summary>
+    [Fact]
+    public void InnerLayerProjects_UseOnlyAllowedPackageReferences()
+    {
+        var projects = LoadSourceProjects();
+        var failures = new List<string>();
+
+        foreach (var (projectName, allowedPackages) in AllowedInnerLayerPackages)
+        {
+            if (!projects.TryGetValue(projectName, out var project))
+            {
+                failures.Add($"{projectName} was not found under src.");
+                continue;
+            }
+
+            var expected = allowedPackages.Order(StringComparer.OrdinalIgnoreCase).ToArray();
+            var actual = project.PackageReferences.Order(StringComparer.OrdinalIgnoreCase).ToArray();
+            if (!expected.SequenceEqual(actual, StringComparer.OrdinalIgnoreCase))
+            {
+                failures.Add(
+                    $"{projectName} references packages [{string.Join(", ", actual)}], " +
+                    $"expected [{string.Join(", ", expected)}].");
             }
         }
 
@@ -229,7 +540,19 @@ public sealed class ArchitectureTests
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
-        return new SourceProject(Path.GetFileNameWithoutExtension(projectPath), projectDirectory, references);
+        // Central package management means a PackageReference here carries no Version attribute;
+        // the identity that matters for the layer boundary is the Include name either way.
+        var packages = document
+            .Descendants()
+            .Where(element => element.Name.LocalName == "PackageReference")
+            .Select(element => element.Attribute("Include")?.Value)
+            .Where(include => !string.IsNullOrWhiteSpace(include))
+            .Select(include => include!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        return new SourceProject(
+            Path.GetFileNameWithoutExtension(projectPath), projectDirectory, references, packages);
     }
 
     private static IReadOnlyList<ModuleMembershipRule> ModuleMembershipRules() =>
@@ -237,7 +560,18 @@ public sealed class ArchitectureTests
             new(
                 "IncidentCompass.Application",
                 "IncidentCompass.Application",
-                ["Core", "Governance", "Intake", "Investigation", "Memory", "Notifications", "Observability", "SourceContext", "Tickets"])
+                [
+                    "Core",
+                    "Governance",
+                    "Intake",
+                    "Investigation",
+                    "Memory",
+                    "Notifications",
+                    "Observability",
+                    "Remediation",
+                    "SourceContext",
+                    "Tickets"
+                ])
         ];
 
     private static IEnumerable<string> EnumerateSourceFiles(string directory) =>
@@ -291,6 +625,7 @@ public sealed class ArchitectureTests
 
     private static void AddForbiddenMarkers(
         List<string> failures,
+        string category,
         string relativePath,
         string content,
         IReadOnlyCollection<string> markers)
@@ -299,12 +634,139 @@ public sealed class ArchitectureTests
         {
             if (content.Contains(marker, StringComparison.Ordinal))
             {
-                failures.Add($"{relativePath} contains forbidden external MCP/I/O marker {marker}.");
+                failures.Add($"{relativePath} contains forbidden {category} marker {marker}.");
             }
         }
     }
 
-    private sealed record SourceProject(string Name, string Directory, string[] ProjectReferences);
+    /// <summary>
+    /// Yields every dotted path in the file text that starts at the <c>IncidentCompass.Application</c>
+    /// namespace root, whatever syntax introduced it: a plain <c>using</c>, a <c>using static</c>, the
+    /// right-hand side of a using alias, or a fully qualified reference written inline with no
+    /// <c>using</c> at all. A match must begin and end on an identifier boundary, so
+    /// <c>IncidentCompass.ApplicationHost</c> is not reported as the Application root.
+    /// </summary>
+    private static IEnumerable<string> EnumerateApplicationReferences(string content)
+    {
+        var index = content.IndexOf(ApplicationNamespace, StringComparison.Ordinal);
+        while (index >= 0)
+        {
+            var boundary = index + ApplicationNamespace.Length;
+            var end = boundary;
+            while (end < content.Length && IsQualifiedNameCharacter(content[end]))
+            {
+                end++;
+            }
+
+            var startsAtBoundary = index == 0 || !IsQualifiedNameCharacter(content[index - 1]);
+            var endsAtBoundary = boundary >= content.Length || !IsIdentifierCharacter(content[boundary]);
+            if (startsAtBoundary && endsAtBoundary)
+            {
+                yield return content[index..end].TrimEnd('.');
+            }
+
+            index = content.IndexOf(ApplicationNamespace, end, StringComparison.Ordinal);
+        }
+    }
+
+    private static bool IsApplicationCoreReference(string reference)
+    {
+        return reference.Equals(ApplicationCoreNamespace, StringComparison.Ordinal) ||
+            reference.StartsWith(ApplicationCoreNamespacePrefix, StringComparison.Ordinal);
+    }
+
+    private static bool IsQualifiedNameCharacter(char value)
+    {
+        return IsIdentifierCharacter(value) || value == '.';
+    }
+
+    private static bool IsIdentifierCharacter(char value)
+    {
+        return char.IsLetterOrDigit(value) || value == '_';
+    }
+
+    /// <summary>
+    /// True when the line opens an <c>interface</c> declaration: leading attribute lists, then
+    /// optional modifiers (including <c>new</c>), then the keyword, then either the declared name or
+    /// the end of the line. Matching the bare substring <c>"interface "</c> instead reported the
+    /// word wherever it appeared in a comment or a string, and missed three real declaration shapes:
+    /// a keyword followed by a tab, a name wrapped onto the next line, and a line that starts with
+    /// an attribute. Known gaps: an interface nested after an opening brace on the same line, and a
+    /// declaration whose leading attribute contains an unbalanced <c>]</c> inside a string literal.
+    /// </summary>
+    private static bool IsInterfaceDeclaration(string line)
+    {
+        var tokens = StripLeadingAttributes(line).Split(
+            DeclarationSeparators,
+            StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var index = 0;
+        while (index < tokens.Length && TypeDeclarationModifiers.Contains(tokens[index], StringComparer.Ordinal))
+        {
+            index++;
+        }
+
+        if (index >= tokens.Length || !tokens[index].Equals("interface", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        if (index + 1 >= tokens.Length)
+        {
+            // `public interface` with the declared name wrapped onto the next line.
+            return true;
+        }
+
+        var declaredName = tokens[index + 1];
+        return char.IsLetter(declaredName[0]) || declaredName[0] == '_';
+    }
+
+    /// <summary>
+    /// Removes any attribute lists that open the line, so <c>[Obsolete] public interface IFoo</c> is
+    /// tokenized from its first modifier. Brackets are matched by depth to keep a nested attribute
+    /// argument such as <c>[Foo(new[] { 1 })]</c> intact; an attribute that never closes on this
+    /// line yields no tokens at all rather than a partial declaration.
+    /// </summary>
+    private static string StripLeadingAttributes(string line)
+    {
+        var remainder = line.AsSpan().TrimStart();
+        while (remainder.Length > 0 && remainder[0] == '[')
+        {
+            var depth = 0;
+            var index = 0;
+            while (index < remainder.Length)
+            {
+                if (remainder[index] == '[')
+                {
+                    depth++;
+                }
+                else if (remainder[index] == ']')
+                {
+                    depth--;
+                    if (depth == 0)
+                    {
+                        break;
+                    }
+                }
+
+                index++;
+            }
+
+            if (index >= remainder.Length)
+            {
+                return string.Empty;
+            }
+
+            remainder = remainder[(index + 1)..].TrimStart();
+        }
+
+        return remainder.ToString();
+    }
+
+    private sealed record SourceProject(
+        string Name,
+        string Directory,
+        string[] ProjectReferences,
+        string[] PackageReferences);
 
     private sealed record ModuleMembershipRule(
         string ProjectName,

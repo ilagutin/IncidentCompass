@@ -44,7 +44,6 @@
         "type": "Project",
         "dependencies": {
           "IncidentCompass.Application": "[1.0.0, )",
-          "IncidentCompass.Domain": "[1.0.0, )",
           "Npgsql": "[10.0.3, )",
           "Pgvector": "[0.3.2, )"
         }

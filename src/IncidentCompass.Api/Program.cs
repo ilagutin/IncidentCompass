@@ -1,7 +1,8 @@
 using IncidentCompass.Api;
 using IncidentCompass.Application;
 using IncidentCompass.Infrastructure;
-using IncidentCompass.Infrastructure.Intake;
+using IncidentCompass.Infrastructure.Configuration;
+using IncidentCompass.Infrastructure.Memory;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -16,6 +17,13 @@ var validationExitCode = await TriageConfigurationValidationCommand.RunIfRequest
 if (validationExitCode.HasValue)
 {
     Environment.ExitCode = validationExitCode.Value;
+    return;
+}
+
+var memoryExitCode = await MemoryCorpusCommand.RunIfRequestedAsync(args, app.Services);
+if (memoryExitCode.HasValue)
+{
+    Environment.ExitCode = memoryExitCode.Value;
     return;
 }
 

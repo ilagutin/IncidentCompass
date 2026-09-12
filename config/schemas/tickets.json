@@ -7,7 +7,6 @@
     "matched": { "type": "boolean" },
     "items": {
       "type": "array",
-      "maxItems": 5,
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -18,15 +17,15 @@
           "externalId": { "type": "string" },
           "title": { "type": "string" },
           "status": { "type": "string" },
-          "assignee": { "type": ["string", "null"] },
-          "createdAtUtc": { "type": "string", "format": "date-time" },
+          "assignee": { "type": "string" },
+          "createdAtUtc": { "type": "string" },
           "url": { "type": "string" },
-          "score": { "type": "number", "minimum": 0, "maximum": 1 }
+          "score": { "type": "number" }
         },
-        "required": ["artifactId", "provider", "scope", "externalId", "title", "status", "assignee", "createdAtUtc", "url", "score"]
+        "required": ["artifactId", "provider", "scope", "externalId", "title", "status", "createdAtUtc", "url", "score"]
       }
     },
-    "noMatchReason": { "type": ["string", "null"] }
+    "noMatchReason": { "type": "string" }
   },
   "required": ["matched", "items"]
 }

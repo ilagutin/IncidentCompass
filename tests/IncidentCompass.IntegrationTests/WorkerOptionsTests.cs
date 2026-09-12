@@ -16,20 +16,27 @@ public sealed class WorkerOptionsTests
     }
 
     [Fact]
-    public void DevelopmentLease_ExceedsShippedInvestigationWallClockBudget()
+    public void ShippedLeases_ExceedShippedInvestigationWallClockBudget()
     {
         var repositoryRoot = RepositoryRootLocator.Find();
-        var workerSettings = JsonNode.Parse(
+        var developmentSettings = JsonNode.Parse(
             File.ReadAllText(Path.Combine(repositoryRoot, "src", "IncidentCompass.Worker", "appsettings.Development.json")))!;
+        var productionSettings = JsonNode.Parse(
+            File.ReadAllText(Path.Combine(repositoryRoot, "src", "IncidentCompass.Worker", "appsettings.json")))!;
         var triageSettings = JsonNode.Parse(
             File.ReadAllText(Path.Combine(repositoryRoot, "config", "incidentcompass.config.json")))!;
 
-        var leaseSeconds = workerSettings["IncidentCompass"]!["Worker"]!["LeaseSeconds"]!.GetValue<int>();
+        var developmentLeaseSeconds = developmentSettings["IncidentCompass"]!["Worker"]!["LeaseSeconds"]!.GetValue<int>();
+        var productionLeaseSeconds = productionSettings["IncidentCompass"]!["Worker"]!["LeaseSeconds"]!.GetValue<int>();
         var wallClockSeconds = triageSettings["Orchestrator"]!["Budget"]!["MaxWallClockSeconds"]!.GetValue<int>();
 
         Assert.True(
-            leaseSeconds > wallClockSeconds,
-            $"Development lease ({leaseSeconds}s) must exceed the shipped investigation budget ({wallClockSeconds}s).");
+            developmentLeaseSeconds > wallClockSeconds,
+            $"Development lease ({developmentLeaseSeconds}s) must exceed the shipped investigation budget ({wallClockSeconds}s).");
+        Assert.Equal(900, productionLeaseSeconds);
+        Assert.True(
+            productionLeaseSeconds > wallClockSeconds,
+            $"Production lease ({productionLeaseSeconds}s) must exceed the shipped investigation budget ({wallClockSeconds}s).");
     }
 
     [Fact]

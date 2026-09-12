@@ -12,6 +12,7 @@ internal static class ActionApprovalResponseMapper
             action.State.ToStorageValue(),
             action.ApprovalContractVersion,
             action.OriginReportId,
+            action.FaultId,
             action.ToolId,
             action.Category.ToStorageValue(),
             action.Mode.ToStorageValue(),

@@ -92,6 +92,8 @@ public sealed record MemoryRetrievalBenchmarkCorpus(
                 TenantId,
                 SeedOwner,
                 GenerationId,
+                new MemoryCorpusIdentity(
+                    "memory-embed", "benchmark", "mock", EmbeddingModel, EmbeddingDimensions),
                 new HashSet<string>(StringComparer.Ordinal) { "benchmark" },
                 entries),
             cancellationToken);

@@ -17,8 +17,11 @@
           "title": { "type": "string" },
           "quote": { "type": "string" },
           "score": { "type": "number" },
-          "documentationStatus": { "enum": ["Current", "Stale", "Unversioned", "ServiceMismatch"] },
-          "targetCurrentRelease": { "type": ["string", "null"] }
+          "documentationStatus": {
+            "type": "string",
+            "enum": ["Current", "Stale", "Unversioned", "ServiceMismatch"]
+          },
+          "targetCurrentRelease": { "type": "string" }
         },
         "required": ["artifactId", "title"]
       }

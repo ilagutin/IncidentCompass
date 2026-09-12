@@ -30,7 +30,16 @@ internal sealed class PostgresTriageToolResultCommitter(
             "tool:" + request.ToolName,
             request.Output.Clone(),
             request.ContentHash,
-            createdAtUtc);
+            createdAtUtc)
+        {
+            // ToolResult is a citable artifact kind, so this row has to be able to answer the report
+            // marker's question for itself. Left silent it would be the model's choice whether the
+            // marker appears: citing this row instead of the per-item artifact carrying the same
+            // redacted text would ground just as well and say nothing about the withholding. The
+            // caller computed the flag against the pre-redaction document, which no longer exists
+            // here.
+            RedactionApplied = request.RedactionApplied
+        };
 
         await using var connection = await dataSourceProvider.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
@@ -72,6 +81,7 @@ internal sealed class PostgresTriageToolResultCommitter(
             throw new InvalidOperationException($"Triage job '{job.Id}' is no longer owned by attempt {job.Attempt}.");
         }
     }
+
     private static void ValidateAdditionalArtifact(
         TriageToolResultCommitRequest request,
         TriageArtifact artifact)
@@ -95,9 +105,11 @@ internal sealed class PostgresTriageToolResultCommitter(
     {
         await using var command = new NpgsqlCommand("""
             INSERT INTO incidentcompass.triage_artifacts (
-                id, job_id, attempt, kind, domain_ref, redacted_payload, content_hash, created_at_utc)
+                id, job_id, attempt, kind, domain_ref, redacted_payload, content_hash, created_at_utc,
+                redaction_applied)
             VALUES (
-                @id, @job_id, @attempt, @kind, @domain_ref, @redacted_payload, @content_hash, @created_at_utc);
+                @id, @job_id, @attempt, @kind, @domain_ref, @redacted_payload, @content_hash, @created_at_utc,
+                @redaction_applied);
             """, connection, transaction);
 
         command.AddParameter("id", artifact.Id);
@@ -108,6 +120,7 @@ internal sealed class PostgresTriageToolResultCommitter(
         command.AddJsonbParameter("redacted_payload", artifact.RedactedPayload.GetRawText());
         command.AddParameter("content_hash", artifact.ContentHash);
         command.AddParameter("created_at_utc", artifact.CreatedAtUtc);
+        command.AddParameter("redaction_applied", artifact.RedactionApplied);
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 

@@ -1,5 +1,11 @@
 # IncidentCompass 0.3.0 - governed context and external actions
 
+> Historical record, partly superseded (2026-09-11): 0.4.0 edited the comments of six released
+> migration scripts once, so the statement below that earlier migration bytes are preserved no longer
+> holds, and a database volume created under this release fails the 0.4.0 startup checksum guard and
+> must be recreated. The scripts are frozen from 0.4.0 forward, and the catalog now ends at version
+> 26 rather than 17. See [0.4.0](release-notes-v0.4.0.md) and [versioning](versioning.md).
+
 IncidentCompass 0.3.0 is a reference-quality local release. It adds direct read-only investigation
 context, a minimal API-key tenant boundary and backend-governed Telegram/GitHub actions without
 granting the model credentials, provider targets, approval authority or direct side-effect access.

@@ -62,19 +62,19 @@ public sealed class ToolRuleEngineLoggingTests
     private sealed class FactReader : ITriageLedgerReader
     {
         public Task<int> CountPolicyDecisionsAsync(
-            TriageJob job, string toolName, string scope, TriageLedgerDecision decision,
+            TriageJob job, string toolName, ToolRuleScope scope, TriageLedgerDecision decision,
             CancellationToken cancellationToken) => Task.FromResult(0);
 
         public Task<bool> HasSuccessfulToolResultAsync(
-            TriageJob job, string toolName, string scope, CancellationToken cancellationToken) =>
+            TriageJob job, string toolName, ToolRuleScope scope, CancellationToken cancellationToken) =>
             Task.FromResult(true);
 
         public Task<TriageBudgetLedgerUsage> ReadBudgetUsageAsync(
             TriageJob job, CancellationToken cancellationToken) =>
             Task.FromResult(new TriageBudgetLedgerUsage(0, 0));
 
-        public Task<IReadOnlyList<TriageLedgerEntry>> ReadByFaultIdAsync(
+        public Task<IReadOnlyList<FaultLedgerEntry>> ReadByFaultIdAsync(
             Guid faultId, string tenantId, CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<TriageLedgerEntry>>([]);
+            Task.FromResult<IReadOnlyList<FaultLedgerEntry>>([]);
     }
 }

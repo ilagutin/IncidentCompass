@@ -1,4 +1,5 @@
 using IncidentCompass.Application.Governance.Ledger;
+using IncidentCompass.Application.Governance.Tools;
 using IncidentCompass.Domain.Incidents;
 using IncidentCompass.Domain.Incidents.Statuses;
 using IncidentCompass.Infrastructure;
@@ -60,24 +61,24 @@ public sealed class PostgresGovernanceLedgerReaderTests(PostgresRepositoryFixtur
         var attemptPolicyCount = await reader.CountPolicyDecisionsAsync(
             job,
             "tool_x",
-            "attempt",
+            ToolRuleScope.Attempt,
             TriageLedgerDecision.Allowed,
             TestContext.Current.CancellationToken);
         var jobPolicyCount = await reader.CountPolicyDecisionsAsync(
             job,
             "tool_x",
-            "job",
+            ToolRuleScope.Job,
             TriageLedgerDecision.Allowed,
             TestContext.Current.CancellationToken);
         var attemptPrecondition = await reader.HasSuccessfulToolResultAsync(
             job,
             "tool_y",
-            "attempt",
+            ToolRuleScope.Attempt,
             TestContext.Current.CancellationToken);
         var jobPrecondition = await reader.HasSuccessfulToolResultAsync(
             job,
             "tool_y",
-            "job",
+            ToolRuleScope.Job,
             TestContext.Current.CancellationToken);
 
         Assert.Equal(new TriageBudgetLedgerUsage(7, 1), budget);

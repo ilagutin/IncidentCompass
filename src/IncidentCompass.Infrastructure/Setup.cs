@@ -7,10 +7,14 @@ using IncidentCompass.Application.Governance.ActionApprovals.Testing;
 using IncidentCompass.Application.Governance.Ledger;
 using IncidentCompass.Application.Governance.PostReportActions;
 using IncidentCompass.Application.Governance.PostReportActions.Testing;
+using IncidentCompass.Application.Intake.Retention;
 using IncidentCompass.Application.Investigation.Jobs;
 using IncidentCompass.Application.Investigation.Reports;
 using IncidentCompass.Application.Investigation.Reports.Context;
+using IncidentCompass.Application.Investigation.Reports.Fallback;
 using IncidentCompass.Application.Investigation.Reports.List;
+using IncidentCompass.Application.Investigation.Reports.Redaction;
+using IncidentCompass.Application.Investigation.Retention;
 using IncidentCompass.Infrastructure.Configuration;
 using IncidentCompass.Infrastructure.Embeddings.Mock;
 using IncidentCompass.Infrastructure.Embeddings.OpenAi;
@@ -23,8 +27,10 @@ using IncidentCompass.Infrastructure.Memory;
 using IncidentCompass.Infrastructure.ModelGateway.Mock;
 using IncidentCompass.Infrastructure.ModelGateway.OpenAi;
 using IncidentCompass.Infrastructure.Observability;
+using IncidentCompass.Infrastructure.OpenAiCompatible;
 using IncidentCompass.Infrastructure.Postgres;
 using IncidentCompass.Infrastructure.Postgres.Testing;
+using IncidentCompass.Infrastructure.Remediation;
 using IncidentCompass.Infrastructure.Security;
 using IncidentCompass.Infrastructure.SourceContext;
 using IncidentCompass.Infrastructure.Tickets;
@@ -47,14 +53,17 @@ public static class Setup
         services.Replace(ServiceDescriptor.Scoped<IClaimedTriageJobProcessor, GovernedTriageInvestigationProcessor>());
         services.AddObservabilityInfrastructure(configuration);
         services.AddPersistenceAdapters();
+        services.AddRetentionOperations();
         services.AddIntakeInfrastructure(configuration);
         services.AddMemoryInfrastructure(configuration);
         services.AddSourceContextInfrastructure(configuration);
+        services.AddRemediationInfrastructure(configuration);
         services.AddTicketInfrastructure(configuration);
         // Infrastructure supplies the Worker identity; API auth binds IUserContext explicitly.
         services.TryAddScoped<IBackgroundUserContext, SystemUserContext>();
         return services;
     }
+
     public static IServiceCollection AddPostgresMigrations(this IServiceCollection services)
     {
         // Test fault seam, not a real service: the no-op default lets PostgresMigrationRunner call
@@ -70,6 +79,7 @@ public static class Setup
 
         return services;
     }
+
     private static IServiceCollection AddGovernedInvestigationServices(this IServiceCollection services)
     {
         services.TryAddScoped<TriageLedgerAppender>();
@@ -80,6 +90,22 @@ public static class Setup
         services.TryAddScoped<TriageReportPublisher>();
         return services;
     }
+
+    /// <summary>
+    /// Binds the two retention operations here rather than in <c>AddApplication</c>. Both are
+    /// Application types, but neither can be constructed without the persistence port its adapter
+    /// supplies, and <c>AddApplication</c> has to stay resolvable on its own: the memory-only path
+    /// composes Application without any of this. Registering them next to the adapters keeps the
+    /// operation and the only thing that can satisfy it in one place - the same reason
+    /// <see cref="AddGovernedInvestigationServices" /> lives here.
+    /// </summary>
+    private static IServiceCollection AddRetentionOperations(this IServiceCollection services)
+    {
+        services.TryAddScoped<AgedSignalPayloadCompactor>();
+        services.TryAddScoped<StaleAttemptArtifactReaper>();
+        return services;
+    }
+
     private static IServiceCollection AddInfrastructureOptions(
         this IServiceCollection services,
         IConfiguration configuration)
@@ -120,12 +146,34 @@ public static class Setup
 
         return services;
     }
+
+    /// <summary>
+    /// The provider-selection collaborators both OpenAI-compatible adapters share. They are
+    /// registered once, beside the adapters rather than inside either one's registration, because a
+    /// route's provider must resolve to the same endpoint and credential whether the call is a chat
+    /// completion or an embedding.
+    /// </summary>
+    private static IServiceCollection AddProviderProfileResolution(this IServiceCollection services)
+    {
+        services.TryAddSingleton<IModelProviderSecretReader, EnvironmentModelProviderSecretReader>();
+        services.TryAddScoped<OpenAiCompatibleProviderProfileResolver>();
+        return services;
+    }
+
     private static IServiceCollection AddModelGatewayAdapters(this IServiceCollection services)
     {
+        services.AddProviderProfileResolution();
+
         // AddHttpClient registers the typed client itself; the mock has no HTTP dependency and is
         // registered directly. Both stay concrete-type registrations so the selector below can pick
         // one without a second factory.
-        services.AddHttpClient<OpenAiCompatibleModelClient>();
+        services
+            .AddHttpClient<OpenAiCompatibleModelClient>(client =>
+                client.Timeout = Timeout.InfiniteTimeSpan)
+            .ConfigurePrimaryHttpMessageHandler(static () => new SocketsHttpHandler
+            {
+                AllowAutoRedirect = false
+            });
         services.TryAddScoped<MockAiModelClient>();
 
         return services.AddProviderSelectedClient<
@@ -133,9 +181,13 @@ public static class Setup
             static options => options.Provider,
             static provider => $"Unsupported model gateway provider '{provider}'.");
     }
+
     private static IServiceCollection AddEmbeddingAdapters(this IServiceCollection services)
     {
-        services.AddHttpClient<OpenAiCompatibleEmbeddingClient>();
+        services.AddProviderProfileResolution();
+
+        services.AddHttpClient<OpenAiCompatibleEmbeddingClient>(client =>
+            client.Timeout = Timeout.InfiniteTimeSpan);
         services.TryAddScoped<MockEmbeddingClient>();
 
         return services.AddProviderSelectedClient<
@@ -150,6 +202,11 @@ public static class Setup
     /// exhaustiveness) is suppressed for it, while CS8509 (a declared <see cref="ProviderKind"/>
     /// member is not handled) stays on and is an error under TreatWarningsAsErrors, so adding a
     /// third provider kind breaks the build here instead of falling through at runtime.
+    /// The suppressed case cannot arise: the only value reaching the switch comes from
+    /// <c>ProviderKindParser.TryParse</c>, which returns <see langword="true"/> only for a declared
+    /// member, and an unparsed provider string has already thrown above. A discard arm would trade
+    /// that build-time failure for an <see cref="InvalidOperationException"/> raised while the
+    /// container resolves the client, which is a 500 in the Api and a failing Worker claim loop.
     /// </summary>
     private static IServiceCollection AddProviderSelectedClient<TClient, TOptions, TMock, TOpenAiCompatible>(
         this IServiceCollection services,
@@ -181,6 +238,7 @@ public static class Setup
 
         return services;
     }
+
     private static IServiceCollection AddPersistenceAdapters(this IServiceCollection services)
     {
         services.TryAddSingleton<PostgresDataSourceProvider>();
@@ -194,7 +252,11 @@ public static class Setup
         services.TryAddScoped<ITriageReportReadRepository, PostgresTriageReportReadRepository>();
         services.TryAddScoped<ITriageReportListRepository, PostgresTriageReportListRepository>();
         services.TryAddScoped<ITriageToolResultCommitter, PostgresTriageToolResultCommitter>();
+        services.TryAddScoped<ISignalPayloadCompactionRepository, PostgresSignalPayloadCompactionRepository>();
+        services.TryAddScoped<IAttemptArtifactRetentionRepository, PostgresAttemptArtifactRetentionRepository>();
         services.TryAddScoped<IReadOnlyContextOutcomeRepository, PostgresReadOnlyContextOutcomeRepository>();
+        services.TryAddScoped<ICitedEvidenceRedactionRepository, PostgresCitedEvidenceRedactionRepository>();
+        services.TryAddScoped<IAttemptModelFallbackRepository, PostgresAttemptModelFallbackRepository>();
         services.TryAddScoped<IActionProposalRepository, PostgresActionProposalRepository>();
         services.TryAddScoped<IActionApprovalReviewRepository, PostgresActionReviewRepository>();
         services.TryAddScoped<IActionDispatchRepository, PostgresActionDispatchRepository>();

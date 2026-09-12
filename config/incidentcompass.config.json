@@ -4,7 +4,7 @@
     "local-oai": { "Kind": "OpenAICompatible", "Endpoint": "${INCIDENTCOMPASS_LLM_BASE_URL:-http://localhost:1234}", "ApiKeySecretRef": "INCIDENTCOMPASS_LLM_API_KEY" }
   },
   "Routes": {
-    "analysis-chat": { "Kind": "Chat", "ProviderId": "local-oai", "Model": "${INCIDENTCOMPASS_LLM_MODEL:-local-model}", "Temperature": 0.1, "MaxOutputTokens": 2000, "ContextWindowTokens": 8192 },
+    "analysis-chat": { "Kind": "Chat", "ProviderId": "local-oai", "Model": "${INCIDENTCOMPASS_LLM_MODEL:-local-model}", "Temperature": 0.1, "MaxOutputTokens": 8000, "ContextWindowTokens": 8192 },
     "report-chat":   { "Kind": "Chat", "ProviderId": "local-oai", "Model": "${INCIDENTCOMPASS_LLM_MODEL:-local-model}", "Temperature": 0.2, "MaxOutputTokens": 8000, "ContextWindowTokens": 8192 },
     "memory-embed":  { "Kind": "Embedding", "ProviderId": "local-oai", "Model": "${INCIDENTCOMPASS_EMBEDDINGS_MODEL:-local-embedding-model}" }
   },
@@ -12,7 +12,7 @@
     "Instructions": "ref:instructions/orchestrator.md",
     "RouteId": "report-chat",
     "Tools": ["delegate", "publish_report"],
-    "Budget": { "MaxWorkers": 6, "MaxTokens": 200000, "MaxWallClockSeconds": 120, "MaxReprompts": 2 }
+    "Budget": { "MaxWorkers": 6, "MaxTokens": 200000, "MaxWallClockSeconds": 600, "MaxReprompts": 2 }
   },
   "Roles": {
     "analysis": { "RouteId": "analysis-chat", "Instructions": "ref:instructions/analysis.md", "Tools": [],                "OutputSchema": "ref:schemas/analysis.json" },
@@ -24,7 +24,12 @@
     "memory_search": { "Kind": "internal", "EmbeddingRouteId": "memory-embed", "TopK": 5, "MinScore": 0.25 },
     "source_lookup": { "Kind": "internal" },
     "ticket_search": { "Kind": "internal" },
-    "ticket_create": { "Kind": "external_action", "Category": "ticket_create", "LogicalTargetId": "ticket:configured-repository", "Mode": "disabled" }
+    "ticket_create": { "Kind": "external_action", "Category": "ticket_create", "LogicalTargetId": "ticket:configured-repository", "Mode": "disabled" },
+    "remediation_diff": { "Kind": "external_action", "Category": "code_write", "LogicalTargetId": "source:configured-workspace", "Mode": "disabled" },
+    "remediation_apply": { "Kind": "external_action", "Category": "code_write", "LogicalTargetId": "source:configured-workspace", "Mode": "disabled" },
+    "branch_push": { "Kind": "external_action", "Category": "branch_push", "LogicalTargetId": "code:configured-repository", "Mode": "disabled" },
+    "pr_create": { "Kind": "external_action", "Category": "pr_create", "LogicalTargetId": "code:configured-repository", "Mode": "disabled" },
+    "ticket_backlink": { "Kind": "external_action", "Category": "ticket_update", "LogicalTargetId": "ticket:configured-repository", "Mode": "disabled" }
   },
   "Rules": [
     { "Type": "rate_cap", "Tool": "*", "Scope": "attempt", "Max": 50 }

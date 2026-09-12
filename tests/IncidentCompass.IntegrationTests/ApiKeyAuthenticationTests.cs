@@ -177,6 +177,7 @@ public sealed class ApiKeyAuthenticationTests
             "/health",
             "/api/v1/health",
             "/api/v1/health/memory-sync",
+            "/api/v1/health/memory-corpus",
             "/openapi/{documentName}.json"
         };
         var routes = factory.Services.GetServices<EndpointDataSource>()

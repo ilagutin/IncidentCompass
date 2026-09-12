@@ -15,6 +15,21 @@ flowchart LR
     Infrastructure --> Providers["Mock or OpenAI-compatible providers"]
 ```
 
+Application contracts carry a provider *identity* only. `AiModelRequest.ProviderId` and
+`EmbeddingRequest.ProviderId` name the configured provider a route resolved to; turning that name
+into an endpoint and a credential happens inside Infrastructure, so no endpoint URL and no
+credential travels on an Application contract. A provider *failure* is shaped the same way:
+`ProviderException` carries a normalized `ErrorCode`, a `ProviderFailureKind` and the provider's own
+error string, and no transport type, so a non-HTTP adapter has no field it would have to invent a
+value for. See `docs/model-gateway.md`, "Providers".
+
+`ArchitectureTests` checks both halves of what a layer depends on. It reads each project's
+`ProjectReference` list against an approved matrix, and, for `Domain` and `Application`, its
+`PackageReference` list against an exact allowed set: none at all for `Domain`, and for
+`Application` only FluentValidation and the abstractions-only `Microsoft.Extensions.*` packages the
+dispatcher, typed options and `ILogger<T>` need. Adding a driver, a client or a provider SDK to
+either inner layer fails the test rather than passing because only project references were read.
+
 ## Projects
 
 - `IncidentCompass.Api`: HTTP endpoints, OpenAPI, demo auth adapter, request/response mapping.
@@ -22,12 +37,23 @@ flowchart LR
   - `Core/`: dispatcher, pipeline behaviors, identity/correlation contracts, shared configuration, base errors, health echo, current-user use case, and model/embedding gateway abstractions.
   - `Governance/`: common worker-tool contracts, validation primitives, durable triage-ledger ports
     and post-report evaluation and action approval contracts and use cases.
-  - `Intake/`: source normalization, input limits, redaction, fingerprinting, fault grouping, triage-job creation and grounded intake artifacts for the Phase 1 ingestion flow.
-  - `Investigation/`: Worker job claim/runtime seams that rehydrate claimed jobs by config hash and hand them to the governed investigation processor.
-  - `Memory/`: memory search contracts, seed records and the governed `memory_search` worker tool.
+  - `Intake/`: source normalization, input limits, redaction, fingerprinting, fault grouping, triage-job creation, grounded intake artifacts for ingestion and raw signal payload compaction.
+  - `Investigation/`: Worker job claim/runtime seams that rehydrate claimed jobs by config hash and hand them to the governed investigation processor, plus reaping of artifacts belonging to an attempt that is no longer a job's current attempt.
+  - `Memory/`: memory search contracts, seed records, corpus generation identity and state, and the
+    governed `memory_search` worker tool.
   - `Notifications/`: ordered notification routing and the non-secret Telegram tool descriptor.
     The Worker-owned workflow accepts report identity and a configured route id, not recipient or
     message text.
+  - `Observability/`: the tenant-scoped model-cost rollup read request, validator, response and
+    persistence port.
+  - `Remediation/`: the post-report remediation pass. It holds the bounded model request that asks
+    for a unified diff over a grounded report and its cited source evidence, the disposable-workspace
+    port that names a base tree and applies one candidate diff to a copy of it, the durable
+    exact-diff record, the read port that loads one published report's job, fault and cited source
+    evidence, and the post-report workflow that schedules the pass and carries its outcome onto the
+    intent. It also holds the approval half: the second backend action descriptor, the frozen
+    `code_write` payload shape a person approves and the publisher that turns one recorded diff into
+    one proposal. Nothing here executes a test or starts a process.
   - `SourceContext/`: provider-neutral source lookup contracts, bounded stack-frame extraction and
     the governed `source_lookup` worker tool.
   - `Tickets/`: system-neutral ticket-search, cited-ticket resolution and ticket-action-history
@@ -40,12 +66,42 @@ flowchart LR
 - `IncidentCompass.Worker`: DB-backed background host with separate bounded triage-job, post-report
   evaluation and approved-action pumps. Triage jobs and evaluations use renewable ownership-fenced
   leases and per-process concurrency limits; approved actions use immutable dispatch fences, deadlines
-  and at-most-once backend invocation.
+  and at-most-once backend invocation. The same host also runs the interval-driven payload retention
+  pass, which claims nothing and leases nothing: it is bounded maintenance, and it is the only thing
+  that drives the two retention operations.
+- `IncidentCompass.Tester`: the HTTP-only demo and evaluation driver. It references no other project
+  in the solution and speaks to the API as a black box, so it deliberately declares its own local
+  copies of Domain and Application concepts instead of sharing types.
 
-## Phase 1 Intake Flow
+## Intake Flow
 
-`POST /api/v1/incidents` accepts a small incident envelope. API mapping stays transport-only and dispatches `IngestSignalCommand`. Application validation checks configured source allow-list and payload size limits, normalizers produce a handler-ready signal shape, redaction removes obvious secrets while preserving null optional text fields, and fingerprinting classifies signals as `Strong` only when both service name and structured `errorType` are present. `FaultGrouping.FingerprintRules` can select service, operation and source-specific normalized inputs through an ordered deterministic rule set; every resulting signal, fault and `NeighborSet` records the effective rule id and version, so a later rule generation cannot merge into its predecessor. Fault grouping then either attaches to an open strong fault in that exact generation, applies the deterministic service/severity policy selected from `FaultGrouping.SuppressionRules` to suppress a recent closed strong fault, or opens a new fault and pending triage job. Each signal and `NeighborSet` records the effective policy id and window; unmatched signals use the `default` policy with the global `SilenceWindowMinutes`, while the stable suppression reason remains `silence_window`.
-These are four separate intake decisions. Delivery deduplication returns the already accepted signal for the same tenant, source and delivery key, so retries do not change any facts. Open-fault grouping attaches a different accepted signal to the one open fault for its exact fingerprint-rule generation. Suppression stores a different accepted signal against a recently closed fault without opening a job. A later, non-suppressed recurrence opens one recurrence fault and job; every distinct accepted signal attached to that open recurrence increments the transactionally locked group-generation recurrence state. The state stores first and last recurrence timestamps and creates at most one escalation intent for its configured threshold. `RecurrenceState` is a job-level citable artifact and is replaced when an attached signal advances the state. A duplicate delivery never advances recurrence state or creates an escalation intent.
+`POST /api/v1/incidents` accepts a small incident envelope, and API mapping stays transport-only and
+dispatches `IngestSignalCommand`. Application validation checks configured source allow-list and
+payload size limits, normalizers produce a handler-ready signal shape, redaction removes obvious
+secrets while preserving null optional text fields, and fingerprinting classifies signals as `Strong`
+only when both service name and structured `errorType` are present.
+
+`FaultGrouping.FingerprintRules` can select service, operation and source-specific normalized inputs
+through an ordered deterministic rule set. Every resulting signal, fault and `NeighborSet` records
+the effective rule id and version, so a later rule generation cannot merge into its predecessor.
+
+Fault grouping then either attaches to an open strong fault in that exact generation, applies the
+deterministic service/severity policy selected from `FaultGrouping.SuppressionRules` to suppress a
+recent closed strong fault, or opens a new fault and pending triage job. Each signal and
+`NeighborSet` records the effective policy id and window; unmatched signals use the `default` policy
+with the global `SilenceWindowMinutes`, while the stable suppression reason remains `silence_window`.
+
+Those are four separate intake decisions. Delivery deduplication returns the already accepted signal
+for the same tenant, source and delivery key, so retries do not change any facts. Open-fault grouping
+attaches a different accepted signal to the one open fault for its exact fingerprint-rule generation.
+Suppression stores a different accepted signal against a recently closed fault without opening a job.
+A later, non-suppressed recurrence opens one recurrence fault and job.
+
+Every distinct accepted signal attached to that open recurrence increments the transactionally locked
+group-generation recurrence state. The state stores first and last recurrence timestamps and creates
+at most one escalation intent for its configured threshold. `RecurrenceState` is a job-level citable
+artifact and is replaced when an attached signal advances the state. A duplicate delivery never
+advances recurrence state or creates an escalation intent.
 
 Incident-data tenancy is resolved by the server-owned `IIncidentTenantContext`, never by
 sender-controlled envelope, demo-header or OTLP fields. The auth-disabled local path returns
@@ -74,14 +130,105 @@ or log records, each of which can open a fault and a triage job. It is applied t
 export carries, before mapping and before any command is dispatched, so an over-limit export is rejected
 whole with `413 Payload Too Large` and creates no signal, fault or job; partial ingestion would leave a
 caller unable to tell what was stored. Both bounds are independent of request rate limiting.
-The PostgreSQL schema added in `infra/postgres/init/007-intake.sql` stores `signals`, `faults`, `triage_jobs`, `triage_config_snapshots` and `triage_artifacts`. `triage_artifacts` carries job-level intake facts (`TriggerSignal`, `NeighborSet`, optional `RecurrenceState` and optional `PriorReport`) plus attempt-level `WorkerOutput`, `RetrievedItem` and `ToolResult` artifacts. Phase 2 adds `infra/postgres/init/008-triage-ledger.sql` for append-only DB-ordered triage events. Phase 5 evolves `infra/postgres/init/009-triage-reports-minimal.sql` into grounded `triage_reports` plus `triage_evidence` persistence. Migration `023-action-approvals-outbox.sql` adds immutable post-report approval tuples, closed provenance, `ProposedAction` and `ActionResult` artifacts and constrained action lifecycle events. Migration `024-post-report-action-intents.sql` adds the durable evaluation queue that can create those proposals without becoming another action outbox. Migration `025-external-action-audit-projection.sql` adds an indexed immutable compact projection for confirmed Telegram and GitHub terminal results without changing the released 023/024 migrations. The Worker claim loop leases pending/retryable jobs, rehydrates each job's triage configuration from `triage_config_snapshots` by `config_hash`, runs a governed orchestrator with only `delegate(role, task)` and `publish_report(report_json)`, validates `delegate.role` against the config-derived role set, executes workers sequentially, enforces per-attempt budget and bounded reprompt policy, evaluates worker-tool rules over the ledger, and closes the job/fault only when backend-grounded report publication commits.
 
+## Persistence And The Worker Claim Loop
 
-## Phase 4 Memory Worker
+The Worker claim loop is where a pending job becomes an investigation. It leases pending/retryable
+jobs, rehydrates each job's triage configuration from `triage_config_snapshots` by `config_hash`,
+runs a governed orchestrator with only `delegate(role, task)` and `publish_report(report_json)`,
+validates `delegate.role` against the config-derived role set, executes workers sequentially,
+enforces per-attempt budget and bounded reprompt policy, evaluates worker-tool rules over the ledger,
+and closes the job/fault only when backend-grounded report publication commits.
 
-Phase 4 adds PostgreSQL-backed incident memory through `incidentcompass.memory_items` and `incidentcompass.memory_chunks`. File-backed memory sync reads runbooks, known incidents, operational notes, release notes and postmortems with optional service/component/release metadata. Within a configured seed owner, source path is the stable identity: changed files update and re-embed one active item, while removed files are deactivated and excluded from search. Each complete corpus is published atomically as an owner-scoped generation, so a divergent owner cannot deactivate another owner's items. API and Worker can sync the same owner concurrently under a corpus database lock. Runtime resync is opt-in, single-flight and cancellation-aware; it persists only timestamps, generation and a sanitized error code by seed tenant and owner for the memory-sync health status, so the API can read the Worker-persisted synchronization snapshot across process boundaries; it is not a Worker liveness probe. The manual `CurrentReleases` map is the single per-service release marker: memory retrieval labels matching evidence as current, stale, unversioned or service-mismatched before it reaches the model. Report publication derives and verifies the stored documentation-fit status from those durable artifacts. The configured embedding model is used by default; the mock embedder is reserved for tests and explicit mock-only checks. The `memory` role is the only shipped role granted `memory_search`; the orchestrator never searches memory directly.
+Intake, the ledger, reports and the action outbox are added by numbered migrations under
+`infra/postgres/init`:
 
-`memory_search` embeds the worker query once through the tool's configured `EmbeddingRouteId`, then asks PostgreSQL for a bounded vector candidate set of `min(100, TopK * 4)`. Exact tenant, embedding provider, embedding model, embedding dimension and active-item filters apply before vector ordering and the candidate limit. Application-owned ranking applies lexical coverage and fixed metadata rules, then returns the configured final `TopK`. Current evidence for the fault service and its snapshotted `CurrentReleases` marker ranks before stale or wrong-service evidence. Component and evidence-kind boosts require exact normalized query aliases; neither is inferred from model output or accepted as a tool argument. Ties resolve by combined score, vector score and chunk UUID. A model/provider/dimension mismatch returns an honest empty result instead of falling back to fuzzy retrieval. Successful matches are written as attempt-level `RetrievedItem` artifacts with `domain_ref = memory_item:<id>`, and those artifacts commit in the same transaction as the `ToolResult` artifact and ledger event.
+- `007-intake.sql` stores `signals`, `faults`, `triage_jobs`, `triage_config_snapshots` and
+  `triage_artifacts`. `triage_artifacts` carries job-level intake facts (`TriggerSignal`,
+  `NeighborSet`, optional `RecurrenceState` and optional `PriorReport`) plus attempt-level
+  `WorkerOutput`, `RetrievedItem` and `ToolResult` artifacts.
+- `008-triage-ledger.sql` provides append-only DB-ordered triage events.
+- `009-triage-reports-minimal.sql` defines grounded `triage_reports` plus `triage_evidence`
+  persistence.
+- `029-report-model-provenance.sql` adds the report's own list of the models that answered the
+  attempt that published it, derived from that attempt's `ModelCall` ledger rows.
+- `023-action-approvals-outbox.sql` adds immutable post-report approval tuples, closed provenance,
+  `ProposedAction` and `ActionResult` artifacts and constrained action lifecycle events.
+- `024-post-report-action-intents.sql` adds the durable evaluation queue that can create those
+  proposals without becoming another action outbox.
+- `025-external-action-audit-projection.sql` adds an indexed immutable compact projection for
+  confirmed Telegram and GitHub terminal results without changing the released 023/024 migrations.
+  It also replaces the action approval lifecycle trigger function in place, keeping the transition
+  set 023 defined, so the guard running today is the one this migration installed.
+- `030-model-price-administration.sql` adds the rails around `ai_model_pricing`, the one table whose
+  only writer is an operator at a prompt: required author, database-stamped change time, no
+  overlapping intervals for one provider and model, and no deletes.
+- `031-memory-corpus-generations.sql` adds `memory_corpus_generations`, which records the embedding
+  route behind each published corpus and allows one current generation per tenant and seed owner. It
+  backfills only an owner whose active items already share one generation and one vector space,
+  because anything else is genuinely ambiguous and is reported rather than guessed at.
+- `032-action-approval-fault-correlation.sql` indexes the fault direction of the same compact
+  external-action projection 025 indexed by resource: `(tenant_id, fault_id, created_at_utc DESC,
+  id DESC)`. It adds no column and no constraint, so it changes what a correlation query costs and
+  nothing about what is stored.
+
+## Memory Worker
+
+Incident memory uses PostgreSQL through `incidentcompass.memory_items` and
+`incidentcompass.memory_chunks`. File-backed memory sync reads the supported kinds runbook, known
+incident, operational note, release note and postmortem with optional service/component/release
+metadata; the repository ships runbook and known-incident corpora only.
+
+Within a configured seed owner, source path is the stable identity: changed files update and
+re-embed one active item, while removed files are deactivated and excluded from search. Each
+complete corpus is published atomically as an owner-scoped generation, so a divergent owner cannot
+deactivate another owner's items. API and Worker can sync the same owner concurrently under a corpus
+database lock.
+
+Runtime resync is opt-in, single-flight and cancellation-aware. It persists only timestamps,
+generation and a sanitized error code by seed tenant and owner for the memory-sync health status, so
+the API can read the Worker-persisted synchronization snapshot across process boundaries. It is not
+a Worker liveness probe.
+
+Each generation records the embedding route it was built under in
+`incidentcompass.memory_corpus_generations`: the configured route id and provider id, the adapter
+name, the model and the vector width, plus item and chunk counts. The row is written inside the
+reconciliation transaction and a partial unique index allows one current generation per tenant and
+owner, so a generation becomes current only once every embedding and every row behind it exists.
+Retrieval filters candidates by embedding provider, model and dimensions, so a corpus built under a
+different route matches nothing; the recorded identity is what makes that a reported state instead
+of an empty result set. Provider id is compared as well as model, because every OpenAI-compatible
+provider reports one adapter name and a route moved to a second embedding server would otherwise be
+invisible. A route change is detected before any embedding call: an incremental pass publishes
+nothing, leaves the previous corpus current and retrievable, and reports
+`memory_embedding_route_changed`. Re-embedding the whole corpus is an operator action, run as
+`memory rebuild` on either host; `memory status` and `GET /api/v1/health/memory-corpus` report the
+same bounded route identity and counts.
+
+The manual `CurrentReleases` map is the single per-service release marker: memory retrieval labels
+matching evidence as current, stale, unversioned or service-mismatched before it reaches the model.
+Report publication derives and verifies the stored documentation-fit status from those durable
+artifacts. The configured embedding model is used by default; the mock embedder is reserved for
+tests and explicit mock-only checks. The `memory` role is the only shipped role granted
+`memory_search`; the orchestrator never searches memory directly.
+
+`memory_search` embeds the worker query once through the tool's configured `EmbeddingRouteId`, then
+asks PostgreSQL for a bounded vector candidate set of `min(100, TopK * 4)`. Exact tenant, embedding
+provider, embedding model, embedding dimension and active-item filters apply before vector ordering
+and the candidate limit.
+
+Ranking is Application-owned rather than delegated to the database. It applies lexical coverage and
+fixed metadata rules, then returns the configured final `TopK`. Current evidence for the fault
+service and its snapshotted `CurrentReleases` marker ranks before stale or wrong-service evidence.
+Component and evidence-kind boosts require exact normalized query aliases; neither is inferred from
+model output or accepted as a tool argument. Ties resolve by combined score, vector score and chunk
+UUID. A model/provider/dimension mismatch returns an honest empty result instead of falling back to
+fuzzy retrieval.
+
+Successful matches are written as attempt-level `RetrievedItem` artifacts with
+`domain_ref = memory_item:<id>`, and those artifacts commit in the same transaction as the
+`ToolResult` artifact and ledger event.
+
 ## Read-only source context
 
 `source_lookup` has an empty model-facing argument object. The backend supplies the redacted trigger
@@ -98,6 +245,169 @@ payload and `source:` domain reference. Grounding validates the payload shape an
 the job snapshot; report reads expose that artifact payload alongside the citation. A current-attempt outcome reader applies canonical
 no-match or connector-unavailable limitations before final publication, so model prose cannot omit
 those outcomes or turn them into evidence.
+
+## Remediation diff pass
+
+Beside the excerpt reader, the same monitored checkout can back a post-report remediation pass that
+produces one exact unified diff. It is a feature folder in its own right rather than an extension of
+either neighbour, because it is the first thing in the product that prepares a change: `Investigation/`
+ends at a grounded report, and `SourceContext/` is a read surface with no change concept in it.
+
+The pass runs in four steps. It names the base by copying the monitored checkout into a disposable
+workspace and computing that copy's content identity. It asks one model, over the grounded report and
+the report's cited `SourceCode` artifacts, for a unified diff and nothing else. It applies the answer
+to a fresh copy of the same base, all of it or none of it. It records the diff, the base identity, the
+resulting identity and the outcome.
+
+The model call goes through the same bounded caller every investigation call goes through, under its
+own `remediation` call kind. That caller owns admission against the attempt budget, the authoritative
+provider deadline, durable `ModelCall` accounting and the single declared route fail-over hop, and a
+second path would have to reimplement all four. The wall clock is measured from when the pass starts,
+since it is a separate bounded operation from the attempt that produced the report; the token budget
+stays the job attempt's own, so one incident's model spend remains one number. An answer that is not a
+unified diff, and a diff the backend refuses for a reason a different answer could fix, are worth one
+correction each, bounded by the configuration's own `MaxReprompts` and carrying the closed refusal code
+rather than any text. A refusal about the environment, a base that moved or a filesystem error, is not
+reprompted.
+
+The base identity is the pass's own obligation and not the applier's. A hunk that consumes no base line
+quotes no base line, so an insert-only diff applies to any tree; the identity is the only thing binding
+a change to the checkout it was written for. The pass therefore names the base before the model is
+asked, hands it back on the way into the apply, and the adapter refuses before parsing when the copy it
+materialized is something else. The same identity travels on the record, so a later application of an
+approved diff has something to compare.
+
+Persistence is a table of its own, `remediation_diffs`, rather than a `triage_artifacts` row. Every
+payload in that column passes a redactor on its way in, and a diff cannot: a redacted context line no
+longer matches the base and a redacted added line writes a placeholder into source. The diff body lives
+in that table and nowhere else, and it fits by construction, since the parser refuses a diff larger than
+the raw budget the action-payload ceiling leaves for it. Nothing in the pass starts a process, so no
+record carries test evidence and every one of them says so.
+
+What schedules a pass is one post-report action workflow on the Worker's existing post-report
+evaluation loop, not a queue of its own. The pass needs a fenced claim, an attempt cap,
+dead-lettering, a closed outcome vocabulary and a lease that survives a multi-minute call, and that
+loop already owns all five; its trigger is also exactly right, since the input to a pass is a
+published report and a published report is what writes an intent. Whether an intent is written is the
+same configuration switch every external action uses, disabled in the shipped file, and it is checked
+again when the intent is claimed. Refusals complete the intent carrying their closed code, because
+nothing about a second pass gives an unconfigured host a checkout; a spent attempt budget and a failed
+model call dead-letter, and the failed call's tokens are written to the ledger before they do.
+
+Leftover workspaces are the Worker retention pass's third bounded operation, beside signal compaction
+and stale-artifact reaping. It ages a directory by the instant its own name states rather than by a
+filesystem timestamp, which is neither portable nor a liveness signal for a directory nothing is
+writing to, and it relies on the invariant that a workspace never outlives one call into the adapter.
+
+## Remediation approval
+
+A recorded diff becomes actionable only through a second governed capability, `remediation_apply`,
+which freezes one diff into a `code_write` action proposal on the same approval contract that already
+carries ticket creation and notification. It is a separate tool entry and a separate idempotency key
+from `remediation_diff`, because preparing a diff for review and allowing one to be acted on are
+different decisions and the contract keys a proposal by tool id.
+
+The step reuses the existing proposal path rather than adding one. Publication eligibility, the fault
+lock, evidence grounding, the rule engine, the approval and provenance digests and the outbox are the
+ones every external action already goes through; what this feature adds is an `IExternalActionTool`
+that validates the governed facts, builds the canonical payload and, when an approved action is
+dispatched, re-applies the frozen diff to a fresh copy of the approved base. `code_write` is not an
+auto-approvable category, so the proposal is always created `requested`.
+
+The proposal step runs before the pass rather than after it. The workflow reads the diff table first
+and freezes what is already recorded without calling a model; only a report with no recorded diff
+runs a pass. That ordering is what makes the feature idempotent: an evaluation retried after a failed
+write spends nothing and cannot write a second diff row, so one report keeps one diff and one diff
+keeps one proposal. A report that nevertheless holds two rows is refused as ambiguous rather than
+resolved by picking one.
+
+The adapter's binding fingerprint hashes the configured workspace root together with the resolved
+monitored roots, so repointing a root invalidates an outstanding approval instead of quietly moving
+what it applies to. Nothing on this path lands a change: no process is started and nothing here
+reaches a remote. Publishing the change as a branch, and then as a pull request, are separate
+capabilities with separate approvals, described next.
+
+## Governed branch push
+
+A third capability, `branch_push`, turns an executed `code_write` into one new branch at one new
+commit in a configured repository. It is a separate tool entry, a separate category and a separate
+idempotency key again, because publishing bytes where a stranger can see them is a different decision
+from applying them to a copy, and an operator has to be able to allow the first and not the second.
+
+**Where the ordering lives.** A proposal's origin is a report and cannot be an action: the schema, the
+grounder and the artifact kind that would express it all refuse. So the chain is not expressed in
+provenance. The queue entry that can lead to a push is written inside the same database transaction
+that records the `code_write` action as `executed`, and nowhere else - the push workflow declines to
+enqueue itself at report publication. The entry therefore cannot exist before the change it publishes
+was approved and applied, and cannot be lost after it was. The predecessor's action id and a digest of
+its result travel inside the push's own canonical payload, where the approval hash covers them.
+
+**What the push is.** The pushed commit's tree is the remote base commit's tree with exactly the files
+the approved diff writes replaced by the bytes that diff produces when applied to its approved base.
+Before anything is proposed, every path the approved base and that remote commit have in common is
+proved byte-identical by comparing git blob ids, computed locally as
+`sha1("blob " + length + "\0" + bytes)`; paths present only locally are enumerated and excluded, and a
+path present only remotely refuses. The proof is frozen into the approval as a digest and re-proved at
+dispatch. `docs/trade-offs.md` states exactly what that claim covers and what it does not.
+
+**What it can do to a repository.** Create one branch. The gateway port has four operations - read a
+base, read a branch, create a branch, open a pull request - and no request this adapter can build is a
+reference update, a reference delete, a merge, an automatic merge or a repository-settings change.
+Blobs, trees and commits are content-addressed and so idempotent by
+construction, and the commit's author and committer dates are pinned by the approval, which leaves the
+reference create as the only operation whose repetition would mean anything. It is a compare-and-swap:
+a name that is taken is read back, never overwritten. The two are also distinguishable after the
+fact: a read of an existing branch answers `code_publication_branch_read`, never the code that says
+a branch was created, because the code is logged and persisted on an action row and the difference
+between creating a reference and looking at one is the whole at-most-once story.
+
+**Where it is bound.** The owner, repository and credential are the ones
+`IncidentCompass:Tickets:GitHub` already carries; `IncidentCompass:Publication:GitHub:BaseBranch` adds
+the only new setting, and an unset one means code publication is not configured here. All three are
+folded into the adapter binding fingerprint, so repointing a host at another repository or another
+base branch turns a standing approval into `adapter_binding_changed`.
+
+## Governed pull request and ticket backlink
+
+A fourth capability, `pr_create`, turns an executed `branch_push` into one pull request from that
+branch into the configured base. A fifth, `ticket_backlink`, adds one comment to the issue the report
+cited saying which pull request now answers it. Each is a separate tool entry with its own
+configuration switch and its own idempotency key, so an operator can allow branches without pull
+requests, or pull requests without ticket comments, and the chain simply stops where they stopped it.
+
+**Where the ordering lives.** The same place as the push's: inside the predecessor's terminal
+transaction. The queue entry that can lead to a pull request is written when the push is recorded as
+`executed`, and the entry that can lead to a backlink when the pull request is recorded as opened.
+Both workflows decline to enqueue themselves at report publication. `ActionSuccessorIntents` is the
+whole of the policy and is a list of three pairs.
+
+**What the pull request is bound to.** Not a branch name but a commit: the payload carries the commit
+the push recorded in its own audit projection, and the dispatch reads the head reference and refuses
+unless it still points there. The base branch is host configuration the adapter reads for itself, and
+the request record has no field for one, so nothing above the port can choose where a change is
+proposed to land.
+
+**At most one, and how an uncertain outcome settles.** The head branch is derived from the origin
+report and is created only by a governed push, so a pull request from that head is the marker a create
+would leave. The adapter reads the pull requests for that head before every create, unconditionally, so
+a replay answers with the one that exists and a create is never sent without that question having been
+answered. Two answers refuse rather than being picked from. A create whose answer never arrived is
+`dispatch_outcome_unknown` on a `failed` row, and the same single read settles it.
+
+**What the description says.** The originating report id, the cited issue number, the report's own
+recorded confidence, the change's commits, counts and digests, and the plain statement that no test was
+executed because this release runs none. Nothing else: the service name and the release are in the
+approval and in the reviewer's summary but deliberately not in the published text, because they are the
+only values on the path an ingested signal can influence and the page is public. The title and the body
+are frozen in the approval and re-derived at dispatch, so an edited row is unreadable rather than
+published.
+
+**The backlink lands on the issue.** The comment preflight still refuses any target the provider
+reports as a pull request, and the cited-evidence shape still requires an issue URL in the configured
+repository. The backlink is a second tool id rather than a second `ticket_update` because the queue
+holds one intent per report per tool and the approval table one proposal per report, tool and key, so a
+report's single `ticket_update` is frozen at publication, long before a pull request exists. The
+existing comment is unchanged and still runs for every report, with or without any of this.
 
 ## Read-only ticket context
 
@@ -122,6 +432,16 @@ Successful matches use the existing attempt-level `RetrievedItem` persistence an
 `ticket:github:` domain reference. Issue bodies are transient ranking input and are never placed in
 tool output, artifacts or reports. The shared durable outcome policy adds canonical no-match or
 connector-unavailable limitations before publication even if the model omits them.
+
+Publication adds one more backend-derived limitation on the same path. Every artifact whose payload
+passed through the tool redaction boundary records whether redaction actually removed anything -
+both the per-item artifacts a tool hands back as drafts and the `ToolResult` artifact built from the
+same tool's redacted output, since both are citable evidence and a silent one would let the model
+decide whether the limitation appears. A report that cites such an artifact states that some of its
+evidence was withheld from the model. The statement is derived from that recorded outcome rather
+than from the stored payload, because a redacted value is indistinguishable from connector text that
+already contained the placeholder. Artifacts written outside that boundary record nothing, which is
+a distinct value from "nothing was removed". See `docs/security-model.md`.
 
 ## Governed ticket create
 
@@ -161,22 +481,46 @@ preflight result fails definitively with zero writes. Only cancellation, timeout
 an unreadable response after the comment POST begins becomes `dispatch_outcome_unknown`. Title,
 state, labels, assignees, close/reopen and repository mutation remain outside this action.
 
-## Phase 5 Grounded Reports
+## Grounded Reports
 
-Phase 5 makes `publish_report` a backend-grounded closeout instead of a model-authored row write. The model supplies report fields and evidence `referenceId` values, but the backend validates the report shape, rejects non-citable or out-of-attempt references, derives `is_mass_issue` from the job-level `NeighborSet`, derives evidence kind from artifact state and `memory_items.kind`, and persists `triage_reports`, `triage_evidence`, job/fault terminal state and `ReportPublished` in one transaction. `WorkerOutput` artifacts are never citable. `GET /api/v1/triage-reports/{id}` returns the report and grounded evidence, including the cited artifact payload.
+`publish_report` is a backend-grounded closeout instead of a model-authored row write. The model supplies report fields and evidence `referenceId` values, but the backend validates the report shape, rejects non-citable or out-of-attempt references, derives `is_mass_issue` from the job-level `NeighborSet`, derives evidence kind from artifact state and `memory_items.kind`, and persists `triage_reports`, `triage_evidence`, job/fault terminal state and `ReportPublished` in one transaction. `WorkerOutput` artifacts are never citable. `GET /api/v1/triage-reports/{id}` returns the report and grounded evidence, including the cited artifact payload.
 
-## Phase 6 Report Lifecycle
+The same transaction derives `model_provenance` from that attempt's `ModelCall` ledger rows, so a
+report names every distinct call kind, role, route, provider and model that answered it rather than
+one model name that would hide a worker role running on a different route. It is backend-derived
+from what actually answered and cannot be asserted by `publish_report`. See
+`docs/observability.md`, "Report Model Provenance".
 
-`infra/postgres/init/018-report-lifecycle.sql` makes published report rows immutable. Publication serializes on the fault row, inserts a new row with the producing job and an explicit `supersedes_report_id`, and never rewrites prior report content or evidence. `019-retriage-jobs.sql` adds an exactly-once recurrence trigger per source job and constrains its predecessor report to the same fault. When a recurrence escalation finds a prior report anywhere in its recurrence chain, intake creates a pending re-triage job for that reported fault in the same transaction, copies citable recurrence facts, and adds the prior report as an explicitly untrusted `PriorReport` artifact. A re-triage publication must cite `RecurrenceState`; it may independently classify the incident differently. The report detail response exposes predecessor, successor and latest-chain state. `GET /api/v1/faults/{faultId}/triage-report` returns the newest chain head while `GET /api/v1/triage-reports/{id}` continues to retrieve any historical report. `GET /api/v1/triage-reports` returns compact report summaries only, ordered by `(createdAtUtc DESC, reportId DESC)` with a bounded opaque keyset cursor. It supports fault, service, environment, status and classification filters and exposes predecessor, successor and latest-chain fields without evidence payloads. All fault, ledger and report reads are tenant-scoped; out-of-scope objects return `404`.
+## Report Lifecycle
+
+`infra/postgres/init/018-report-lifecycle.sql` makes published report rows immutable. Publication
+serializes on the fault row, inserts a new row with the producing job and an explicit
+`supersedes_report_id`, and never rewrites prior report content or evidence.
+
+`019-retriage-jobs.sql` adds an exactly-once recurrence trigger per source job and constrains its
+predecessor report to the same fault. When a recurrence escalation finds a prior report anywhere in
+its recurrence chain, intake creates a pending re-triage job for that reported fault in the same
+transaction, copies citable recurrence facts, and adds the prior report as an explicitly untrusted
+`PriorReport` artifact. A re-triage publication must cite `RecurrenceState`; it may independently
+classify the incident differently.
+
+Report reads follow that chain. The report detail response exposes predecessor, successor and
+latest-chain state. `GET /api/v1/faults/{faultId}/triage-report` returns the newest chain head while
+`GET /api/v1/triage-reports/{id}` continues to retrieve any historical report. `GET /api/v1/triage-reports`
+returns compact report summaries only, ordered by `(createdAtUtc DESC, reportId DESC)` with a bounded
+opaque keyset cursor. It supports fault, service, environment, status and classification filters and
+exposes predecessor, successor and latest-chain fields without evidence payloads. All fault, ledger
+and report reads are tenant-scoped; out-of-scope objects return `404`.
 
 `GET /api/v1/observability/cost-rollups` is a separate authenticated read use case. Application owns
 the UTC-only, inclusive-start/exclusive-end, maximum-31-day window contract and obtains the tenant
 only from `IUserContext`. Infrastructure reads `ModelCall` rows through their fault ownership, parses
-bounded metadata fail-closed, matches provider/model identifiers case-sensitively against exactly one
-effective pricing interval and groups safe totals by UTC hour. The response does not expose tenant,
-fault, job, provider, model or logical route identifiers. Missing, malformed or ambiguous pricing is
-reported as an unpriced call, never as zero spend. No alert or price mutation path is coupled to this
-query.
+bounded metadata fail-closed, matches a call's configured provider ID and model case-sensitively
+against exactly one effective pricing interval and groups safe totals by UTC hour. Only
+provider-reported token counts are priced; a locally estimated count is counted and never charged.
+The response does not expose tenant, fault, job, provider, model or logical route identifiers.
+Missing, malformed or ambiguous pricing is reported as an unpriced call, never as zero spend. No
+alert or price mutation path is coupled to this query.
 
 ## API authentication boundary
 
@@ -207,11 +551,58 @@ Use Clean Architecture with Domain-owned records and enums for shared workflow c
 
 Follow `docs/code-organization.md` for maintainability guardrails. In short: keep classes small, keep one entity per file, split unrelated responsibilities, and keep application handlers focused on use-case orchestration.
 
-## Phase 3 Governance Rails
+## Governance Rails
 
-Phase 3 keeps the system a layered monolith and adds the product-core governance rails around worker tools. Worker roles receive only registered backend tools that are both configured and granted to that role. Proposed worker calls are recorded as `ToolProposed`, evaluated by the single live `ToolRuleEngine` over current-attempt ledger state by default, recorded as `PolicyDecision`, and successful executions commit a `ToolResult` artifact plus `ToolResult` ledger event atomically. `ToolResult` status and `BudgetEvent` deltas are stored in first-class ledger state, not parsed from rationale text. Configured rule scopes are limited to `attempt` and `job` for the MVP; `fault` scope remains deferred. The shipped immediate read tools are `memory_search`, `source_lookup` and `ticket_search`; synthetic `tool_x`/`tool_y` exist only in integration-test composition for cross-tool governance cases.
+Worker tools execute within the layered monolith under backend governance. Worker roles receive only registered backend tools that are both configured and granted to that role. Proposed worker calls are recorded as `ToolProposed`, evaluated by the single live `ToolRuleEngine` over current-attempt ledger state by default, recorded as `PolicyDecision`, and successful executions commit a `ToolResult` artifact plus `ToolResult` ledger event atomically. `ToolResult` status and `BudgetEvent` deltas are stored in first-class ledger state, not parsed from rationale text. Configured rule scopes are limited to `attempt` and `job` for the MVP; `fault` scope remains deferred. The shipped immediate read tools are `memory_search`, `source_lookup` and `ticket_search`; synthetic `tool_x`/`tool_y` exist only in integration-test composition for cross-tool governance cases.
+
+A tool returns its durable payloads as drafts rather than as artifacts. The worker tool executor is
+the only thing that turns a draft into a stored artifact, and it redacts the payload and the
+model-visible tool output on the way, so connector text cannot reach `triage_artifacts` or a later
+prompt unredacted and a new tool cannot express the unredacted shape at all. See
+`docs/security-model.md` for the boundary and `docs/trade-offs.md` for what it costs source excerpts.
 
 ## Post-report Action Approval Boundary
+
+An action approval is one durable row with six states. `023-action-approvals-outbox.sql` defines
+those values and first installs the lifecycle trigger function.
+`025-external-action-audit-projection.sql` then replaces that function with the same transition set,
+so the guard running today, which rejects any state change this diagram does not show, is the one
+migration 025 installed.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Requested: proposal needs approval
+    [*] --> Approved: policy auto-approves this category
+    Requested --> Approved: operator approves the exact payload and approval hashes
+    Requested --> Rejected: operator rejects
+    Requested --> Expired: approval TTL passes with no decision, or a decision commits after it
+    Requested --> Failed: origin report superseded
+    Approved --> Approved: worker claims it and stamps owner, fence and deadline
+    Approved --> Failed: origin report superseded, still unclaimed
+    Approved --> Executed: adapter confirms, or dry run simulates
+    Approved --> Failed: dispatch-time policy re-check refuses the approved action
+    Approved --> Failed: adapter reports a definitive failure, external system not acted on
+    Approved --> Failed: adapter outcome unknown, external system may have acted
+    Approved --> Failed: dispatch deadline passes with the claim unfinished
+    Rejected --> [*]
+    Expired --> [*]
+    Executed --> [*]
+    Failed --> [*]
+```
+
+`Approved` covers two situations the row distinguishes without a separate state value: unclaimed, and
+claimed by a Worker that stamped `dispatch_owner`, `dispatch_fence` and `dispatch_deadline_at`. Only
+an unclaimed row can be failed as superseded. Only the holder of the fence can write a terminal
+state, and only while the deadline is still in the future; after the deadline, recovery closes the
+row as `dispatch_outcome_unknown` instead. A requested row may fail for exactly one reason, a
+superseded origin report. `Rejected`, `Expired`, `Executed` and `Failed` are immutable.
+
+Approval is not the last policy gate: dispatch re-checks tool registration, current configuration,
+mode and approval policy against the approved row and refuses it if any of them tightened in the
+meantime. The at-most-once boundary is the difference between the two adapter failure routes: a
+definitive adapter failure means the external system was not acted on and the row can be closed
+honestly, while `dispatch_outcome_unknown` means the backend cannot tell whether the side effect
+landed, so the row still closes as `Failed` and is never retried.
 
 Successful report publication appends at most one immutable evaluation intent per selected exact
 tool in the same database transaction as the report and `ReportPublished`. Each intent stores only
@@ -269,6 +660,15 @@ notification denies a successor, and a database-clock 30-minute cooldown measure
 dispatch start follows confirmed live success or `dispatch_outcome_unknown`. Dry-run, requested,
 rejected, expired and definitive
 pre-mutation failure do not start that cooldown.
+
+The Telegram adapter draws the same at-most-once line the GitHub adapters draw, and draws it itself
+rather than leaving it to the dispatcher's catch-all. A send is a write, so only a transport failure
+that provably preceded the request - name resolution, TLS handshake, proxy tunnel, or a socket that
+never connected - is the definitive `telegram_unavailable` result. Anything else the transport can do
+after the request is on the wire stays `dispatch_outcome_unknown`, because the notification may have
+arrived with only its answer lost. One classifier in Infrastructure answers "did this leave the
+process" for every HTTP adapter here, so the model gateway, the Git Data sender and this adapter
+cannot disagree about it.
 
 `/api/v1/action-approvals` exposes compact tenant-scoped lists, immutable review details, approve and
 reject. Review details are reconstructed from tuple and provenance rows, not the `ProposedAction`

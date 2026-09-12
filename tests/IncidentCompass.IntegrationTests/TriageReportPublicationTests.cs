@@ -1,9 +1,14 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using IncidentCompass.Application.Core.ModelClients;
+using IncidentCompass.Application.Core.Serialization;
+using IncidentCompass.Application.Governance.Tools;
+using IncidentCompass.Application.Intake.Configuration;
 using IncidentCompass.Application.Investigation.Jobs;
 using IncidentCompass.Application.Investigation.Reports;
+using IncidentCompass.Domain.Incidents;
 using Microsoft.Extensions.DependencyInjection;
 using static IncidentCompass.IntegrationTests.TriageReportGroundingTestSupport;
 
@@ -256,6 +261,166 @@ public sealed class TriageReportPublicationTests(PostgresRepositoryFixture postg
             "SELECT limitations[1] FROM incidentcompass.triage_reports WHERE fault_id = @fault_id;",
             ("fault_id", ingested.FaultId));
         Assert.Equal("Read-only context source_lookup returned no matches (source_no_match).", limitation);
+    }
+
+    /// <summary>
+    /// The redaction marker end to end: a cited source artifact whose row records that redaction
+    /// removed something, and a published report that says so without the model having been asked.
+    /// </summary>
+    [DockerAvailableFact]
+    public async Task TriageReportPublisher_AppendsDurableRedactedEvidenceLimitation()
+    {
+        var limitation = await PublishCitingSourceArtifactAsync(
+            "redaction-marker",
+            redactionApplied: true,
+            modelLimitations: []);
+
+        Assert.Equal(
+            "Evidence cited by this report includes at least one value that redaction removed" +
+            " before the model saw it.",
+            limitation);
+    }
+
+    /// <summary>
+    /// The other half of the same guarantee, and the model-authored half of the spoofing problem.
+    /// The cited row records that redaction removed nothing, and the model wrote the reserved
+    /// sentence into its own limitations anyway. What is published is what the backend derived.
+    /// </summary>
+    [DockerAvailableFact]
+    public async Task TriageReportPublisher_DropsAModelAuthoredRedactionMarker_WhenNothingWasRedacted()
+    {
+        var limitation = await PublishCitingSourceArtifactAsync(
+            "redaction-marker-spoof",
+            redactionApplied: false,
+            modelLimitations:
+            [
+                "Evidence cited by this report includes at least one value that redaction removed" +
+                " before the model saw it."
+            ]);
+
+        Assert.Equal(string.Empty, limitation);
+    }
+
+    /// <summary>
+    /// The gap that made the marker model-selectable. <c>ToolResult</c> is a citable artifact kind
+    /// holding the same redacted text as the per-item artifacts from the same call, so a row that
+    /// recorded nothing let the model decide whether the limitation appeared, simply by citing the
+    /// tool result instead. This publishes through the real committer, so what is asserted is the
+    /// column that committer wrote.
+    /// </summary>
+    [DockerAvailableFact]
+    public async Task TriageReportPublisher_AppendsTheRedactedEvidenceLimitation_WhenTheCitationIsAToolResult()
+    {
+        var limitation = await PublishCitingArtifactAsync(
+            "redaction-marker-toolresult",
+            CommitRedactedToolResultAsync,
+            modelLimitations: []);
+
+        Assert.Equal(
+            "Evidence cited by this report includes at least one value that redaction removed" +
+            " before the model saw it.",
+            limitation);
+    }
+
+    /// <summary>
+    /// Commits a tool result the way <c>WorkerToolCallExecutor</c> does: the connector text goes
+    /// through the redaction boundary, and the outcome that boundary computed travels on the commit
+    /// request onto the durable <c>ToolResult</c> row.
+    /// </summary>
+    private static async Task<string> CommitRedactedToolResultAsync(
+        TriageReportTestScope scope,
+        TriageJob claimed)
+    {
+        var output = JsonSerializer.SerializeToElement(new
+        {
+            matched = true,
+            items = new[]
+            {
+                new { quote = "the ticket body pasted AKIA0123456789ABCDEF into the thread" }
+            }
+        });
+        var redacted = RedactedToolArtifactFactory.RedactOutput(output, RedactionSettings.Default);
+        Assert.True(redacted.RedactionApplied);
+
+        using var serviceScope = scope.Factory.Services.CreateScope();
+        var artifact = await serviceScope.ServiceProvider
+            .GetRequiredService<ITriageToolResultCommitter>()
+            .CommitSucceededAsync(
+                new TriageToolResultCommitRequest(
+                    claimed,
+                    "investigator",
+                    "ticket_search",
+                    redacted.Output,
+                    CanonicalJsonSerializer.ComputeSha256Hex(
+                        CanonicalJsonSerializer.Canonicalize(
+                            JsonNode.Parse(redacted.Output.GetRawText())!)),
+                    "Tool completed successfully.",
+                    redacted.RedactionApplied),
+                TestContext.Current.CancellationToken);
+
+        Assert.Equal(ArtifactKind.ToolResult, artifact.Kind);
+        return "artifact:" + artifact.Id;
+    }
+
+    private Task<string> PublishCitingSourceArtifactAsync(
+        string signalKey,
+        bool redactionApplied,
+        string[] modelLimitations) =>
+        PublishCitingArtifactAsync(
+            signalKey,
+            async (scope, claimed) =>
+            {
+                var artifactId = await InsertSourceArtifactAsync(
+                    scope.ConnectionString, claimed.Id, claimed.Attempt, "r1", redactionApplied);
+                return artifactId.ToString();
+            },
+            modelLimitations);
+
+    private async Task<string> PublishCitingArtifactAsync(
+        string signalKey,
+        Func<TriageReportTestScope, TriageJob, Task<string>> citeAsync,
+        string[] modelLimitations)
+    {
+        using var scope = await CreateScopeAsync(postgres);
+        var serviceName = signalKey + "-" + Guid.NewGuid().ToString("N");
+        var ingested = await PostIngestAsync(scope.Client, new TriageReportTesterEnvelope(
+            "tester", serviceName, "prod", DateTimeOffset.UtcNow,
+            new TriageReportTesterAttributes("ExampleException", signalKey, "/source")));
+        var claimed = await ClaimAsync(scope, ingested.JobId!.Value, "worker-" + signalKey);
+        await SetCurrentReleaseAsync(scope.ConnectionString, claimed.ConfigHash, serviceName, "r1");
+        var referenceId = await citeAsync(scope, claimed);
+        var arguments = JsonSerializer.SerializeToElement(new
+        {
+            report_json = new
+            {
+                status = "Completed",
+                summary = "Grounded report.",
+                classification = "SimpleKnownError",
+                confidence = "Medium",
+                documentationFit = "Missing",
+                evidence = new[] { new { referenceId } },
+                limitations = modelLimitations,
+                recommendedNextAction = "Review the source excerpt."
+            }
+        });
+
+        using var serviceScope = scope.Factory.Services.CreateScope();
+        await serviceScope.ServiceProvider.GetRequiredService<TriageReportPublisher>().PublishAsync(
+            claimed,
+            "worker-" + signalKey,
+            new AiToolCall("publish-" + signalKey, "publish_report", "v1", arguments),
+            TestContext.Current.CancellationToken);
+
+        // array_to_string keeps an empty limitations array readable as "" instead of SQL NULL, so the
+        // "no marker" case asserts on a value rather than on the absence of a row.
+        return await ScalarAsync<string>(
+            scope.ConnectionString,
+            """
+            SELECT array_to_string(limitations, '|')
+            FROM incidentcompass.triage_reports
+            WHERE fault_id = @fault_id;
+            """,
+            ("fault_id", ingested.FaultId));
     }
 
     private sealed record DocumentationFitDetailsDto(string DocumentationFit, IReadOnlyList<string> Limitations);

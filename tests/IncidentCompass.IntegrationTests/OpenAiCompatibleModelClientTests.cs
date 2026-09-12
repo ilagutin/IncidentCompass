@@ -1,8 +1,9 @@
-using System.Net;
 using System.Text.Json;
+using IncidentCompass.Application.Core.Errors;
 using IncidentCompass.Application.Core.ModelClients;
 using IncidentCompass.Application.Core.ModelGateway;
 using IncidentCompass.Infrastructure;
+using IncidentCompass.Infrastructure.ModelGateway.OpenAi;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
@@ -23,10 +24,6 @@ public sealed class OpenAiCompatibleModelClientTests
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["IncidentCompass:ModelGateway:Provider"] = "OpenAiCompatible",
-                ["IncidentCompass:ModelGateway:DefaultModel"] = "retry-model",
-                ["IncidentCompass:ModelGateway:StrongModel"] = "retry-model",
-                ["IncidentCompass:ModelGateway:CheapModel"] = "retry-model",
-                ["IncidentCompass:ModelGateway:EvaluationModel"] = "retry-model",
                 ["IncidentCompass:ModelGateway:OpenAiCompatible:BaseUrl"] = baseUrl,
                 ["IncidentCompass:ModelGateway:OpenAiCompatible:ApiKey"] = "test-api-key",
                 ["IncidentCompass:ModelGateway:OpenAiCompatible:AllowInsecureHttpForLoopback"] = "true",
@@ -61,7 +58,7 @@ public sealed class OpenAiCompatibleModelClientTests
     }
 
     [Fact]
-    public async Task CompleteAsync_PreservesMalformedToolArgumentsAsInvalidJsonValue()
+    public async Task CompleteAsync_RejectsMalformedToolArguments()
     {
         await using var app = CreateMalformedToolArgumentsOpenAiCompatibleServer();
         await app.StartAsync();
@@ -71,10 +68,6 @@ public sealed class OpenAiCompatibleModelClientTests
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["IncidentCompass:ModelGateway:Provider"] = "OpenAiCompatible",
-                ["IncidentCompass:ModelGateway:DefaultModel"] = "tool-model",
-                ["IncidentCompass:ModelGateway:StrongModel"] = "tool-model",
-                ["IncidentCompass:ModelGateway:CheapModel"] = "tool-model",
-                ["IncidentCompass:ModelGateway:EvaluationModel"] = "tool-model",
                 ["IncidentCompass:ModelGateway:OpenAiCompatible:BaseUrl"] = baseUrl,
                 ["IncidentCompass:ModelGateway:OpenAiCompatible:ApiKey"] = "test-api-key",
                 ["IncidentCompass:ModelGateway:OpenAiCompatible:AllowInsecureHttpForLoopback"] = "true",
@@ -90,25 +83,217 @@ public sealed class OpenAiCompatibleModelClientTests
         using var provider = services.BuildServiceProvider();
         var modelClient = provider.GetRequiredService<IAiModelClient>();
 
-        var response = await modelClient.CompleteAsync(
-            new AiModelRequest(
-                CorrelationId: "tool-test",
-                Model: "tool-model",
-                Messages: [new AiChatMessage(AiMessageRole.User, "use profile")],
-                Tools:
-                [
-                    new AiToolDefinition(
-                        "GetCurrentUserProfile",
-                        "Returns the current profile.",
-                        "v1",
-                        JsonSerializer.SerializeToElement(new { }))
-                ]),
-            TestContext.Current.CancellationToken);
+        var exception = await Assert.ThrowsAsync<AiModelException>(() =>
+            modelClient.CompleteAsync(
+                CreateRequest("tool-model"),
+                TestContext.Current.CancellationToken));
+
+        Assert.Equal(ProviderFailureKind.InvalidResponse, exception.FailureKind);
+        Assert.Equal("invalid_response", exception.ErrorCode);
+        Assert.Equal(new AiModelUsage(1, 2, 3), exception.Usage);
+        Assert.Equal("tool-model", exception.ReturnedModel);
+    }
+
+    [Fact]
+    public void ResponseMapper_MapsLengthWithoutUsableOutputToItsOwnFailure()
+    {
+        const string responseContent = """
+            {
+              "model": "reasoning-model",
+              "choices": [
+                {
+                  "message": { "content": "" },
+                  "finish_reason": "length"
+                }
+              ],
+              "usage": {
+                "prompt_tokens": 1596,
+                "completion_tokens": 2000,
+                "total_tokens": 3596,
+                "completion_tokens_details": {
+                  "reasoning_tokens": 1987
+                }
+              }
+            }
+            """;
+
+        var exception = Assert.Throws<AiModelException>(() =>
+            OpenAiModelResponseMapper.Map(responseContent, CreateRequest("requested-model")));
+
+        Assert.Equal(ProviderFailureKind.OutputLimitReached, exception.FailureKind);
+        Assert.Equal("provider_output_limit_reached", exception.ErrorCode);
+        Assert.Equal(new AiModelUsage(1596, 2000, 3596, 1987), exception.Usage);
+        Assert.Equal("reasoning-model", exception.ReturnedModel);
+    }
+
+    [Fact]
+    public void ResponseMapper_MapsProviderReportedReasoningUsage()
+    {
+        const string responseContent = """
+            {
+              "model": "reasoning-model",
+              "choices": [
+                {
+                  "message": { "content": "bounded answer" }
+                }
+              ],
+              "usage": {
+                "prompt_tokens": 21,
+                "completion_tokens": 34,
+                "total_tokens": 55,
+                "completion_tokens_details": {
+                  "reasoning_tokens": 13,
+                  "reasoning_content": "must not cross the provider boundary"
+                }
+              }
+            }
+            """;
+
+        var response = OpenAiModelResponseMapper.Map(responseContent, CreateRequest("requested-model"));
+
+        Assert.Equal(new AiModelUsage(21, 34, 55, 13), response.Usage);
+    }
+
+    [Fact]
+    public void ResponseMapper_AcceptsLengthWithUsableContent()
+    {
+        const string responseContent = """
+            {
+              "model": "reasoning-model",
+              "choices": [
+                {
+                  "message": { "content": "bounded answer" },
+                  "finish_reason": "length"
+                }
+              ]
+            }
+            """;
+
+        var response = OpenAiModelResponseMapper.Map(responseContent, CreateRequest("requested-model"));
+
+        Assert.Equal("bounded answer", response.Content);
+        Assert.Equal("reasoning-model", response.Model);
+    }
+
+    [Fact]
+    public void ResponseMapper_MapsGenuinelyEmptyResponseToInvalidResponse()
+    {
+        const string responseContent = """
+            {
+              "model": "empty-model",
+              "choices": [],
+              "usage": {
+                "prompt_tokens": 7,
+                "completion_tokens": 0,
+                "total_tokens": 7
+              }
+            }
+            """;
+
+        var exception = Assert.Throws<AiModelException>(() =>
+            OpenAiModelResponseMapper.Map(responseContent, CreateRequest("requested-model")));
+
+        Assert.Equal(ProviderFailureKind.InvalidResponse, exception.FailureKind);
+        Assert.Equal("empty_response", exception.ErrorCode);
+        Assert.Equal(new AiModelUsage(7, 0, 7), exception.Usage);
+        Assert.Equal("empty-model", exception.ReturnedModel);
+    }
+
+    [Fact]
+    public void ResponseMapper_RejectsToolCallWithoutProviderId()
+    {
+        const string responseContent = """
+            {
+              "model": "tool-model",
+              "choices": [
+                {
+                  "message": {
+                    "content": null,
+                    "tool_calls": [
+                      {
+                        "type": "function",
+                        "function": { "name": "memory_search", "arguments": "{}" }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+            """;
+
+        var exception = Assert.Throws<AiModelException>(() =>
+            OpenAiModelResponseMapper.Map(responseContent, CreateRequest("tool-model")));
+
+        Assert.Equal(ProviderFailureKind.InvalidResponse, exception.FailureKind);
+        Assert.Equal("invalid_response", exception.ErrorCode);
+    }
+
+    [Fact]
+    public void ResponseMapper_AcceptsValidToolCall()
+    {
+        const string responseContent = """
+            {
+              "model": "tool-model",
+              "choices": [
+                {
+                  "message": {
+                    "content": null,
+                    "tool_calls": [
+                      {
+                        "id": "call-1",
+                        "type": "function",
+                        "function": { "name": "memory_search", "arguments": "{\"query\":\"timeout\"}" }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+            """;
+
+        var response = OpenAiModelResponseMapper.Map(responseContent, CreateRequest("tool-model"));
 
         var toolCall = Assert.Single(response.ProposedToolCalls ?? []);
-        Assert.Equal("GetCurrentUserProfile", toolCall.Name);
-        Assert.Equal(JsonValueKind.String, toolCall.Arguments.ValueKind);
-        Assert.Equal("not-json", toolCall.Arguments.GetString());
+        Assert.Equal("call-1", toolCall.Id);
+        Assert.Equal("memory_search", toolCall.Name);
+        Assert.Equal("timeout", toolCall.Arguments.GetProperty("query").GetString());
+    }
+
+    [Theory]
+    [InlineData("{\"query\":\"plain\"}", "plain")]
+    [InlineData("```\n{\"query\":\"unmarked\"}\n```", "unmarked")]
+    [InlineData("```json\r\n{\"query\":\"marked\"}\r\n```", "marked")]
+    [InlineData("~~~JSON\n{\"query\":\"tilde-marked\"}\n~~~", "tilde-marked")]
+    public void ResponseMapper_AcceptsPlainOrSingleFencedObjectToolArguments(
+        string arguments,
+        string expectedQuery)
+    {
+        var response = OpenAiModelResponseMapper.Map(
+            ToolCallResponse(arguments),
+            CreateRequest("tool-model"));
+
+        var toolCall = Assert.Single(response.ProposedToolCalls ?? []);
+        Assert.Equal(expectedQuery, toolCall.Arguments.GetProperty("query").GetString());
+    }
+
+    [Theory]
+    [InlineData("42")]
+    [InlineData("\"{\\\"query\\\":\\\"string-wrapped\\\"}\"")]
+    [InlineData("Use this object:\n```json\n{\"query\":\"mixed\"}\n```")]
+    [InlineData("```json\n```json\n{\"query\":\"nested\"}\n```\n```")]
+    [InlineData("```json\n{\"query\":\"first\"}\n```\n```json\n{\"query\":\"second\"}\n```")]
+    [InlineData("```json\n{\"query\":\"mismatched\"}\n~~~")]
+    public void ResponseMapper_RejectsAnythingOtherThanOneObjectWithOptionalOuterFence(string arguments)
+    {
+        var exception = Assert.Throws<AiModelException>(() =>
+            OpenAiModelResponseMapper.Map(
+                ToolCallResponse(arguments),
+                CreateRequest("requested-model")));
+
+        Assert.Equal(ProviderFailureKind.InvalidResponse, exception.FailureKind);
+        Assert.Equal("invalid_response", exception.ErrorCode);
+        Assert.Equal(new AiModelUsage(11, 7, 18), exception.Usage);
+        Assert.Equal("tool-model", exception.ReturnedModel);
     }
 
     [Fact]
@@ -122,10 +307,6 @@ public sealed class OpenAiCompatibleModelClientTests
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["IncidentCompass:ModelGateway:Provider"] = "OpenAiCompatible",
-                ["IncidentCompass:ModelGateway:DefaultModel"] = "agentic-model",
-                ["IncidentCompass:ModelGateway:StrongModel"] = "agentic-model",
-                ["IncidentCompass:ModelGateway:CheapModel"] = "agentic-model",
-                ["IncidentCompass:ModelGateway:EvaluationModel"] = "agentic-model",
                 ["IncidentCompass:ModelGateway:OpenAiCompatible:BaseUrl"] = baseUrl,
                 ["IncidentCompass:ModelGateway:OpenAiCompatible:ApiKey"] = "test-api-key",
                 ["IncidentCompass:ModelGateway:OpenAiCompatible:AllowInsecureHttpForLoopback"] = "true",
@@ -212,10 +393,6 @@ public sealed class OpenAiCompatibleModelClientTests
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["IncidentCompass:ModelGateway:Provider"] = "OpenAiCompatible",
-                ["IncidentCompass:ModelGateway:DefaultModel"] = "error-model",
-                ["IncidentCompass:ModelGateway:StrongModel"] = "error-model",
-                ["IncidentCompass:ModelGateway:CheapModel"] = "error-model",
-                ["IncidentCompass:ModelGateway:EvaluationModel"] = "error-model",
                 ["IncidentCompass:ModelGateway:OpenAiCompatible:BaseUrl"] = baseUrl,
                 ["IncidentCompass:ModelGateway:OpenAiCompatible:ApiKey"] = "test-api-key",
                 ["IncidentCompass:ModelGateway:OpenAiCompatible:AllowInsecureHttpForLoopback"] = "true",
@@ -241,7 +418,7 @@ public sealed class OpenAiCompatibleModelClientTests
 
         Assert.Equal("invalid_request", exception.ErrorCode);
         Assert.Equal("raw_provider_code", exception.ProviderErrorCode);
-        Assert.Equal(HttpStatusCode.BadRequest, exception.StatusCode);
+        Assert.Equal(ProviderFailureKind.RejectedRequest, exception.FailureKind);
     }
 
     [Fact]
@@ -251,10 +428,6 @@ public sealed class OpenAiCompatibleModelClientTests
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["IncidentCompass:ModelGateway:Provider"] = "OpenAiCompatible",
-                ["IncidentCompass:ModelGateway:DefaultModel"] = "config-model",
-                ["IncidentCompass:ModelGateway:StrongModel"] = "config-model",
-                ["IncidentCompass:ModelGateway:CheapModel"] = "config-model",
-                ["IncidentCompass:ModelGateway:EvaluationModel"] = "config-model",
                 ["IncidentCompass:ModelGateway:OpenAiCompatible:BaseUrl"] = "not-a-valid-uri",
                 ["IncidentCompass:ModelGateway:OpenAiCompatible:ApiKey"] = "test-api-key"
             })
@@ -278,6 +451,7 @@ public sealed class OpenAiCompatibleModelClientTests
 
         Assert.Equal("configuration_error", exception.ErrorCode);
         Assert.Equal("openai-compatible", exception.Provider);
+        Assert.Equal(ProviderFailureKind.RejectedRequest, exception.FailureKind);
     }
 
     [Fact]
@@ -287,10 +461,6 @@ public sealed class OpenAiCompatibleModelClientTests
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["IncidentCompass:ModelGateway:Provider"] = "OpenAiCompatible",
-                ["IncidentCompass:ModelGateway:DefaultModel"] = "config-model",
-                ["IncidentCompass:ModelGateway:StrongModel"] = "config-model",
-                ["IncidentCompass:ModelGateway:CheapModel"] = "config-model",
-                ["IncidentCompass:ModelGateway:EvaluationModel"] = "config-model",
                 ["IncidentCompass:ModelGateway:OpenAiCompatible:BaseUrl"] = "http://127.0.0.1:12345",
                 ["IncidentCompass:ModelGateway:OpenAiCompatible:ApiKey"] = "test-api-key"
             })
@@ -314,6 +484,7 @@ public sealed class OpenAiCompatibleModelClientTests
 
         Assert.Equal("configuration_error", exception.ErrorCode);
         Assert.Equal("openai-compatible", exception.Provider);
+        Assert.Equal(ProviderFailureKind.RejectedRequest, exception.FailureKind);
     }
 
     private static WebApplication CreateFakeOpenAiCompatibleServer()
@@ -473,6 +644,42 @@ public sealed class OpenAiCompatibleModelClientTests
     private static string GetServerAddress(WebApplication app)
     {
         return LoopbackTestServer.GetAddress(app);
+    }
+
+    private static AiModelRequest CreateRequest(string model = "test-model")
+    {
+        return new AiModelRequest(
+            CorrelationId: "provider-protocol-test",
+            Model: model,
+            Messages: [new AiChatMessage(AiMessageRole.User, "hello")]);
+    }
+
+    private static string ToolCallResponse(string arguments)
+    {
+        return JsonSerializer.Serialize(new
+        {
+            model = "tool-model",
+            choices = new[]
+            {
+                new
+                {
+                    message = new
+                    {
+                        content = (string?)null,
+                        tool_calls = new[]
+                        {
+                            new
+                            {
+                                id = "call-1",
+                                type = "function",
+                                function = new { name = "memory_search", arguments }
+                            }
+                        }
+                    }
+                }
+            },
+            usage = new { prompt_tokens = 11, completion_tokens = 7, total_tokens = 18 }
+        });
     }
 
     private static void AssertNoNullProperties(JsonElement element)

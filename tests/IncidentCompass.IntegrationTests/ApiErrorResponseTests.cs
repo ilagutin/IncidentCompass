@@ -16,7 +16,7 @@ using Microsoft.Extensions.Logging;
 namespace IncidentCompass.IntegrationTests;
 
 /// <summary>
-/// IC-BL-071: the API error boundary must map NotFoundException/ConflictException/
+/// the API error boundary must map NotFoundException/ConflictException/
 /// ForbiddenRequestException/ValidationException to a stable code and an authored, client-safe
 /// detail, and must never echo the exception's own developer-facing message. Each test drives a
 /// real HTTP request through a mapped exception type and asserts on the response body only.

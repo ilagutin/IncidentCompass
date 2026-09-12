@@ -21,6 +21,11 @@ internal static class IntakeSetup
         // never overrides it; it only backstops raw ServiceCollection compositions.
         services.TryAddSingleton<IHostEnvironment, FallbackHostEnvironment>();
 
+        // The load validator checks that a multi-provider configuration's credentials resolve, so
+        // the secret reader is registered here as well as beside the gateway adapters. A
+        // composition that validates a configuration without composing any model adapter - the
+        // `config validate` command path - reaches this registration and not that one.
+        services.TryAddSingleton<IModelProviderSecretReader, EnvironmentModelProviderSecretReader>();
         services.TryAddSingleton<TriageConfigurationLoadValidator>();
         services.TryAddSingleton<TriageConfigurationMaterializer>();
         services.TryAddSingleton<TriageConfigurationSnapshotStore>();

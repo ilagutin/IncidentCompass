@@ -2,6 +2,7 @@ using System.Text.Json.Nodes;
 using IncidentCompass.Application.Governance.Tools;
 using IncidentCompass.Application.Intake.Normalization;
 using IncidentCompass.Application.Notifications;
+using IncidentCompass.Application.Remediation;
 using IncidentCompass.Application.Tickets;
 using IncidentCompass.Infrastructure.Configuration;
 using IncidentCompass.Infrastructure.Intake;
@@ -23,6 +24,10 @@ public sealed class TriageConfigurationValidationParityTests
         { "valid", true, true, null },
         { "provider", false, false, "Providers.local-oai.Kind" },
         { "route", false, false, "Routes.analysis-chat.Model" },
+        { "valid-reasoning", true, true, null },
+        { "unknown-reasoning", false, false, "Routes.analysis-chat.Reasoning" },
+        { "numeric-reasoning", false, false, "Routes.analysis-chat.Reasoning" },
+        { "embedding-reasoning", false, false, "Routes.memory-embed.Reasoning" },
         { "role", false, false, "Roles.analysis.OutputSchema" },
         { "tool", false, false, "Tools.memory_search.Kind" },
         { "rule", false, false, "Rules.Type" },
@@ -32,6 +37,14 @@ public sealed class TriageConfigurationValidationParityTests
         { "recurrence", false, false, "FaultGrouping.Recurrence.EscalateAfterCount" },
         { "redaction", false, false, "Redaction.Patterns[0].Name" },
         { "dangling-role-route", true, false, "Roles.analysis.RouteId" },
+        { "valid-route-fallback", true, true, null },
+        { "unknown-route-fallback", true, false, "Routes.report-chat.FallbackRouteId" },
+        { "self-route-fallback", true, false, "Routes.report-chat.FallbackRouteId" },
+        { "embedding-route-fallback", false, false, "Routes.memory-embed.FallbackRouteId" },
+        { "embedding-target-route-fallback", true, false, "Routes.report-chat.FallbackRouteId" },
+        // A fallback pointing at a route whose provider does not exist is rejected by that route's
+        // own provider rule, which runs for every route before any fallback is resolved.
+        { "fallback-to-dangling-provider-route", true, false, "Routes.analysis-chat.ProviderId" },
         { "valid-external-action", true, true, null },
         { "valid-telegram-action", true, true, null },
         { "valid-ticket-create-action", true, true, null },
@@ -139,6 +152,18 @@ public sealed class TriageConfigurationValidationParityTests
             case "route":
                 root["Routes"]!["analysis-chat"]!["Model"] = string.Empty;
                 return;
+            case "valid-reasoning":
+                root["Routes"]!["analysis-chat"]!["Reasoning"] = "low";
+                return;
+            case "unknown-reasoning":
+                root["Routes"]!["analysis-chat"]!["Reasoning"] = "automatic";
+                return;
+            case "numeric-reasoning":
+                root["Routes"]!["analysis-chat"]!["Reasoning"] = 1;
+                return;
+            case "embedding-reasoning":
+                root["Routes"]!["memory-embed"]!["Reasoning"] = "off";
+                return;
             case "role":
                 root["Roles"]!["analysis"]!["OutputSchema"] = string.Empty;
                 return;
@@ -169,6 +194,25 @@ public sealed class TriageConfigurationValidationParityTests
                 return;
             case "dangling-role-route":
                 root["Roles"]!["analysis"]!["RouteId"] = "missing-route";
+                return;
+            case "valid-route-fallback":
+                root["Routes"]!["report-chat"]!["FallbackRouteId"] = "analysis-chat";
+                return;
+            case "unknown-route-fallback":
+                root["Routes"]!["report-chat"]!["FallbackRouteId"] = "missing-route";
+                return;
+            case "self-route-fallback":
+                root["Routes"]!["report-chat"]!["FallbackRouteId"] = "report-chat";
+                return;
+            case "embedding-route-fallback":
+                root["Routes"]!["memory-embed"]!["FallbackRouteId"] = "analysis-chat";
+                return;
+            case "embedding-target-route-fallback":
+                root["Routes"]!["report-chat"]!["FallbackRouteId"] = "memory-embed";
+                return;
+            case "fallback-to-dangling-provider-route":
+                root["Routes"]!["report-chat"]!["FallbackRouteId"] = "analysis-chat";
+                root["Routes"]!["analysis-chat"]!["ProviderId"] = "missing-provider";
                 return;
             case "valid-external-action":
                 AddExternalAction(root);
@@ -330,6 +374,11 @@ public sealed class TriageConfigurationValidationParityTests
             new AgentToolDescriptor("ticket_search", AgentToolCapability.ImmediateRead),
             TelegramNotificationToolDescriptor.Value,
             TicketCreateTool.Descriptor,
+            RemediationDiffToolDescriptor.Descriptor,
+            RemediationApplyToolDescriptor.Descriptor,
+            BranchPushToolDescriptor.Descriptor,
+            PullRequestToolDescriptor.Descriptor,
+            TicketBacklinkDescriptor.Descriptor,
             new AgentToolDescriptor(
                 "notify_test",
                 AgentToolCapability.ExternalAction,
@@ -341,6 +390,7 @@ public sealed class TriageConfigurationValidationParityTests
                 IncidentCompass.Domain.Incidents.Actions.ActionCategory.Notification,
                 "telegram:ops")
         ]));
+        services.AddSingleton<IModelProviderSecretReader, EnvironmentModelProviderSecretReader>();
         services.AddSingleton<TriageConfigurationLoadValidator>();
         services.AddSingleton<TriageConfigurationMaterializer>();
         services.AddSingleton<ITriageConfigurationSnapshotStore>(snapshots);

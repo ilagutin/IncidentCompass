@@ -65,6 +65,30 @@ public sealed class ActionToolRuleEngineTests
         Assert.Equal(expected, result.EffectiveMode);
     }
 
+    /// <summary>
+    /// Every ordered pair of execution modes, so the ladder is pinned rather than inferred from the
+    /// four pairs the engine-level tests happen to reach. Reordering an arm so that a globally
+    /// dry-run tool overridden to disabled resolved to <c>DryRun</c> would let a denied action
+    /// execute, which is a governance change no other test observes.
+    /// </summary>
+    [Theory]
+    [InlineData(ActionExecutionMode.Live, ActionExecutionMode.Live, ActionExecutionMode.Live)]
+    [InlineData(ActionExecutionMode.Live, ActionExecutionMode.DryRun, ActionExecutionMode.DryRun)]
+    [InlineData(ActionExecutionMode.Live, ActionExecutionMode.Disabled, ActionExecutionMode.Disabled)]
+    [InlineData(ActionExecutionMode.DryRun, ActionExecutionMode.Live, ActionExecutionMode.DryRun)]
+    [InlineData(ActionExecutionMode.DryRun, ActionExecutionMode.DryRun, ActionExecutionMode.DryRun)]
+    [InlineData(ActionExecutionMode.DryRun, ActionExecutionMode.Disabled, ActionExecutionMode.Disabled)]
+    [InlineData(ActionExecutionMode.Disabled, ActionExecutionMode.Live, ActionExecutionMode.Disabled)]
+    [InlineData(ActionExecutionMode.Disabled, ActionExecutionMode.DryRun, ActionExecutionMode.Disabled)]
+    [InlineData(ActionExecutionMode.Disabled, ActionExecutionMode.Disabled, ActionExecutionMode.Disabled)]
+    public void MostRestrictiveModeHoldsForEveryModePair(
+        ActionExecutionMode first,
+        ActionExecutionMode second,
+        ActionExecutionMode expected)
+    {
+        Assert.Equal(expected, ActionGovernanceDefaults.MostRestrictive(first, second));
+    }
+
     [Fact]
     public async Task DisabledUnlistedAliasAndRegistrationMismatchFailClosed()
     {
@@ -115,7 +139,7 @@ public sealed class ActionToolRuleEngineTests
         };
         var executor = new WorkerToolCallExecutor(
             [], new ToolRuleEngine(new LedgerReader()),
-            new TriageLedgerAppender(new LedgerWriter()), new ToolResultCommitter());
+            new TriageLedgerAppender(new LedgerWriter()), new ToolResultCommitter(), TimeProvider.System);
 
         Assert.Empty(executor.CreateToolSurface(configuration, configuration.Roles["analysis"]));
     }
@@ -171,7 +195,7 @@ public sealed class ActionToolRuleEngineTests
         public int AcceptedUseCountCalls { get; private set; }
 
         public Task<int> CountPolicyDecisionsAsync(
-            TriageJob job, string toolName, string scope, TriageLedgerDecision decision,
+            TriageJob job, string toolName, ToolRuleScope scope, TriageLedgerDecision decision,
             CancellationToken cancellationToken)
         {
             PolicyDecisionCountCalls++;
@@ -179,33 +203,38 @@ public sealed class ActionToolRuleEngineTests
         }
 
         public Task<bool> HasSuccessfulToolResultAsync(
-            TriageJob job, string toolName, string scope, CancellationToken cancellationToken) =>
+            TriageJob job, string toolName, ToolRuleScope scope, CancellationToken cancellationToken) =>
             Task.FromResult(true);
 
         public Task<int> CountAcceptedUsesAsync(
-            string toolName, string scope, CancellationToken cancellationToken)
+            string toolName, ToolRuleScope scope, CancellationToken cancellationToken)
         {
             AcceptedUseCountCalls++;
             return Task.FromResult(0);
         }
 
         public Task<bool> HasSuccessfulToolResultAsync(
-            string toolName, string scope, CancellationToken cancellationToken) =>
+            string toolName, ToolRuleScope scope, CancellationToken cancellationToken) =>
             Task.FromResult(true);
 
         public Task<TriageBudgetLedgerUsage> ReadBudgetUsageAsync(
             TriageJob job, CancellationToken cancellationToken) =>
             Task.FromResult(new TriageBudgetLedgerUsage(0, 0));
 
-        public Task<IReadOnlyList<TriageLedgerEntry>> ReadByFaultIdAsync(
+        public Task<IReadOnlyList<FaultLedgerEntry>> ReadByFaultIdAsync(
             Guid faultId, string tenantId, CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<TriageLedgerEntry>>([]);
+            Task.FromResult<IReadOnlyList<FaultLedgerEntry>>([]);
     }
 
     private sealed class LedgerWriter : ITriageLedgerWriter
     {
         public Task<TriageLedgerEntry> AppendAsync(
             TriageLedgerAppendRequest request, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<IReadOnlyList<TriageLedgerEntry>> AppendBatchAsync(
+            IReadOnlyList<TriageLedgerAppendRequest> requests,
+            CancellationToken cancellationToken) =>
             throw new NotSupportedException();
     }
 

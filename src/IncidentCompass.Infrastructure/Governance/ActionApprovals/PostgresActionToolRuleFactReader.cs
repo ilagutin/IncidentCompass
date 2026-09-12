@@ -12,13 +12,13 @@ internal sealed class PostgresActionToolRuleFactReader(
 {
     public Task<int> CountAcceptedUsesAsync(
         string toolName,
-        string scope,
+        ToolRuleScope scope,
         CancellationToken cancellationToken) =>
         CountAsync("ActionProposed", toolName, scope, cancellationToken);
 
     public async Task<bool> HasSuccessfulToolResultAsync(
         string toolName,
-        string scope,
+        ToolRuleScope scope,
         CancellationToken cancellationToken)
     {
         var attemptPredicate = ScopePredicate(scope);
@@ -38,7 +38,7 @@ internal sealed class PostgresActionToolRuleFactReader(
     private async Task<int> CountAsync(
         string eventType,
         string toolName,
-        string scope,
+        ToolRuleScope scope,
         CancellationToken cancellationToken)
     {
         var attemptPredicate = ScopePredicate(scope);
@@ -64,8 +64,17 @@ internal sealed class PostgresActionToolRuleFactReader(
         }
     }
 
-    private static string ScopePredicate(string scope) =>
-        string.Equals(scope, "attempt", StringComparison.Ordinal)
-            ? " AND attempt = @attempt"
-            : string.Empty;
+    /// <summary>
+    /// The attempt half of the window. Every query here already constrains <c>job_id</c> to this
+    /// proposal's origin job, so the job window is the base and the attempt window narrows it.
+    /// </summary>
+    /// <remarks>
+    /// This used to treat anything that was not the literal <c>attempt</c> as the job window, which
+    /// silently widened a scope it did not recognize while the triage-ledger reader silently
+    /// narrowed the same input. Neither refused it. The window is now decided once, by
+    /// <see cref="ToolRuleScopes.NarrowsToAttempt" />, and the engine denies a scope nothing can
+    /// evaluate before either reader is reached.
+    /// </remarks>
+    private static string ScopePredicate(ToolRuleScope scope) =>
+        ToolRuleScopes.NarrowsToAttempt(scope) ? " AND attempt = @attempt" : string.Empty;
 }

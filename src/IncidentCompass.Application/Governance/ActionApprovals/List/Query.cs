@@ -7,4 +7,5 @@ public sealed record ListActionApprovalsQuery(
     int? Limit,
     string? Cursor,
     string? ExternalResourceKind = null,
-    string? ExternalResourceId = null) : IRequest<ActionApprovalListResponse>;
+    string? ExternalResourceId = null,
+    Guid? FaultId = null) : IRequest<ActionApprovalListResponse>;

@@ -50,6 +50,12 @@ internal static partial class FingerprintCalculator
 
     private static string Normalize(string value) => value.Trim().ToLowerInvariant();
 
+    /// <summary>
+    /// Replaces the parts of a free-text input that change between two occurrences of the same fault:
+    /// timestamps, GUIDs, email addresses, long hexadecimal runs and numbers. This is what keeps a
+    /// fingerprint stable across runs, and it also means a caller cannot make a masked input unique by
+    /// appending a hexadecimal identifier to it. Service name and error type are never masked.
+    /// </summary>
     private static string Mask(string value)
     {
         var masked = TimestampPattern().Replace(value, "<ts>");

@@ -30,8 +30,11 @@
   <ItemGroup>
     <!-- Shared with IncidentCompass.IntegrationTests via file link: the two test projects do not
          reference each other, so a physical file under tests\Shared is the only way to give both
-         a single RepositoryRootLocator implementation instead of per-file copies. -->
+         a single RepositoryRootLocator and TriageConfigurationFileLocator implementation instead
+         of per-file copies. -->
     <Compile Include="..\Shared\RepositoryRootLocator.cs" Link="Support\RepositoryRootLocator.cs" />
+    <Compile Include="..\Shared\TriageConfigurationFileLocator.cs" Link="Support\TriageConfigurationFileLocator.cs" />
+    <Compile Include="..\Shared\TestModelProviderProfiles.cs" Link="Support\TestModelProviderProfiles.cs" />
   </ItemGroup>
 
   <ItemGroup>
@@ -39,6 +42,7 @@
     <ProjectReference Include="..\..\src\IncidentCompass.Domain\IncidentCompass.Domain.csproj" />
     <ProjectReference Include="..\..\src\IncidentCompass.Infrastructure\IncidentCompass.Infrastructure.csproj" />
     <ProjectReference Include="..\..\src\IncidentCompass.Tester\IncidentCompass.Tester.csproj" />
+    <ProjectReference Include="..\..\src\IncidentCompass.Worker\IncidentCompass.Worker.csproj" />
   </ItemGroup>
 
 </Project>

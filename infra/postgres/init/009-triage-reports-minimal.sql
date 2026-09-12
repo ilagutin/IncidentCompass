@@ -1,4 +1,4 @@
--- Phase 5 report persistence. The final Worker commit writes report + evidence + fault status +
+-- Report persistence. The final Worker commit writes report + evidence + fault status +
 -- job success + ReportPublished in one fenced transaction.
 
 CREATE TABLE IF NOT EXISTS incidentcompass.triage_reports (

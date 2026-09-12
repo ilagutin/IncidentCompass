@@ -12,9 +12,11 @@ internal sealed class PostgresTriageArtifactRepository(PostgresDataSourceProvide
         await using var lease = await transactionContext.OpenConnectionAsync(dataSourceProvider, cancellationToken);
         await using var command = new NpgsqlCommand("""
             INSERT INTO incidentcompass.triage_artifacts (
-                id, job_id, attempt, kind, domain_ref, redacted_payload, content_hash, created_at_utc)
+                id, job_id, attempt, kind, domain_ref, redacted_payload, content_hash, created_at_utc,
+                redaction_applied)
             VALUES (
-                @id, @job_id, @attempt, @kind, @domain_ref, @redacted_payload, @content_hash, @created_at_utc);
+                @id, @job_id, @attempt, @kind, @domain_ref, @redacted_payload, @content_hash, @created_at_utc,
+                @redaction_applied);
             """, lease.Connection, lease.Transaction);
 
         AddArtifactParameters(command, artifact);
@@ -31,15 +33,18 @@ internal sealed class PostgresTriageArtifactRepository(PostgresDataSourceProvide
         await using var lease = await transactionContext.OpenConnectionAsync(dataSourceProvider, cancellationToken);
         await using var command = new NpgsqlCommand("""
             INSERT INTO incidentcompass.triage_artifacts (
-                id, job_id, attempt, kind, domain_ref, redacted_payload, content_hash, created_at_utc)
+                id, job_id, attempt, kind, domain_ref, redacted_payload, content_hash, created_at_utc,
+                redaction_applied)
             VALUES (
-                @id, @job_id, @attempt, @kind, @domain_ref, @redacted_payload, @content_hash, @created_at_utc)
+                @id, @job_id, @attempt, @kind, @domain_ref, @redacted_payload, @content_hash, @created_at_utc,
+                @redaction_applied)
             ON CONFLICT (id)
             DO UPDATE SET
                 domain_ref = EXCLUDED.domain_ref,
                 redacted_payload = EXCLUDED.redacted_payload,
                 content_hash = EXCLUDED.content_hash,
-                created_at_utc = EXCLUDED.created_at_utc;
+                created_at_utc = EXCLUDED.created_at_utc,
+                redaction_applied = EXCLUDED.redaction_applied;
             """, lease.Connection, lease.Transaction);
 
         AddArtifactParameters(command, artifact);
@@ -56,5 +61,6 @@ internal sealed class PostgresTriageArtifactRepository(PostgresDataSourceProvide
         command.AddJsonbParameter("redacted_payload", artifact.RedactedPayload.GetRawText());
         command.AddParameter("content_hash", artifact.ContentHash);
         command.AddParameter("created_at_utc", artifact.CreatedAtUtc);
+        command.AddParameter("redaction_applied", artifact.RedactionApplied);
     }
 }

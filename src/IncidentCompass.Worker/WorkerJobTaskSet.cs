@@ -1,83 +1,14 @@
 namespace IncidentCompass.Worker;
 
-internal sealed partial class WorkerJobTaskSet(ILogger<WorkerJobPump> logger)
+/// <summary>
+/// Builds the <see cref="WorkerJobPump"/>'s <see cref="ClaimedTaskSet"/> and owns that pump's two
+/// failure log events. The concurrency behaviour is shared; only the events are per pump, so the
+/// ids documented in <c>docs/observability.md</c> stay distinct.
+/// </summary>
+internal static partial class WorkerJobTaskSet
 {
-    private readonly List<(Task ProcessingTask, CancellationTokenSource Cancellation)> jobs = [];
-
-    public int Count => jobs.Count;
-
-    public void Add(Task processingTask, CancellationTokenSource cancellation) => jobs.Add((processingTask, cancellation));
-
-    public async Task ObserveCompletedAsync(CancellationToken cancellationToken)
-    {
-        for (var index = jobs.Count - 1; index >= 0; index--)
-        {
-            var job = jobs[index];
-            if (!job.ProcessingTask.IsCompleted)
-            {
-                continue;
-            }
-
-            jobs.RemoveAt(index);
-            try
-            {
-                await job.ProcessingTask;
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                throw;
-            }
-            catch (Exception exception)
-            {
-                LogJobFailedAfterClaim(logger, exception);
-            }
-            finally
-            {
-                job.Cancellation.Dispose();
-            }
-        }
-    }
-
-    public async Task DrainAsync()
-    {
-        var runningJobs = jobs.ToArray();
-        jobs.Clear();
-        foreach (var job in runningJobs)
-        {
-            job.Cancellation.Cancel();
-        }
-
-        foreach (var job in runningJobs)
-        {
-            try
-            {
-                await job.ProcessingTask;
-            }
-            catch (OperationCanceledException)
-            {
-            }
-            catch (Exception exception)
-            {
-                LogJobFailedWhileDraining(logger, exception);
-            }
-            finally
-            {
-                job.Cancellation.Dispose();
-            }
-        }
-    }
-
-    public async Task WaitForNextWakeAsync(TimeSpan delay, CancellationToken cancellationToken)
-    {
-        if (jobs.Count == 0)
-        {
-            await Task.Delay(delay, cancellationToken);
-            return;
-        }
-
-        await WorkerWakeDelay.WaitAsync(
-            delay, jobs.Select(static job => job.ProcessingTask), cancellationToken);
-    }
+    public static ClaimedTaskSet Create(ILogger<WorkerJobPump> logger) =>
+        new(logger, LogJobFailedAfterClaim, LogJobFailedWhileDraining);
 
     [LoggerMessage(EventId = 1401, Level = LogLevel.Warning, Message = "Claimed triage job processing failed after claim.")]
     private static partial void LogJobFailedAfterClaim(ILogger logger, Exception exception);

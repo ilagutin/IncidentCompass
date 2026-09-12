@@ -1,4 +1,4 @@
--- DORMANT: reserved for IC-BL-014 cost rollup work.
+-- DORMANT: reserved for model cost rollup work.
 CREATE TABLE IF NOT EXISTS incidentcompass.ai_model_pricing (
     id uuid PRIMARY KEY,
     provider text NOT NULL CHECK (length(btrim(provider)) > 0),

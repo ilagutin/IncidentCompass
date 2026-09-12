@@ -10,14 +10,14 @@ internal sealed class TriageLedgerToolRuleFactReader(
 {
     public Task<int> CountAcceptedUsesAsync(
         string toolName,
-        string scope,
+        ToolRuleScope scope,
         CancellationToken cancellationToken) =>
         ledgerReader.CountPolicyDecisionsAsync(
             job, toolName, scope, TriageLedgerDecision.Allowed, cancellationToken);
 
     public Task<bool> HasSuccessfulToolResultAsync(
         string toolName,
-        string scope,
+        ToolRuleScope scope,
         CancellationToken cancellationToken) =>
         ledgerReader.HasSuccessfulToolResultAsync(job, toolName, scope, cancellationToken);
 }

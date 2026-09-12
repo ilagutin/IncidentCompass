@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AnalysisWorkerOutput",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "keyFacts": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "candidateClassification": {
+      "type": "string",
+      "enum": ["KnownIncident", "LikelyRegression", "SimpleKnownError", "Unknown", "Noise"]
+    },
+    "needsDeeperContext": {
+      "type": "boolean"
+    },
+    "rationale": {
+      "type": "string"
+    }
+  },
+  "required": ["keyFacts", "candidateClassification", "needsDeeperContext"]
+}

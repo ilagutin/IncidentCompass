@@ -100,6 +100,9 @@ public sealed class SourceLookupWorkerPathTests(PostgresRepositoryFixture postgr
 
     private static async Task<IngestResponse> PostOtelSignalAsync(HttpClient client, string sourcePath)
     {
+        // The service name is fixed because the SourceContext root above is bound to it, so the
+        // signal's fingerprint is made distinct through the error message instead.
+        var unique = IngestFingerprintUniqueness.Token();
         var response = await client.PostAsJsonAsync(
             "/api/v1/incidents",
             new
@@ -107,12 +110,12 @@ public sealed class SourceLookupWorkerPathTests(PostgresRepositoryFixture postgr
                 sourceKind = "otel",
                 serviceName = "checkout",
                 environment = "prod",
-                externalId = "source-" + Guid.NewGuid().ToString("N"),
+                externalId = "source-" + unique,
                 observedAtUtc = DateTimeOffset.UtcNow,
                 attributes = new Dictionary<string, object?>
                 {
                     ["errorType"] = "ExampleException",
-                    ["errorMessage"] = "checkout source failure " + Guid.NewGuid().ToString("N"),
+                    ["errorMessage"] = "checkout source failure " + unique,
                     ["exception.stacktrace"] = $"   at Checkout.Run() in {sourcePath}:line 15"
                 }
             },
