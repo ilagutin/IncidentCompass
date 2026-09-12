@@ -92,6 +92,39 @@ public sealed class SourceLookupToolTests
     }
 
     /// <summary>
+    /// The limitation says that a reference could not be built, which is one fact however many
+    /// matches it happened to, so several drops in one call still produce one code. A code repeated
+    /// once per drop would read to the model as several distinct problems.
+    /// </summary>
+    [Fact]
+    public async Task Execute_ReportsTheUnrepresentableReferenceLimitationOnceForSeveralDrops()
+    {
+        var adapter = new CapturingLookup(new SourceLookupResult(
+            SourceLookupOutcome.Matched,
+            "source_match",
+            [
+                new SourceLookupMatch(
+                    "src/" + new string('a', 400) + ".cs", 10, 12, "line 10", "r1", "heuristic"),
+                new SourceLookupMatch(
+                    "src/" + new string('b', 400) + ".cs", 20, 22, "line 20", "r1", "heuristic"),
+                new SourceLookupMatch("src/Checkout.cs", 10, 12, "line 10", "r1", "heuristic")
+            ],
+            []));
+        var tool = new SourceLookupTool(adapter);
+
+        var result = await tool.ExecuteAsync(
+            CreateContext(includeRelease: true),
+            Json("{}"),
+            TestContext.Current.CancellationToken);
+
+        var codes = result.Output.GetProperty("limitations").EnumerateArray()
+            .Select(item => item.GetString())
+            .ToList();
+        Assert.Equal("source_reference_rejected", Assert.Single(codes));
+        Assert.Single(result.Artifacts!);
+    }
+
+    /// <summary>
     /// The degenerate end of the same case: when no match can be named there is nothing to ground a
     /// report on, so the tool reports that rather than claiming a match it did not return.
     /// </summary>

@@ -434,13 +434,14 @@ tool output, artifacts or reports. The shared durable outcome policy adds canoni
 connector-unavailable limitations before publication even if the model omits them.
 
 Publication adds one more backend-derived limitation on the same path. Every artifact that passed
-through the tool redaction boundary records whether redaction actually removed anything, from its
-payload or from its `domain_ref`, both of which the boundary redacts - both the per-item artifacts a
-tool hands back as drafts and the `ToolResult` artifact built from the same tool's redacted output,
-since both are citable evidence and a silent one would let the model decide whether the limitation
-appears. The `ToolResult` row therefore answers for the whole call rather than for its own document:
-a redaction that touched only an artifact's reference sets it too, or the pairing would come apart on
-exactly the case the reference boundary added. A report that cites such an artifact states that some of its
+through the tool redaction boundary records whether redaction actually removed anything: the
+per-item artifacts a tool hands back as drafts, where the boundary redacts the payload and the
+`domain_ref` alike, and the `ToolResult` artifact built from the same tool's redacted output, whose
+own `domain_ref` is the composed `tool:<name>` and never meets the redactor. Both are citable
+evidence and a silent one would let the model decide whether the limitation appears. The
+`ToolResult` row therefore answers for the whole call rather than for its own document: a redaction
+that touched only an artifact's reference sets it too, or the pairing would come apart on exactly
+the case the reference boundary added. A report that cites such an artifact states that some of its
 evidence was withheld from the model. The statement is derived from that recorded outcome rather
 than from the stored payload, because a redacted value is indistinguishable from connector text that
 already contained the placeholder. Artifacts written outside that boundary record nothing, which is

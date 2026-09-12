@@ -115,21 +115,37 @@ variable: `MaxAttempts` (10, the total attempts including the first, so 1 disabl
 expiry). The budget ends at whichever bound is reached first. The expiry is checked between
 attempts and does not interrupt an attempt already in flight, so the worst-case wait is the expiry
 plus one connection timeout. All four are bounded at both ends and a value outside its range stops
-the host at start: at most 100 attempts, at most 60000 milliseconds for either delay and at most
-600 seconds of expiry, because an hours-long silent wait is not the loud failure this budget
-promises.
+the host at start. The floor is 1 for each of them, so there is no zero attempt count, no zero delay
+that would retry as fast as the operating system can refuse the port, and no zero expiry. The
+ceilings are 100 attempts, 60000 milliseconds for either delay and 600 seconds of expiry, because an
+hours-long silent wait is not the loud failure this budget promises.
+
+One cross-field rule sits on top of those ranges: `MaxDelayMilliseconds` must not be below
+`InitialDelayMilliseconds`, because a ceiling under the first wait is a budget that contradicts
+itself. It is worth knowing before an override, since both values can be inside their own ranges and
+still fail the host at start together - setting `MaxDelayMilliseconds` to 100 while
+`InitialDelayMilliseconds` keeps its default of 250 is exactly that case.
 
 Four failures are retried and nothing else: a socket error reaching the endpoint, which is what a
 port with nothing listening on it produces; a connection accepted and then dropped mid-handshake,
 which is what PostgreSQL does when it takes a connection off its listen backlog before the
 postmaster is serving; a timeout reaching the endpoint; and PostgreSQL answering SQLSTATE `57P03`,
 the server saying it is up but still starting. Everything else fails immediately, because waiting
-cannot change it: a wrong credential, a missing database, an unparsable connection string, a
-hostname that does not resolve, and the errors a running server returns when it is refusing work,
-such as `too_many_connections`. The budget also covers the first successful connection only. Once
-one connection has opened, every later failure surfaces at once, so a database that goes away in
-steady state stays visible as a failure, and restarting PostgreSQL under a running API or Worker is
-not retried at all.
+cannot change it: a wrong credential, a missing database, an unparsable connection string, and the
+errors a running server returns when it is refusing work, such as `too_many_connections`.
+
+Two details of that list are easy to read past. A hostname that does not resolve is not a fifth
+category beside the socket error but a carve-out inside it: the socket shape covers every socket
+error except `HostNotFound` and `NoData`, so a name that does not resolve is rethrown on the first
+attempt rather than burning the whole budget on every host start. And the check walks a failure's
+own chain of inner exceptions and does not fan out into an `AggregateException`, so a connection
+attempt that tries several hosts and aggregates what each one returned is not retried at all. That
+is the fail-safe direction, and it is why this budget is documented for the single-database
+deployment this runbook describes.
+
+The budget also covers the first successful connection only. Once one connection has opened, every
+later failure surfaces at once, so a database that goes away in steady state stays visible as a
+failure, and restarting PostgreSQL under a running API or Worker is not retried at all.
 
 Exhausting the budget fails the host loudly with the normalized persistence error, and the process
 exits. The production overlay sets `restart: unless-stopped` on `postgres`, `api` and `worker`, so

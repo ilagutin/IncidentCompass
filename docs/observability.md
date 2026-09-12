@@ -218,9 +218,9 @@ at all, and what the call cost if it was, are not recoverable from the record. W
 misbehaved comes from the correlated `InvestigationModelCaller` failure log event, which names the
 offending exception type.
 
-The defect persists until the adapter is fixed, and a retry that succeeds does not mean it was: the
-usual cause is a forgotten catch around a transient transport fault, so the next attempt often
-completes normally while the same adapter remains one bad response away from doing this again. A
+The defect persists until the adapter is fixed, and a retry that succeeds does not mean it was: a
+missing catch around a transient transport fault would let the next attempt complete normally while
+the same adapter remains one bad response away from doing this again. A
 single occurrence is worth a bug report even when the job afterwards recovers on its own. See
 `docs/model-gateway.md`, "Provider Response And Failure Boundary".
 
