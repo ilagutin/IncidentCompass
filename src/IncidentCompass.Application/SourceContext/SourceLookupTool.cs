@@ -69,6 +69,13 @@ internal sealed class SourceLookupTool(ISourceContextLookup sourceContextLookup)
     /// into. The match is dropped rather than stored under a reference that does not describe it,
     /// and the read boundary's own limitation list is where a dropped match already gets said, so
     /// this joins the codes that list already carries instead of inventing a second channel.
+    /// <para>
+    /// It is emitted at most once per call however many matches were dropped. The code says a
+    /// reference could not be built, which is one fact whether it happened once or three times, and
+    /// the model reads this list as a set of reasons rather than as a tally. The read boundary's own
+    /// codes are per frame and do repeat, which is why the dedupe is applied to this code alone
+    /// rather than to the assembled list.
+    /// </para>
     /// </summary>
     private const string UnrepresentableReferenceCode = "source_reference_rejected";
 
@@ -82,16 +89,22 @@ internal sealed class SourceLookupTool(ISourceContextLookup sourceContextLookup)
         var matched = new List<SourceLookupMatch>(result.Matches.Count);
         var drafts = new List<ToolArtifactDraft>(result.Matches.Count);
         var limitations = result.Limitations.ToList();
+        var droppedAMatch = false;
         foreach (var match in result.Matches)
         {
             if (CreateDraft(match) is not { } draft)
             {
-                limitations.Add(new SourceLookupLimitation(UnrepresentableReferenceCode));
+                droppedAMatch = true;
                 continue;
             }
 
             matched.Add(match);
             drafts.Add(draft);
+        }
+
+        if (droppedAMatch)
+        {
+            limitations.Add(new SourceLookupLimitation(UnrepresentableReferenceCode));
         }
 
         return new ToolExecutionResult(

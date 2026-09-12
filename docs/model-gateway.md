@@ -130,7 +130,9 @@ the caller's own token; anything else is a breach of the port. `InvestigationMod
 bounded caller every governed model call goes through, converts a breach into the same recorded,
 classified failure a normalized error produces: a durable `ModelCall` row with the error code
 `provider_contract_violation`, with the offending exception kept beneath the synthesized one so the
-defect is readable in a stack trace and nowhere else. The kind that row resolves to is `Unknown`
+defect is readable in a stack trace. The caller's own failure log event names the offending
+exception type, which is the one detail about it that is safe to record; what reaches no persisted
+row is its message and everything derived from it. The kind that row resolves to is `Unknown`
 unless the offending chain itself carries a classified provider exception, in which case that kind is
 what the Worker sees and dispositions on while the error code still names the breach. Enforcement sits
 in the caller rather than in a composition-time decorator because tests and future hosts replace the
@@ -151,18 +153,19 @@ What the enforcement changes is worth stating precisely, because the two paths t
 calls lost different things. On the governed triage path the attempt already failed in an ordinary
 way: the job runner caught the raw exception and dead-lettered or retried it as
 `triage_job_attempt_failed`. What that attempt carried was an unclassified exception and no
-`ModelCall` row at all, so the disposition was decided without a failure kind and the call left no
-trace. Enforcement gives that attempt both. On the remediation post-report path the loss was larger:
-the raw exception matched neither of the workflow's two catches and escaped it entirely, leaving the
-evaluation pump to log it and the lease to expire. Enforcement turns it into the pass's ordinary
+`ModelCall` row at all, so the disposition was decided without a failure kind and the only record of
+the call was the failure log line naming its exception type. Enforcement gives that attempt both a
+kind and a row. On the remediation post-report path the loss was larger: the raw exception matched
+neither of the workflow's two catches and escaped it entirely, leaving the evaluation pump to log it
+and the lease to expire. Enforcement turns it into the pass's ordinary
 `remediation_model_call_failed` dead-letter with the call recorded.
 
-Recorded is the exact word, and it is weaker than accounted. The row names the route, the configured
-provider id and the requested model, so a reader can tell which call this was; it carries no token
-counts and writes no `BudgetEvent`, because a breaching adapter reports no usage and this system will
-not invent any. The spend is therefore not recovered, only the fact of the call. That is the honest
-limit of containment: a provider that billed for a call a broken adapter mishandled is invisible to
-the cost roll-up, and the only fix is the adapter.
+Recorded is weaker than accounted. The row names the route, the configured provider id and the
+requested model, so a reader can tell which call this was; it carries no token counts and writes no
+`BudgetEvent`, because a breaching adapter reports no usage and this system will not invent any. The
+spend is therefore not recovered, only the fact of the call. That is the honest limit of
+containment: a provider that billed for a call a broken adapter mishandled is invisible to the cost
+roll-up, and the only fix is the adapter.
 
 One kind still maps to one disposition when a route declares a fallback. The second call happens
 inside the governed model call rather than in the job runner, and a fallback that fails as well

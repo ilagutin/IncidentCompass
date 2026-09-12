@@ -81,8 +81,8 @@ and matched exactly one price. It is not the invoice: this system holds no disco
 cached-token rates or batch rates, and it never converts or combines currencies. Those are missing
 prices and a missing conversion, applied to calls this system did record. An embedding call is a
 stronger case than any of them: it is a call kind this system never records at all, so no missing
-price or conversion is even the right shape for what is wrong with it. "Embedding Calls Are Absent,
-Not Unpriced" below states that on its own rather than folding it into this list.
+price or conversion is even the right shape for what is wrong with it. See "Embedding Calls Are
+Absent, Not Unpriced" below.
 
 `unpricedCallCount` above zero means the hour contains work that is not in the spend figure. It does
 not say why on its own. `estimatedUsageCallCount` separates out one reason. The rest are a missing or

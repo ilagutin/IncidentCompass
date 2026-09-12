@@ -17,44 +17,13 @@ namespace IncidentCompass.Application.Governance.Tools;
 /// property of the tool contract rather than a convention each tool is trusted to follow.
 /// </para>
 /// <para>
-/// Be precise about what the restriction buys. A value here is a single line of visible text: its
-/// character set excludes every control and format character, every unassigned and private-use code
-/// point, every ill-formed UTF-16 sequence and every whitespace character except the plain space.
-/// Each segment is capped at <see cref="MaximumSegmentLength"/> characters and the whole reference at
-/// <see cref="MaximumLength"/>. That is enough to say a domain reference cannot carry a document, a
-/// source excerpt, a stack trace or a pasted multi-line secret block, because none of those survives
-/// the line and length bounds. It is <em>not</em> a proof that no secret-shaped token can ever appear
-/// in a reference: an API key is a short single-line run of printable characters, and a repository
-/// really can hold a file whose name is one. That remaining case is why the factory redacts this
-/// value with the same rules it redacts the payload with, rather than treating the bounded shape as
-/// sufficient on its own. The two halves cover different things and neither replaces the other.
-/// </para>
-/// <para>
-/// A single space is admitted deliberately, and so is every ordinary printable character an operating
-/// system lets a filename hold, an emoji included. Real checkouts contain paths with spaces and
-/// non-Latin names in them, and a rule that refused them would drop a legitimate
-/// <c>source_lookup</c> hit for a reason that has nothing to do with safety. What is refused instead
-/// is the invisible: a tab, a newline, a carriage return and the other non-space whitespace make one
-/// line read as several, and the format characters - zero-width space, the bidirectional overrides,
-/// the word joiner, the byte-order mark and the Unicode tag block - hide what follows them from
-/// whoever reads the stored value. Unassigned and private-use code points are refused for the same
-/// reason: nothing can say how a reader will render them.
-/// </para>
-/// <para>
-/// U+FFFD REPLACEMENT CHARACTER is refused as well, and it is worth naming here because its category
-/// is <see cref="UnicodeCategory.OtherSymbol"/> and a reader will not find it in the list above.
+/// U+FFFD REPLACEMENT CHARACTER is refused along with the control, format, unassigned and
+/// private-use code points, and it is worth naming here because its category is
+/// <see cref="UnicodeCategory.OtherSymbol"/> and a reader will not find it in that list.
 /// <c>EnumerateRunes</c> substitutes it for an ill-formed UTF-16 sequence rather than surfacing the
 /// unpaired surrogate itself, so refusing the replacement character <em>is</em> how the ill-formed
-/// case is caught. It refuses a genuine U+FFFD in a real filename along with it. That cost is
-/// accepted rather than overlooked: it is the one printable character nothing can render honestly,
-/// and refusing it costs that single match a <c>source_reference_rejected</c> limitation and nothing
-/// else.
-/// </para>
-/// <para>
-/// Both caps are measured in UTF-16 code units, which is what
-/// <see cref="string.Length"/> counts and therefore what the caps actually bound. An astral code
-/// point costs two of them. The column itself is untyped text, so the bound has no second opinion to
-/// agree with; counting code units is simply counting the same thing the runtime counts.
+/// case is caught. It refuses a genuine U+FFFD in a real filename along with it, which costs that
+/// single match a <c>source_reference_rejected</c> limitation and nothing else.
 /// </para>
 /// </summary>
 /// <remarks>
@@ -143,6 +112,13 @@ public sealed class ArtifactDomainRef
     /// It returns the value rather than taking an <c>out</c> parameter because <c>segments</c> is a
     /// <c>params</c> array and has to come last, which would put the output ahead of the input it
     /// describes.
+    /// </para>
+    /// <para>
+    /// A null <paramref name="kind"/> or <paramref name="segments"/> is refused this way too rather
+    /// than raised as the <see cref="ArgumentNullException"/> <see cref="Create"/> raises. The two
+    /// forms agree that null is refused and differ only in how each refuses, which is the split
+    /// <c>Parse</c> and <c>TryParse</c> make throughout the framework. A form that exists because the
+    /// worker path cannot absorb an exception does not get to throw one.
     /// </para>
     /// </summary>
     public static ArtifactDomainRef? TryCreate(string kind, params string[] segments)

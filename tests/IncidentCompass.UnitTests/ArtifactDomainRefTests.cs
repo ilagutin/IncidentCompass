@@ -200,6 +200,20 @@ public sealed class ArtifactDomainRefTests
             () => ArtifactDomainRef.Create("source", "r1", null!));
 
     /// <summary>
+    /// The two forms agree that a null argument is refused and differ only in how each refuses it.
+    /// Pinning them in one test keeps the pair from drifting into one form accepting what the other
+    /// refuses.
+    /// </summary>
+    [Fact]
+    public void Create_ThrowsForANullArgumentWhereTryCreateReturnsNothing()
+    {
+        Assert.Throws<ArgumentNullException>(() => ArtifactDomainRef.Create(null!, "r1"));
+        Assert.Null(ArtifactDomainRef.TryCreate(null!, "r1"));
+        Assert.Throws<ArgumentNullException>(() => ArtifactDomainRef.Create("source", (string[])null!));
+        Assert.Null(ArtifactDomainRef.TryCreate("source", (string[])null!));
+    }
+
+    /// <summary>
     /// The whole-reference cap is exact, not approximate, because it is the only bound on what goes
     /// into an untyped text column. One code unit either side of it decides the outcome.
     /// </summary>

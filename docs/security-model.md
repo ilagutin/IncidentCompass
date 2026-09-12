@@ -898,29 +898,30 @@ First, it is not free text. A tool cannot express one except through `ArtifactDo
 builds `kind:segment[:segment...]` from a lower-case snake-case kind and segments that carry no
 control or format character, no unassigned or private-use code point, no ill-formed UTF-16, no
 whitespace other than the plain space, and not the colon that separates them, capped at 200 UTF-16
-code units each and 512 for the whole reference. The rule is written over Unicode scalar values
-rather than code units, so an astral code point is judged as one character rather than as two halves
-neither of which is anything. The plain space is admitted because a real checkout holds paths with
-spaces in them, and every ordinary printable character is admitted for the same reason, an emoji
-included: refusing one would drop a legitimate `source_lookup` hit for a reason that has nothing to
-do with safety. What the refused set covers is the two ways one line stops reading as one line -
-breaking it, which the control characters and non-space whitespace do, and hiding part of it, which
-the zero-width space, the bidirectional overrides, the word joiner, the byte-order mark and the
-Unicode tag block do. U+FFFD REPLACEMENT CHARACTER is refused alongside them and is easy to miss in
-that list, because its category is a printable symbol rather than a format character: the rune
-enumeration substitutes it for an ill-formed UTF-16 sequence instead of surfacing the unpaired
-surrogate, so refusing it is how the ill-formed case is caught at all. It refuses a genuine U+FFFD in
-a real filename with it, which costs that one match a `source_reference_rejected` limitation and
-nothing else. What the shape rules out is a document: an excerpt, a stack trace or a pasted
-multi-line secret block does not fit through a single short line over that character set. What it
-does not rule out is a token, because a credential is a short single-line run of printable characters
-and a repository can hold a file whose name is one.
+code units each and 512 for the whole reference. The character rule is written over Unicode scalar
+values, so an astral code point is judged as one character. The plain space is admitted because a
+real checkout holds paths with spaces in them, and every ordinary printable character is admitted
+for the same reason, an emoji included: refusing one would drop a legitimate `source_lookup` hit for
+a reason that has nothing to do with safety. What the refused set covers is the two ways one line
+stops reading as one line - breaking it, which the control characters and non-space whitespace do,
+and hiding part of it, which the zero-width space, the bidirectional overrides, the word joiner, the
+byte-order mark and the Unicode tag block do. U+FFFD REPLACEMENT CHARACTER is refused alongside them
+and is easy to miss in that list, because its category is a printable symbol rather than a format
+character: the rune enumeration substitutes it for an ill-formed UTF-16 sequence instead of
+surfacing the unpaired surrogate, so refusing it is how the ill-formed case is caught at all. It
+refuses a genuine U+FFFD in a real filename with it, which costs that one match a
+`source_reference_rejected` limitation and nothing else. What the shape rules out is a document: an
+excerpt, a stack trace or a pasted multi-line secret block does not fit through a single short line
+over that character set. What it does not rule out is a token, because a credential is a short
+single-line run of printable characters and a repository can hold a file whose name is one.
 
-A refusal is not an exception on the runtime path. `Create` throws and is used only where the
-segments are provably in range - a literal provider name, a parsed integer, a `Guid` - so a throw
-there would be a bug in this repository. Where a segment is connector text of unbounded shape the
-caller uses `TryCreate`, which returns nothing, and degrades: `source_lookup` drops the one match it
-cannot name and reports `source_reference_rejected` in its limitation list, and the delegate path
+A refusal is not an exception on the runtime path. `Create` throws and is used only where a refusal
+would be a bug in this repository rather than a value a connector chose: a literal provider name, a
+parsed integer, a `Guid`, and the configured GitHub `owner/repository` scope that `ticket_search`
+renders into a `ticket:` reference, which `GitHubIssuesOptionsValidator` bounds by character class
+and length instead. Where a segment is connector text of unbounded shape the caller uses
+`TryCreate`, which returns nothing, and degrades: `source_lookup` drops the one match it cannot name
+and reports `source_reference_rejected` in its limitation list, and the delegate path
 keeps the worker's answer under a fixed `worker:unrepresentable_role` reference rather than losing
 it. That split is deliberate. A repository-relative path longer than the cap is something a deep
 monorepo produces on its own, and an exception raised there escapes the tool, the executor, the role
@@ -930,11 +931,11 @@ proposed and allowed and no outcome. An `ArtifactDomainRef` refusal message ther
 and the segment's position and never echoes the value: that value is connector text, which is what
 this type exists to bound, and an exception message reaches logs.
 
-The two configuration-supplied segments - a `CurrentReleases` release name and a role key - are
-checked against the same rule at configuration load instead, so a misconfiguration is refused once at
-the right moment rather than turning every later lookup or delegation that quotes it into a refusal.
-Two consequences follow, and the second is the one worth planning for. A host whose release id
-carries a colon does not start. It also cannot rehydrate the jobs it already has:
+Two of the three configuration-supplied segments - a `CurrentReleases` release name and a role key -
+are checked against the same rule at configuration load instead, so a misconfiguration is refused
+once at the right moment rather than turning every later lookup or delegation that quotes it into a
+refusal. Two consequences follow, and the second is the one worth planning for. A host whose
+release id carries a colon does not start. It also cannot rehydrate the jobs it already has:
 `FileTriageConfigurationRepository.GetByHashAsync` re-materializes a *stored* configuration snapshot
 through the same validator, so an existing job whose snapshot holds the now-invalid release fails at
 the point `TriageJobRunner` loads its configuration, retries on the same snapshot with the same
@@ -943,13 +944,17 @@ code is distinct and says what happened, which is more than the failure this cha
 offered, but the job is still lost. The remedy is to rename the release before upgrading rather than
 after.
 
-The loader's message does echo the value, and that is deliberate rather than an oversight in the
-rule above. A release name or a role key is operator-authored configuration, not connector text, and
-naming it is what makes the misconfiguration fixable without guessing which of several entries was
-meant. The consequence is worth stating plainly: a release name carrying a terminal escape sequence
-or a bidirectional override reaches a startup log verbatim, because the check that would have refused
-it is the one reporting the failure. An operator who puts one there is the same operator reading the
-log.
+The loader's message does echo the value, because a release name or a role key is operator-authored
+configuration rather than connector text, and naming it is what makes the misconfiguration fixable
+without guessing which of several entries was meant.
+
+The third configuration-supplied segment is the GitHub `owner/repository` scope, and it is never
+checked against `ArtifactDomainRef.IsValidSegment` at all. `GitHubIssuesOptionsValidator` bounds
+each half by its own character class and length at host start, admitting at most 140 characters of
+letters, digits, `-`, `_`, `.` and the one separating `/`. That is a different rule enforced in a
+different place, and it is the whole reason `ticket_search` can render the scope through the
+throwing `Create`: both character classes sit strictly inside what a segment permits. Widening
+either one is what would turn a misconfigured repository name into an exception on the worker path.
 
 Second, it meets the redactor. The same `SecretRedactor` rules that run over the payload run over
 the rendered reference, and `triage_artifacts.redaction_applied` is `true` when *either* the payload
@@ -1022,8 +1027,7 @@ enters it.
 
 The tool boundary landed in 0.4.0. Before it, the same tools built `TriageArtifact` directly from
 connector text and the committer inserted the payload verbatim, so a database that ran an earlier
-release holds tool artifacts that no redactor ever saw. There is no backfill, and this section is
-where that is said rather than left to be discovered.
+release holds tool artifacts that no redactor ever saw. There is no backfill.
 
 **Which rows.** Exactly the artifacts the tool path writes: `RetrievedItem` rows from `memory_search`,
 `source_lookup` and `ticket_search`, the `ToolResult` row built from each call's output, and the
@@ -1042,17 +1046,17 @@ current attempt, and it skips any row a report cites; the rows a later prompt ca
 job's current-attempt artifacts - are outside its predicate and stay for as long as the job does.
 
 **Why they are not rewritten.** `triage_artifacts.content_hash` is the hash of the payload bytes that
-were actually stored, which is what makes a row describable at all: re-redacting a payload in place would
-either leave a hash that no longer describes the row or replace both, and the second is an edit to
-durable evidence made so that a guarantee introduced later reads as though it had always held. This
-project refuses that shape elsewhere in the same words. `docs/versioning.md` requires that released
-approval tuple rows and provenance are never rewritten, and that from 0.4.0 forward a migration
-mismatch is repaired by restoring the released files or the ledger from a backup rather than editing
-either in place. Retention makes the same choice in the other direction: it empties a payload and
-then says so in a column of its own - `signals.payload_compacted_at_utc`, and `redaction_applied`
-here - precisely because rewritten bytes cannot state what happened to them. A silent backfill would
-leave a row that looks like it was always redacted, which is the one thing none of these columns is
-allowed to let a reader believe.
+were actually stored, which is what makes a row describable at all: re-redacting a payload in place
+would either leave a hash that no longer describes the row or replace both, and the second is an
+edit to durable evidence made so that a guarantee introduced later reads as though it had always
+held. This project refuses that shape elsewhere in the same words. `docs/versioning.md` requires
+that released approval tuple rows and provenance are never rewritten, and that from 0.4.0 forward a
+migration mismatch is repaired by restoring the released files or the ledger from a backup rather
+than editing either in place. Retention makes the same choice in the other direction: it empties a
+payload and then says so in a column of its own - `signals.payload_compacted_at_utc`, and
+`redaction_applied` here - precisely because rewritten bytes cannot state what happened to them. A
+silent backfill would leave a row that looks like it was always redacted, which is the one thing
+none of these columns is allowed to let a reader believe.
 
 The comparison has a limit worth stating. The migration-checksum freeze protects shipped scripts and
 the migration ledger, which is a different artifact from an evidence row, so it is precedent for the
@@ -1093,7 +1097,7 @@ volumes recreated by the documented `docker compose down -v` step. Nor would a s
 quietly upgrade into this state. The 0.4.0 release edited comment text in six scripts that share one
 catalog checksum, so a ledger written by an earlier release no longer matches the frozen text, and a
 mismatch outside the closed LF/CRLF compatibility set stops startup with a diagnostic rather than
-migrating. The section exists because the code cannot know either of those things.
+migrating.
 
 ### Saying so in the report
 
