@@ -69,6 +69,8 @@ leased work was abandoned for an unrequested reason and is reported rather than 
 | 2302 | Warning | Memory seed failure status persistence was skipped. |
 | 2401 | Warning | Telegram notification provider returned a bounded failure code. |
 | 2501 | Warning | GitHub issue provider returned a bounded failure code. |
+| 2601 | Warning | PostgreSQL was not accepting connections yet; the failed attempt number, the wait before the next one and the exception type only, never the endpoint or the credential. |
+| 2602 | Error | PostgreSQL did not accept a connection within the configured startup budget, with the attempts made, the elapsed milliseconds and the exception type. The host start then fails. |
 
 ### Application (3000-3999)
 

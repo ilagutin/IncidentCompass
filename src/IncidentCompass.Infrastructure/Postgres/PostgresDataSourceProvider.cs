@@ -7,11 +7,15 @@ namespace IncidentCompass.Infrastructure.Postgres;
 internal sealed class PostgresDataSourceProvider : IDisposable
 {
     private readonly IOptions<PostgresConnectionOptions> options;
+    private readonly PostgresFirstConnectionRetry firstConnectionRetry;
     private readonly Lazy<NpgsqlDataSource> dataSource;
 
-    public PostgresDataSourceProvider(IOptions<PostgresConnectionOptions> options)
+    public PostgresDataSourceProvider(
+        IOptions<PostgresConnectionOptions> options,
+        PostgresFirstConnectionRetry firstConnectionRetry)
     {
         this.options = options;
+        this.firstConnectionRetry = firstConnectionRetry;
         dataSource = new Lazy<NpgsqlDataSource>(
             CreateDataSource,
             LazyThreadSafetyMode.ExecutionAndPublication);
@@ -22,10 +26,18 @@ internal sealed class PostgresDataSourceProvider : IDisposable
             "open PostgreSQL connection",
             () => OpenConnectionCoreAsync(cancellationToken));
 
-    private async Task<NpgsqlConnection> OpenConnectionCoreAsync(CancellationToken cancellationToken)
-    {
-        return await dataSource.Value.OpenConnectionAsync(cancellationToken);
-    }
+    /// <summary>
+    /// The startup wait sits inside <see cref="PostgresOperation"/>, not around it, so an exhausted
+    /// budget leaves through the same normalization every other persistence failure does and
+    /// surfaces as the port contract's exception rather than a raw provider type. Data-source
+    /// creation runs inside the retry delegate, so a bad connection string is thrown there like any
+    /// other failure; what stops it being retried is the retry's own predicate, which treats a
+    /// configuration error as permanent and rethrows it on the first attempt.
+    /// </summary>
+    private Task<NpgsqlConnection> OpenConnectionCoreAsync(CancellationToken cancellationToken) =>
+        firstConnectionRetry.OpenAsync(
+            token => dataSource.Value.OpenConnectionAsync(token).AsTask(),
+            cancellationToken);
 
     public void Dispose()
     {

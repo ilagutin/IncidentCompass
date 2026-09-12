@@ -241,6 +241,11 @@ public static class Setup
 
     private static IServiceCollection AddPersistenceAdapters(this IServiceCollection services)
     {
+        // TimeProvider is registered here as well as by AddApplication, with TryAdd on both sides
+        // so the shared instance is bound exactly once: the startup connection wait is measured
+        // with it, and AddInfrastructure must stay resolvable without AddApplication.
+        services.TryAddSingleton(TimeProvider.System);
+        services.TryAddSingleton<PostgresFirstConnectionRetry>();
         services.TryAddSingleton<PostgresDataSourceProvider>();
         services.TryAddScoped<ITriageLedgerWriter, PostgresTriageLedgerWriter>();
         services.TryAddScoped<ITriageLedgerReader, PostgresTriageLedgerReader>();
