@@ -878,7 +878,9 @@ place does it, on the same governed path every immediate tool call takes:
   itself and no way to skip this step;
 - the worker tool executor redacts the model-visible tool output and turns each draft into an
   artifact, redacting the payload, canonicalizing it and hashing the redacted form, so
-  `triage_artifacts.content_hash` describes the bytes that were actually stored;
+  `triage_artifacts.content_hash` describes the payload bytes that were actually stored. It
+  describes those and nothing else: the row's `domain_ref` is a second stored column the hash has
+  never covered, and it is redacted by its own pass, described below;
 - the delegated worker's own output takes the same path before it is stored as a `WorkerOutput`
   artifact, because that text quotes the tool results the worker was given, and the delegate result
   the orchestrator receives is built from the stored payload rather than from the worker's raw text;
@@ -888,6 +890,210 @@ place does it, on the same governed path every immediate tool call takes:
 Both surfaces have to be covered together: the same connector text reaches the model once as this
 turn's tool message and again through the stored artifact, which the orchestrator reads back into
 later prompts. Redacting only the row would leave the immediate turn unprotected.
+
+The row's `domain_ref` is covered as well, in two independent ways, because it is assembled out of
+connector text too: a repository-relative path, a release name, a ticket scope, an external id.
+
+First, it is not free text. A tool cannot express one except through `ArtifactDomainRef`, which
+builds `kind:segment[:segment...]` from a lower-case snake-case kind and segments that carry no
+control or format character, no unassigned or private-use code point, no ill-formed UTF-16, no
+whitespace other than the plain space, and not the colon that separates them, capped at 200 UTF-16
+code units each and 512 for the whole reference. The rule is written over Unicode scalar values
+rather than code units, so an astral code point is judged as one character rather than as two halves
+neither of which is anything. The plain space is admitted because a real checkout holds paths with
+spaces in them, and every ordinary printable character is admitted for the same reason, an emoji
+included: refusing one would drop a legitimate `source_lookup` hit for a reason that has nothing to
+do with safety. What the refused set covers is the two ways one line stops reading as one line -
+breaking it, which the control characters and non-space whitespace do, and hiding part of it, which
+the zero-width space, the bidirectional overrides, the word joiner, the byte-order mark and the
+Unicode tag block do. U+FFFD REPLACEMENT CHARACTER is refused alongside them and is easy to miss in
+that list, because its category is a printable symbol rather than a format character: the rune
+enumeration substitutes it for an ill-formed UTF-16 sequence instead of surfacing the unpaired
+surrogate, so refusing it is how the ill-formed case is caught at all. It refuses a genuine U+FFFD in
+a real filename with it, which costs that one match a `source_reference_rejected` limitation and
+nothing else. What the shape rules out is a document: an excerpt, a stack trace or a pasted
+multi-line secret block does not fit through a single short line over that character set. What it
+does not rule out is a token, because a credential is a short single-line run of printable characters
+and a repository can hold a file whose name is one.
+
+A refusal is not an exception on the runtime path. `Create` throws and is used only where the
+segments are provably in range - a literal provider name, a parsed integer, a `Guid` - so a throw
+there would be a bug in this repository. Where a segment is connector text of unbounded shape the
+caller uses `TryCreate`, which returns nothing, and degrades: `source_lookup` drops the one match it
+cannot name and reports `source_reference_rejected` in its limitation list, and the delegate path
+keeps the worker's answer under a fixed `worker:unrepresentable_role` reference rather than losing
+it. That split is deliberate. A repository-relative path longer than the cap is something a deep
+monorepo produces on its own, and an exception raised there escapes the tool, the executor, the role
+runner and the delegate path alike without any of them classifying it, so the attempt would fail,
+repeat identically on every retry and dead-letter the job with the ledger showing a tool call
+proposed and allowed and no outcome. An `ArtifactDomainRef` refusal message therefore names the rule
+and the segment's position and never echoes the value: that value is connector text, which is what
+this type exists to bound, and an exception message reaches logs.
+
+The two configuration-supplied segments - a `CurrentReleases` release name and a role key - are
+checked against the same rule at configuration load instead, so a misconfiguration is refused once at
+the right moment rather than turning every later lookup or delegation that quotes it into a refusal.
+Two consequences follow, and the second is the one worth planning for. A host whose release id
+carries a colon does not start. It also cannot rehydrate the jobs it already has:
+`FileTriageConfigurationRepository.GetByHashAsync` re-materializes a *stored* configuration snapshot
+through the same validator, so an existing job whose snapshot holds the now-invalid release fails at
+the point `TriageJobRunner` loads its configuration, retries on the same snapshot with the same
+result on every attempt, and dead-letters at `MaxAttempts` under `config_snapshot_unavailable`. That
+code is distinct and says what happened, which is more than the failure this change set removed
+offered, but the job is still lost. The remedy is to rename the release before upgrading rather than
+after.
+
+The loader's message does echo the value, and that is deliberate rather than an oversight in the
+rule above. A release name or a role key is operator-authored configuration, not connector text, and
+naming it is what makes the misconfiguration fixable without guessing which of several entries was
+meant. The consequence is worth stating plainly: a release name carrying a terminal escape sequence
+or a bidirectional override reaches a startup log verbatim, because the check that would have refused
+it is the one reporting the failure. An operator who puts one there is the same operator reading the
+log.
+
+Second, it meets the redactor. The same `SecretRedactor` rules that run over the payload run over
+the rendered reference, and `triage_artifacts.redaction_applied` is `true` when *either* the payload
+or the reference changed. That column answers whether the redactor removed anything from this
+artifact on its way to durable state, and a reference that lost a value is something removed, so a
+row whose reference was redacted and whose payload was not still reports `true`. The `ToolResult` row
+built from the same call reports `true` then too; the reason that pairing is not optional is under
+"Saying so in the report" below.
+
+Redacting a reference has a cost, and the direction it fails in is the safe one. Ticket egress
+compares a stored `ticket:` reference against a string it rebuilds from the payload beside it, so a
+reference the redactor touched no longer matches, the cited evidence resolves to nothing, and the
+proposal is denied with `ticket_update_target_required`. No comment is sent naming a wrong issue or a
+wrong repository; a governed write simply does not happen. That is the same way the payload rules
+already fail there, since a redacted `repository` or `url` breaks the same comparison.
+
+### The action-result exception
+
+`redacted_payload` is named for the boundary above, and two writers sit outside it. Both write the
+post-report action artifacts, by direct SQL, inside the transaction that owns the action:
+`PostgresActionProposalWriter` records the approved proposal as a `ProposedAction` artifact, and
+`PostgresActionResultWriter` records the outcome of the dispatch as an `ActionResult` artifact.
+Neither row passes the tool redactor, and neither will as written, for two reasons. Neither is
+connector text a model chose to read: no model turn produced them and none of their content entered a
+prompt as tool output. And both writes happen deep in Infrastructure with no triage configuration in
+scope, so no `RedactionSettings` exists there to redact with; supplying one is a larger change than
+stating the boundary honestly, and stating it is the step taken here.
+
+The two are not equally exposed, and the difference is worth keeping. A `ProposedAction` payload is
+assembled entirely from the backend's own approval contract - the action id, its category, mode,
+logical target, the canonical payload the backend composed and the three hashes over it - so there is
+no field in it an adapter could route external text through. `ActionResult` is the one with a seam,
+and the rest of this section is about it.
+
+What the row actually holds today is narrow, and worth being exact about rather than reassuring
+about. The payload is the action id, the terminal state, the backend's own summary sentence, a
+failure code from a closed vocabulary when there is one, and a `result` object each action adapter
+composes itself. Every shipped adapter composes that object out of backend-derived values only: an
+issue, comment, message or pull-request number rendered from a parsed integer, the provider name, a
+closed outcome code, tree identities, digests, counts, booleans and a schema version, plus the
+configured repository and one of three confidence words. No shipped adapter copies a provider
+response body into it; each parses the body, takes the identifiers it needs and discards the rest.
+
+So the gap is structural rather than present. `ExternalActionExecutionResult.CanonicalResult` is a
+byte array the adapter chooses, and nothing between it and the column inspects what is in it, so an
+adapter that passed a provider body straight through would reach durable state unredacted and
+nothing would say so. The comment in `PostgresActionResultWriter` points at this section for that
+reason, and the pointer runs that way only: the reviewed-writer list in `ArchitectureTests` names
+every file that writes a `triage_artifacts` row, all eight of them, and it names none of this
+documentation. Its own descriptions of what each payload holds have to be kept true alongside this
+section rather than by it.
+
+`redaction_applied` is NULL on both rows. NULL is the column's "no boundary recorded an outcome"
+value and is deliberately not the same claim as `false`: `false` would say a pass ran and removed
+nothing. Neither `ProposedAction` nor `ActionResult` is a citable evidence kind, so no report marker
+reads either row today, but that is a second reason and not the one that matters.
+
+What an operator should conclude: for a `ProposedAction` or `ActionResult` row, the column name
+describes the column and not those bytes. Read them as backend-composed output that no redactor
+inspected, bounded by what the writer or the adapter chose to compose rather than by any rule
+enforced here. The other seven kinds all sit behind a redaction pass of some kind. `RetrievedItem`,
+`ToolResult` and `WorkerOutput` pass the tool boundary above. `TriggerSignal`, `NeighborSet` and
+`RecurrenceState` are assembled by intake from a signal intake had already redacted before the
+artifact existed. `PriorReport` is the fourth intake-written kind and reaches the same place by a
+longer route: it carries a previously published report's summary and limitations, which are model
+text written over evidence one of those two boundaries had already redacted, and no connector text
+enters it.
+
+### Rows written before this boundary existed
+
+The tool boundary landed in 0.4.0. Before it, the same tools built `TriageArtifact` directly from
+connector text and the committer inserted the payload verbatim, so a database that ran an earlier
+release holds tool artifacts that no redactor ever saw. There is no backfill, and this section is
+where that is said rather than left to be discovered.
+
+**Which rows.** Exactly the artifacts the tool path writes: `RetrievedItem` rows from `memory_search`,
+`source_lookup` and `ticket_search`, the `ToolResult` row built from each call's output, and the
+`WorkerOutput` row a delegated worker's answer becomes. The four intake-written kinds -
+`TriggerSignal`, `NeighborSet`, `RecurrenceState` and `PriorReport` - are not affected: the first
+three are assembled from a signal intake had already redacted, and the fourth from a published
+report's own summary and limitations. `ProposedAction` and `ActionResult` are not affected either,
+for the reason the section above gives. That accounts for every kind in `ArtifactKind`.
+
+**What bounds the set.** Its own history, and nothing else. The set is closed at the moment a host
+upgrades past 0.4.0: every tool artifact written from then on passes the boundary, so the affected
+rows are precisely the tool artifacts a given database accumulated while it ran an earlier release.
+Retention narrows that set but does not empty it, and it would be wrong to describe retention as the
+bound. The attempt-artifact reap deletes only artifacts whose attempt is no longer their job's
+current attempt, and it skips any row a report cites; the rows a later prompt can still read - a
+job's current-attempt artifacts - are outside its predicate and stay for as long as the job does.
+
+**Why they are not rewritten.** `triage_artifacts.content_hash` is the hash of the payload bytes that
+were actually stored, which is what makes a row describable at all: re-redacting a payload in place would
+either leave a hash that no longer describes the row or replace both, and the second is an edit to
+durable evidence made so that a guarantee introduced later reads as though it had always held. This
+project refuses that shape elsewhere in the same words. `docs/versioning.md` requires that released
+approval tuple rows and provenance are never rewritten, and that from 0.4.0 forward a migration
+mismatch is repaired by restoring the released files or the ledger from a backup rather than editing
+either in place. Retention makes the same choice in the other direction: it empties a payload and
+then says so in a column of its own - `signals.payload_compacted_at_utc`, and `redaction_applied`
+here - precisely because rewritten bytes cannot state what happened to them. A silent backfill would
+leave a row that looks like it was always redacted, which is the one thing none of these columns is
+allowed to let a reader believe.
+
+The comparison has a limit worth stating. The migration-checksum freeze protects shipped scripts and
+the migration ledger, which is a different artifact from an evidence row, so it is precedent for the
+principle and not a rule that already covers this case. The approval-tuple rule and the retention
+columns are the on-point ones.
+
+**What the exposure is.** Two readers put such a row back into a prompt, and they do not have the
+same reach.
+
+`PostgresTriageJobInvestigationContextRepository` scopes its query to one `job_id` and to that job's
+current attempt. Through it, a pre-boundary row reaches only the investigation that produced it,
+whose model was already shown the same text on the turn that stored it, and never another job or
+another tenant's. Re-triage does not carry it forward either: of the four intake-written kinds the
+scheduler copies three - `TriggerSignal`, `NeighborSet` and `RecurrenceState` - and no tool artifact
+of any kind. The fourth, `PriorReport`, is not copied at all: the scheduler builds a fresh one from
+the predecessor report's own summary and limitations, so "four intake-written kinds" and "three
+copied kinds" are both right and describe different things.
+
+`PostgresRemediationPassContextRepository` is the wider one, and it is wider in three ways at once.
+It reads `redacted_payload` for the source evidence a published report cited, scoped by `report_id`
+rather than by job and attempt, and `RemediationPromptBuilder` renders each row's `excerpt` into the
+`remediation_diff` prompt. So a cited pre-boundary excerpt is readable by a pass that runs after the
+attempt that stored it has ended, on a schedule of its own. It is also permanent: the
+attempt-artifact reap skips any row a report cites, so a cited row is outside its predicate for as
+long as the report is. The reassurance in the paragraph above does not cover this reader - the model
+being prompted is not the one that was already shown the text, and the turn that stored it is over.
+An operator with pre-boundary rows should read that as the real bound: an unredacted excerpt a report
+cited is durable and can still be rendered into a later prompt.
+
+What remains in both cases is the durable row itself, readable by anyone with database access, and
+the one honest remedy for an operator who has such rows and does not want them is to delete the
+affected jobs' artifacts, not to rewrite them.
+
+In practice the affected set is expected to be empty, and this is a statement about deployments
+rather than a property of the code. As `docs/versioning.md` records, there was no deployed database
+and no upgrade path from a running system at 0.4.0; the only databases that existed were local demo
+volumes recreated by the documented `docker compose down -v` step. Nor would a surviving 0.3.0 volume
+quietly upgrade into this state. The 0.4.0 release edited comment text in six scripts that share one
+catalog checksum, so a ledger written by an earlier release no longer matches the frozen text, and a
+mismatch outside the closed LF/CRLF compatibility set stops startup with a diagnostic rather than
+migrating. The section exists because the code cannot know either of those things.
 
 ### Saying so in the report
 
@@ -922,16 +1128,28 @@ That pairing is the point. They carry the same redacted text and ground equally 
 of them recorded an outcome the model would choose whether the limitation appeared by choosing which
 of the two to cite.
 
+Keeping the pairing takes one rule, and it is the rule rather than a coincidence of what each pass
+happens to see: **the `ToolResult` row's outcome is the outcome of the whole call**, `true` when the
+redactor changed the output document or changed anything in any artifact built from that same call.
+Its own pass answers only for the output, and the two can disagree - a domain reference is redacted
+and is not part of the output, so a match whose path held a credential sets the artifact's outcome
+and leaves the output's untouched. Without the rule, that call would store one `true` and one
+`false`, and a model citing the `ToolResult` alone would suppress a marker that a model citing the
+`RetrievedItem` would have raised. `WorkerToolCallExecutor` applies it where both are still in hand,
+at the commit.
+
 For the same reason the read is not capped. Every parsed citation is looked up, because the model
 authors and orders its own evidence array: an answer covering only part of that array is one the
 model can steer, and truncation can only ever steer it towards saying nothing was withheld.
 
-Its scope is exactly what that boundary can see. `true` means the redactor changed the payload,
-`false` means it ran and changed nothing, and NULL means no boundary recorded an outcome for the
-row - which is what intake-written artifacts carry, because they are assembled from a signal intake
-had already redacted before the artifact existed, and what the post-report action artifacts carry,
-because no redaction pass runs on their backend-derived payloads. Only `true` contributes, so the
-marker's absence says no cited artifact is known to have been redacted, not that nothing was.
+Its scope is exactly what that boundary can see. On an artifact the boundary built, `true` means the
+redactor changed its payload or its domain reference and `false` means it ran over both and changed
+neither; on the `ToolResult` row, by the rule above, `true` also covers a change in any artifact from
+the same call. NULL means no boundary recorded an outcome for the row - which is what intake-written
+artifacts carry, because they are assembled from a signal intake had already redacted before the
+artifact existed, and what the post-report action artifacts carry, because no redaction pass runs on
+their backend-derived payloads. Only `true` contributes, so the marker's absence says no cited
+artifact is known to have been redacted, not that nothing was.
 
 Redaction operates on the parsed JSON document, rewriting values and rebuilding objects and arrays
 node by node. A redacted payload is therefore still valid JSON with the same keys. Value kinds
@@ -949,8 +1167,8 @@ The pass is idempotent: running a redacted payload through it a second time chan
 a property worth having because the same connector text is stored twice, once as a `RetrievedItem`
 and again inside the `ToolResult` payload, and because a redacted document is what the worker output
 path hands to the orchestrator after storing it. It is not what protects re-triage: the re-triage
-scheduler copies `redacted_payload` and `content_hash` forward verbatim and never re-redacts, and it
-copies only intake-written kinds.
+scheduler copies `domain_ref`, `redacted_payload` and `content_hash` forward verbatim and never
+re-redacts, and the rows it copies are three of the four intake-written kinds and nothing else.
 
 Two limits are worth stating plainly. The property-name denylist sees different keys depending on
 which payload it is applied to. A tool payload's keys are backend-authored (`excerpt`, `title`,

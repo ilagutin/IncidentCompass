@@ -51,7 +51,37 @@ internal sealed class TriageConfigurationLoadValidator(
         {
             RequireKey(service, "CurrentReleases");
             RequireNonBlank("CurrentReleases." + service, release);
+            RequireDomainReferenceSegment("CurrentReleases." + service, release);
         }
+    }
+
+    /// <summary>
+    /// A release name and a role key each become one segment of a durable
+    /// <c>triage_artifacts.domain_ref</c> - <c>source:{release}:{path}</c> and <c>worker:{role}</c> -
+    /// so a value that cannot be a segment is a value every later lookup or delegation that quotes it
+    /// would have to refuse. An ISO-8601 release id is the easy way to write one: it carries the
+    /// colon the reference separates on, and nothing else in this file would have noticed.
+    /// <para>
+    /// Checking it here is the earliest reliable layer, which is where
+    /// <c>docs/code-organization.md</c> puts a rule like this. The rule itself is not restated: it is
+    /// <see cref="ArtifactDomainRef.IsValidSegment" />, so the load boundary and the type cannot
+    /// drift apart.
+    /// </para>
+    /// </summary>
+    private static void RequireDomainReferenceSegment(string settingName, string value)
+    {
+        if (ArtifactDomainRef.IsValidSegment(value))
+        {
+            return;
+        }
+
+        throw Invalid(
+            settingName,
+            value,
+            "a value usable as an artifact domain reference segment: no '" + ArtifactDomainRef.Separator +
+                "', no control, format or non-space whitespace character, and at most " +
+                ArtifactDomainRef.MaximumSegmentLength.ToString(CultureInfo.InvariantCulture) +
+                " characters");
     }
 
     private static void ValidateRoutes(
@@ -193,6 +223,7 @@ internal sealed class TriageConfigurationLoadValidator(
         foreach (var (roleName, role) in roles)
         {
             RequireKey(roleName, "Roles");
+            RequireDomainReferenceSegment("Roles", roleName);
             RequireChatRoute(routes, role.RouteId, "Roles." + roleName + ".RouteId");
             RequireNonBlank("Roles." + roleName + ".Instructions", role.Instructions);
             RequireNonBlank("Roles." + roleName + ".OutputSchema", role.OutputSchema);

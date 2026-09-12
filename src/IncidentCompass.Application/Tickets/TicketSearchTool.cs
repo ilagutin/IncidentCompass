@@ -75,9 +75,17 @@ internal sealed class TicketSearchTool(ITicketSearch ticketSearch) : IImmediateA
             ["url"] = match.Url,
             ["score"] = match.Score
         };
+        // The throwing form is the right one here: none of these three segments is free connector
+        // text. The provider is a literal the adapter writes, the scope is the configured
+        // owner/repository pair - each half already matched against a character class and a length
+        // by GitHubIssuesOptionsValidator, so at most 140 characters of letters, digits, '-', '_',
+        // '.' and the one '/' - and the external id is an int the response parser required to be
+        // positive. A refusal here would mean one of those three stopped being true, which is a bug
+        // in this repository rather than a value a connector chose, and a bug is what an exception
+        // is for.
         return new ToolArtifactDraft(
             ArtifactKind.RetrievedItem,
-            $"ticket:{match.Provider}:{match.Scope}:{match.ExternalId}",
+            ArtifactDomainRef.Create("ticket", match.Provider, match.Scope, match.ExternalId),
             payload);
     }
 

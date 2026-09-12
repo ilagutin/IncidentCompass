@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json;
 using IncidentCompass.Application.Governance.Tools;
 using IncidentCompass.Application.SourceContext;
+using IncidentCompass.Domain.Governance;
 using IncidentCompass.Domain.Incidents;
 
 namespace IncidentCompass.UnitTests;
@@ -27,7 +28,7 @@ public sealed class SourceLookupToolTests
         Assert.True(result.Output.GetProperty("matched").GetBoolean());
         var draft = Assert.Single(result.Artifacts!);
         Assert.Equal(ArtifactKind.RetrievedItem, draft.Kind);
-        Assert.StartsWith("source:", draft.DomainRef, StringComparison.Ordinal);
+        Assert.StartsWith("source:", draft.DomainRef.Value, StringComparison.Ordinal);
         Assert.Equal("SourceCode", draft.Payload["evidenceKind"]!.GetValue<string>());
         Assert.Equal("r1", draft.Payload["release"]!.GetValue<string>());
         Assert.Equal("heuristic", draft.Payload["mappingMethod"]!.GetValue<string>());
@@ -48,6 +49,74 @@ public sealed class SourceLookupToolTests
         Assert.Equal("connector_unavailable", result.Output.GetProperty("outcome").GetString());
         Assert.Equal("source_release_unavailable", result.Output.GetProperty("code").GetString());
         Assert.Empty(result.Artifacts!);
+    }
+
+    /// <summary>
+    /// A repository-relative path past the domain-reference segment cap is something a deep checkout
+    /// produces on its own, with nothing misconfigured and nothing hostile: the source read boundary
+    /// bounds frames, candidate files, bytes, excerpt lines and extensions, and none of those is a
+    /// path length. So the tool has to keep working. It drops the one match it cannot name, says so
+    /// through the limitation list the read boundary already uses, and returns the rest - rather than
+    /// throwing an exception that no tool-failure branch, role runner or retry classifier on the
+    /// worker path matches, which would fail the attempt identically on every retry and dead-letter
+    /// the job with the ledger showing a tool call proposed and allowed and no outcome.
+    /// </summary>
+    [Fact]
+    public async Task Execute_DropsAMatchWhoseReferenceCannotBeBuiltAndReportsALimitation()
+    {
+        var unnameablePath = "src/" + new string('a', 400) + ".cs";
+        var adapter = new CapturingLookup(new SourceLookupResult(
+            SourceLookupOutcome.Matched,
+            "source_match",
+            [
+                new SourceLookupMatch(unnameablePath, 10, 12, "line 10", "r1", "heuristic"),
+                new SourceLookupMatch("src/Checkout.cs", 10, 12, "line 10", "r1", "heuristic")
+            ],
+            []));
+        var tool = new SourceLookupTool(adapter);
+
+        var result = await tool.ExecuteAsync(
+            CreateContext(includeRelease: true),
+            Json("{}"),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(ToolExecutionStatus.Succeeded, result.Status);
+        var draft = Assert.Single(result.Artifacts!);
+        Assert.Equal("source:r1:src/Checkout.cs", draft.DomainRef.Value);
+        var item = Assert.Single(result.Output.GetProperty("items").EnumerateArray());
+        Assert.Equal("src/Checkout.cs", item.GetProperty("relativePath").GetString());
+        Assert.Equal(draft.Id.ToString(), item.GetProperty("artifactId").GetString());
+        var limitation = Assert.Single(result.Output.GetProperty("limitations").EnumerateArray());
+        Assert.Equal("source_reference_rejected", limitation.GetString());
+        Assert.True(result.Output.GetProperty("matched").GetBoolean());
+    }
+
+    /// <summary>
+    /// The degenerate end of the same case: when no match can be named there is nothing to ground a
+    /// report on, so the tool reports that rather than claiming a match it did not return.
+    /// </summary>
+    [Fact]
+    public async Task Execute_ReportsNoMatchWhenEveryReferenceIsRefused()
+    {
+        var unnameablePath = "src/" + new string('a', 400) + ".cs";
+        var adapter = new CapturingLookup(new SourceLookupResult(
+            SourceLookupOutcome.Matched,
+            "source_match",
+            [new SourceLookupMatch(unnameablePath, 10, 12, "line 10", "r1", "heuristic")],
+            []));
+        var tool = new SourceLookupTool(adapter);
+
+        var result = await tool.ExecuteAsync(
+            CreateContext(includeRelease: true),
+            Json("{}"),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(ToolExecutionStatus.Succeeded, result.Status);
+        Assert.Empty(result.Artifacts!);
+        Assert.False(result.Output.GetProperty("matched").GetBoolean());
+        Assert.Equal(
+            "source_reference_rejected",
+            Assert.Single(result.Output.GetProperty("limitations").EnumerateArray()).GetString());
     }
 
     [Fact]

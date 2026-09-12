@@ -13,10 +13,11 @@ public sealed record TriageArtifact(
     DateTimeOffset CreatedAtUtc)
 {
     /// <summary>
-    /// Whether the redactor removed anything from this artifact's payload on its way to durable
-    /// state, recorded by the boundary that ran the redaction rather than read back out of the
-    /// stored bytes. <see langword="null" /> means no boundary recorded an outcome for this row and
-    /// is not the same claim as <see langword="false" />.
+    /// Whether the redactor removed anything from this artifact on its way to durable state -
+    /// from its payload or from its domain reference, both of which a boundary may redact - recorded
+    /// by the boundary that ran the redaction rather than read back out of the stored bytes.
+    /// <see langword="null" /> means no boundary recorded an outcome for this row and is not the
+    /// same claim as <see langword="false" />.
     /// <para>
     /// It is an <c>init</c> property rather than a positional member because most artifact writers
     /// have nothing to say here: only a writer that holds the pre-redaction document can answer, and

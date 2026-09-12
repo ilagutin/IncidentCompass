@@ -183,6 +183,15 @@ internal sealed partial class WorkerToolCallExecutor(
         var artifacts = (drafts ?? [])
             .Select(draft => RedactedToolArtifactFactory.Create(job, draft, configuration.Redaction, createdAtUtc))
             .ToArray();
+
+        // The ToolResult row and the per-item artifacts this call produced are both citable, and the
+        // pairing is the guarantee: they carry the same connector text, so if only one of them
+        // recorded a redaction the model would choose whether the report's limitation appeared by
+        // choosing which of the two to cite. redactedOutput answers only for the output document,
+        // and an artifact can be redacted where the output was not - the domain reference is
+        // redacted too, and it is not part of the output. So the row answers for the whole call.
+        var redactionApplied = redactedOutput.RedactionApplied ||
+            Array.Exists(artifacts, artifact => artifact.RedactionApplied == true);
         var canonicalPayload = CanonicalJsonSerializer.Canonicalize(JsonNode.Parse(redactedOutput.Output.GetRawText())!);
         await toolResultCommitter.CommitSucceededAsync(
             new TriageToolResultCommitRequest(
@@ -192,7 +201,7 @@ internal sealed partial class WorkerToolCallExecutor(
                 redactedOutput.Output,
                 CanonicalJsonSerializer.ComputeSha256Hex(canonicalPayload),
                 "Tool completed successfully.",
-                redactedOutput.RedactionApplied,
+                redactionApplied,
                 artifacts),
             cancellationToken);
     }

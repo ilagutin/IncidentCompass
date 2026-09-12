@@ -55,7 +55,8 @@ public sealed partial class ArchitectureTests
             "(action id, category, mode, canonical payload and hashes), never from connector text",
         ["src/IncidentCompass.Infrastructure/Governance/ActionApprovals/PostgresActionResultWriter.cs"] =
             "writes the ActionResult row by direct SQL; its payload is the action's own status, " +
-            "summary and failure code plus the connector response the action executor returned",
+            "summary and failure code plus the canonical result object the action adapter composed " +
+            "from backend-derived values",
     };
 
     private static readonly HashSet<string> ExactReferenceProjects = new(StringComparer.OrdinalIgnoreCase)

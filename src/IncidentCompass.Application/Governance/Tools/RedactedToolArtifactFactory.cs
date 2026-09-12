@@ -10,8 +10,8 @@ namespace IncidentCompass.Application.Governance.Tools;
 /// <summary>
 /// The single place where tool-produced text becomes durable triage state. Everything a worker tool
 /// reads from memory, source or a ticket provider passes through here before it is written to
-/// <c>triage_artifacts.redacted_payload</c>, and therefore before any later prompt built from that
-/// column.
+/// <c>triage_artifacts.redacted_payload</c> and <c>triage_artifacts.domain_ref</c>, and therefore
+/// before any later prompt built from those columns.
 /// <para>
 /// Redaction runs on the parsed JSON tree, not on serialized text: string values are rewritten and
 /// the object/array shape is rebuilt node by node, so a redacted payload is still a valid JSON
@@ -36,6 +36,24 @@ internal static class RedactedToolArtifactFactory
     /// and a value the redactor really did remove cannot be made to look untouched, because the
     /// comparison is against the input rather than against a pattern in the output.
     /// </para>
+    /// <para>
+    /// The domain reference takes the same pass as the payload. It is a bounded identifier by
+    /// construction - <see cref="ArtifactDomainRef"/> refuses control characters, non-space
+    /// whitespace and anything past its length caps - but bounded is not the same as clean: every
+    /// segment of it is connector text, and a secret-shaped token is short, single-line and
+    /// printable, which is exactly the shape that survives those bounds. Running it through
+    /// <see cref="SecretRedactor.RedactText(string?, RedactionSettings)"/> rather than a private rule
+    /// set is the point: the column beside it is redacted by these rules, and a second spelling of
+    /// them here would be a second thing to keep true.
+    /// </para>
+    /// <para>
+    /// <see cref="TriageArtifact.RedactionApplied" /> is therefore <see langword="true" /> when
+    /// either the payload or the domain reference changed. The property answers whether the redactor
+    /// removed anything from this artifact on its way to durable state, and a row whose reference
+    /// lost a value while its payload did not is a row where something was removed. Reporting it as
+    /// untouched would tell a report's reader that nothing was withheld from the model when
+    /// something was.
+    /// </para>
     /// </summary>
     public static TriageArtifact Create(
         TriageJob job,
@@ -45,17 +63,20 @@ internal static class RedactedToolArtifactFactory
     {
         var redacted = SecretRedactor.RedactJsonNode(draft.Payload, redaction);
         var canonical = CanonicalJsonSerializer.Canonicalize(redacted);
+        var domainRef = draft.DomainRef.Value;
+        var redactedDomainRef = SecretRedactor.RedactText(domainRef, redaction) ?? string.Empty;
         return new TriageArtifact(
             draft.Id,
             job.Id,
             job.Attempt,
             draft.Kind,
-            draft.DomainRef,
+            redactedDomainRef,
             CanonicalJsonSerializer.ToElement(redacted),
             CanonicalJsonSerializer.ComputeSha256Hex(canonical),
             createdAtUtc)
         {
-            RedactionApplied = !JsonNode.DeepEquals(draft.Payload, redacted)
+            RedactionApplied = !JsonNode.DeepEquals(draft.Payload, redacted) ||
+                !string.Equals(domainRef, redactedDomainRef, StringComparison.Ordinal)
         };
     }
 
