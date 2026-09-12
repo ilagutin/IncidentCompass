@@ -55,6 +55,8 @@ internal static class PostgresMigrationTestSupport
             .Build();
 
         services.AddPostgresConnectionOptions(configuration);
+        services.AddSingleton(TimeProvider.System);
+        services.AddSingleton<PostgresFirstConnectionRetry>();
         services.AddSingleton<PostgresDataSourceProvider>();
         services.AddSingleton<PostgresMigrationReadiness>();
         services.AddSingleton<IPostgresMigrationReadiness>(

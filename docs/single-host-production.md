@@ -95,6 +95,49 @@ raw operator key from the client credential store:
 Invoke-WebRequest http://127.0.0.1:5198/api/v1/health -UseBasicParsing
 ```
 
+### Database startup ordering
+
+The API and the Worker both reach PostgreSQL while they are still starting: migrations run from a
+hosted service and the triage configuration persists its snapshot from a warmup hosted service,
+both at host start. In this Compose deployment both services already declare `depends_on: postgres`
+with `condition: service_healthy`, so the ordinary `up` is gated on the database health check and
+is not what this budget is for. What it covers is a host that starts outside that gate, by hand or
+under another supervisor, and the window between the health check passing and the first real
+connection being made. Both hosts retry that first connection within a bounded budget, and the
+budget is configuration rather than container policy.
+
+Four settings control it. None of them appears in the shipped configuration, so the defaults below
+apply as they are. To override one, put it at `IncidentCompass:Postgres:StartupRetry:<name>` in an
+appsettings file or pass `IncidentCompass__Postgres__StartupRetry__<name>` as an environment
+variable: `MaxAttempts` (10, the total attempts including the first, so 1 disables retrying),
+`InitialDelayMilliseconds` (250, the wait before the second attempt, doubling after each failure),
+`MaxDelayMilliseconds` (2000, the ceiling for that doubling) and `MaxTotalDurationSeconds` (30, the
+expiry). The budget ends at whichever bound is reached first. The expiry is checked between
+attempts and does not interrupt an attempt already in flight, so the worst-case wait is the expiry
+plus one connection timeout. All four are bounded at both ends and a value outside its range stops
+the host at start: at most 100 attempts, at most 60000 milliseconds for either delay and at most
+600 seconds of expiry, because an hours-long silent wait is not the loud failure this budget
+promises.
+
+Four failures are retried and nothing else: a socket error reaching the endpoint, which is what a
+port with nothing listening on it produces; a connection accepted and then dropped mid-handshake,
+which is what PostgreSQL does when it takes a connection off its listen backlog before the
+postmaster is serving; a timeout reaching the endpoint; and PostgreSQL answering SQLSTATE `57P03`,
+the server saying it is up but still starting. Everything else fails immediately, because waiting
+cannot change it: a wrong credential, a missing database, an unparsable connection string, a
+hostname that does not resolve, and the errors a running server returns when it is refusing work,
+such as `too_many_connections`. The budget also covers the first successful connection only. Once
+one connection has opened, every later failure surfaces at once, so a database that goes away in
+steady state stays visible as a failure, and restarting PostgreSQL under a running API or Worker is
+not retried at all.
+
+Exhausting the budget fails the host loudly with the normalized persistence error, and the process
+exits. The production overlay sets `restart: unless-stopped` on `postgres`, `api` and `worker`, so
+the container comes back after that loud failure and tries again from the start; `docker-compose.yml`
+on its own sets `restart: on-failure` on the API and the Worker. Either way the restart policy is
+now a second line of defence rather than the mechanism that implements startup ordering. This
+setting bounds startup ordering only. It is not a guarantee of steady-state database availability.
+
 ## Stop and restart
 
 ```powershell

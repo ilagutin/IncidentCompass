@@ -225,6 +225,36 @@ public sealed class HostOptionsValidationTests
             failure => failure.Contains(expectedFieldName, StringComparison.Ordinal));
     }
 
+    /// <summary>
+    /// The startup-retry budget decides how long a host waits for a database that is not accepting
+    /// connections yet. A budget that cannot do that - no attempts, no wait between them, a ceiling
+    /// below the first wait or no expiry - has to stop the host rather than be discovered later,
+    /// while the host is already waiting on a database it cannot reach. So does one that would wait
+    /// far too long, because an hours-long silent wait is not the loud failure this budget promises.
+    /// </summary>
+    [Theory]
+    [InlineData("IncidentCompass:Postgres:StartupRetry:MaxAttempts", "0")]
+    [InlineData("IncidentCompass:Postgres:StartupRetry:MaxAttempts", "101")]
+    [InlineData("IncidentCompass:Postgres:StartupRetry:InitialDelayMilliseconds", "0")]
+    [InlineData("IncidentCompass:Postgres:StartupRetry:MaxDelayMilliseconds", "1")]
+    [InlineData("IncidentCompass:Postgres:StartupRetry:MaxDelayMilliseconds", "60001")]
+    [InlineData("IncidentCompass:Postgres:StartupRetry:MaxTotalDurationSeconds", "0")]
+    [InlineData("IncidentCompass:Postgres:StartupRetry:MaxTotalDurationSeconds", "601")]
+    public async Task HostServices_RejectInvalidPostgresStartupRetryBudgetOnStart(
+        string key,
+        string value)
+    {
+        using var host = CreateHostWithConfiguration(new Dictionary<string, string?> { [key] = value });
+
+        var exception = await Record.ExceptionAsync(() => host.StartAsync());
+
+        var expectedFieldName = key.Split(':')[^1];
+        Assert.NotNull(exception);
+        Assert.Contains(
+            GetOptionsValidationFailures(exception),
+            failure => failure.Contains(expectedFieldName, StringComparison.Ordinal));
+    }
+
     [Theory]
     [InlineData("1", "1", "1")]
     [InlineData("3650", "3650", "100000")]
