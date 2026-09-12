@@ -22,7 +22,9 @@ namespace IncidentCompass.Application.Investigation.Jobs;
 /// the table would stop being a statement about anything. Below this type, the adapter sees one
 /// endpoint and one credential and has neither the route table nor the attempt budget, so it could
 /// not decide the second call or pay for it. Here the route, its fallback, the ledger and the one
-/// deadline are all in scope, and what leaves this type is still exactly one outcome.
+/// deadline are all in scope, and what leaves this type is still exactly one outcome. It is also
+/// where the <see cref="IAiModelClient" /> contract is enforced rather than trusted; see
+/// <see cref="AiModelClientContractBreach" /> for what a breach is, what it costs and why here.
 /// </para>
 /// </summary>
 internal sealed partial class InvestigationModelCaller(
@@ -264,6 +266,9 @@ internal sealed partial class InvestigationModelCaller(
         }
         catch (Exception exception)
         {
+            // An adapter in breach of its port, converted rather than rethrown so this type's one
+            // failure exception stays exhaustive and a call the provider may already have billed
+            // leaves a row. AiModelClientContractBreach carries the rest of the reasoning.
             var duration = timeProvider.GetUtcNow() - startedAtUtc;
             telemetry?.RecordModelCall(RuntimeTelemetryOutcome.Failed, duration.TotalMilliseconds);
             LogModelCallFailed(
@@ -274,7 +279,11 @@ internal sealed partial class InvestigationModelCaller(
                 context.CallKind,
                 exception.GetType().Name,
                 (long)duration.TotalMilliseconds);
-            throw;
+            var breach = AiModelClientContractBreach.Describe(exception);
+            throw new InvestigationModelCallFailureException(
+                ModelCallLedgerAccountant.CreateFailureAccounting(
+                    context, request, callId, breach, duration, fallbackForRouteId),
+                breach);
         }
 
         var completedDuration = timeProvider.GetUtcNow() - startedAtUtc;

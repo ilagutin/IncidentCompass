@@ -84,7 +84,10 @@ into that call through linked cancellation.
 - Provider errors are normalized into the application-owned failure kinds `Unavailable`,
   `RejectedRequest`, `GenerationTimeout`, `OutputLimitReached`, `AmbiguousInterruption`,
   `TransportFailure`, `InvalidResponse` and `Unknown`. The base provider-exception type alone does
-  not imply an outage.
+  not imply an outage. A chat adapter that raises anything but a normalized provider exception or a
+  caller-driven cancellation is in breach of `IAiModelClient`, and the governed caller records that
+  breach as `provider_contract_violation` rather than letting it escape unaccounted; see "Provider
+  Response And Failure Boundary" below.
   Model-provider outages are retried as an explicit `provider_unavailable` delayed job state. After
   the configured consecutive-failure threshold, each Worker process pauses new claims for
   `IncidentCompass:ProviderResilience:BackpressureSeconds`; a successful model call clears that
@@ -120,6 +123,46 @@ and invalid, unknown or embedding `TransportFailure` failures consume the normal
 budget. An embedding transport failure is `RetryPending` while attempts remain and `DeadLettered`
 at `MaxAttempts`. A pre-processing attempt guard also dead-letters a reclaimed job whose attempt is
 already beyond `MaxAttempts`.
+
+Normalizing is the adapter's obligation, and it is enforced rather than trusted. An `IAiModelClient`
+implementation raises either a normalized `AiModelException` or an `OperationCanceledException` for
+the caller's own token; anything else is a breach of the port. `InvestigationModelCaller`, the single
+bounded caller every governed model call goes through, converts a breach into the same recorded,
+classified failure a normalized error produces: a durable `ModelCall` row with the error code
+`provider_contract_violation`, with the offending exception kept beneath the synthesized one so the
+defect is readable in a stack trace and nowhere else. The kind that row resolves to is `Unknown`
+unless the offending chain itself carries a classified provider exception, in which case that kind is
+what the Worker sees and dispositions on while the error code still names the breach. Enforcement sits
+in the caller rather than in a composition-time decorator because tests and future hosts replace the
+`IAiModelClient` registration outright, and a wrapper around the shipped selection would be bypassed
+by exactly the clients most likely to break the contract.
+
+That containment is not free, and the cost is visible in what the row cannot say. It names `unknown`
+as the answering adapter, because the adapter that answered is the thing that misbehaved, and it
+reports no usage, so the call counts and is never priced. When the kind stays unclassified, nothing
+downstream can say whether the request was refused before dispatch or generated and billed, and the
+fail-over policy refuses to spend a second provider's budget on it. When the offending chain does
+carry a classified provider exception, that kind is honoured instead: a failure that is genuinely an
+outage still fails over and still delays without consuming an attempt, and only the error code
+records that it arrived in the wrong wrapper. A contract violation is a defect to fix in the adapter
+either way, not a supported failure mode.
+
+What the enforcement changes is worth stating precisely, because the two paths that make governed
+calls lost different things. On the governed triage path the attempt already failed in an ordinary
+way: the job runner caught the raw exception and dead-lettered or retried it as
+`triage_job_attempt_failed`. What that attempt carried was an unclassified exception and no
+`ModelCall` row at all, so the disposition was decided without a failure kind and the call left no
+trace. Enforcement gives that attempt both. On the remediation post-report path the loss was larger:
+the raw exception matched neither of the workflow's two catches and escaped it entirely, leaving the
+evaluation pump to log it and the lease to expire. Enforcement turns it into the pass's ordinary
+`remediation_model_call_failed` dead-letter with the call recorded.
+
+Recorded is the exact word, and it is weaker than accounted. The row names the route, the configured
+provider id and the requested model, so a reader can tell which call this was; it carries no token
+counts and writes no `BudgetEvent`, because a breaching adapter reports no usage and this system will
+not invent any. The spend is therefore not recovered, only the fact of the call. That is the honest
+limit of containment: a provider that billed for a call a broken adapter mishandled is invisible to
+the cost roll-up, and the only fix is the adapter.
 
 One kind still maps to one disposition when a route declares a fallback. The second call happens
 inside the governed model call rather than in the job runner, and a fallback that fails as well
@@ -243,7 +286,11 @@ exactly why it dead-letters rather than being replayed; `Unknown` is unclassifie
   exempts or hides them.
 - *The disposition.* One hop only: a fallback does not itself fail over, even if the route it names
   declares one. A fallback that fails at the provider raises the primary's failure, so the job runner
-  still reads exactly one failure kind and applies exactly one disposition from the table above.
+  still reads exactly one failure kind and applies exactly one disposition from the table above. A
+  fallback adapter that breaks its contract is treated exactly like one that failed at the provider,
+  because the enforcement above converts it into a normalized failure before this rule is applied:
+  the primary's kind and its disposition still decide the attempt, and the fallback's own accounting
+  is what the exception carries.
 - *Claim backpressure.* Only a call on the route's own provider clears the process-local pause. A
   fallback answering is evidence about the fallback's provider and none about the one that failed, so
   claiming stays paused rather than resuming against a provider that is still down.

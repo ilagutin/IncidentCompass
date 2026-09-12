@@ -195,7 +195,7 @@ job identity:
   case: a field populated for exactly one code would force a caller to switch on the code before
   trusting the field, and would go silent on the dead-lettered jobs an operator most needs a reason
   for. The vocabulary is closed and application-owned (`ProviderErrorCodes`,
-  `TriageNonRetryableFailureClassifier`, the two generic codes above).
+  `TriageNonRetryableFailureClassifier`, `AiModelClientContractBreach`, the two generic codes above).
 - `nextAttemptAtUtc` - the durable `next_attempt_at_utc` value, or `null` when no retry is scheduled.
   Claiming a job and dead-lettering it both clear the column, so the field is populated only while
   the job is actually waiting for a scheduled retry.
@@ -204,6 +204,25 @@ job identity:
 `RetryPending` + `provider_unavailable` + a future `nextAttemptAtUtc`, which is a delay with an
 until-when, not a terminal failure. The outage path also does not consume the attempt budget, so
 `attempt` does not advance while the provider is down.
+
+One code in that vocabulary is about this system rather than about a provider.
+`provider_contract_violation` comes from `AiModelClientContractBreach`, and it says that the model
+adapter, not the model provider, is what failed: it raised something the `IAiModelClient` port does
+not permit, and the governed caller recorded the call rather than letting it go unaccounted. An
+operator should read it as a defect report, not as an incident at an endpoint. The accompanying
+`ModelCall` row still says which call this was: it carries the `routeId`, the requested `model` and
+the configured `providerId`, all of which are the backend's own facts about the request it sent. What
+it cannot say is anything that would have come back from the other side. It names `unknown` as the
+answering adapter, and it carries no usage and charges nothing, so whether the provider was reached
+at all, and what the call cost if it was, are not recoverable from the record. Which adapter
+misbehaved comes from the correlated `InvestigationModelCaller` failure log event, which names the
+offending exception type.
+
+The defect persists until the adapter is fixed, and a retry that succeeds does not mean it was: the
+usual cause is a forgotten catch around a transient transport fault, so the next attempt often
+completes normally while the same adapter remains one bad response away from doing this again. A
+single occurrence is worth a bug report even when the job afterwards recovers on its own. See
+`docs/model-gateway.md`, "Provider Response And Failure Boundary".
 
 `last_error_message` is deliberately **not** projected. It is content-free by construction, but its
 ordinary form appends the raising exception's type name, and an internal exception type is not
