@@ -50,10 +50,15 @@ namespace IncidentCompass.Application.Remediation;
 /// and a model-call failure dead-letter, because both mean the attempt has spent what it had and a
 /// second pass would only spend more of it. A persistence failure is deliberately not caught here:
 /// the evaluation pump already retries that one, which is right, because the work succeeded and only
-/// the write did not. Anything else - an adapter that raised a raw provider exception instead of the
-/// normalized one its contract requires - is deliberately left to escape: the pump's task set logs
-/// it and keeps polling, the lease expires, and the attempt cap ends the intent. Turning an adapter
-/// contract violation into a tidy dead-letter code would hide the defect that caused it.
+/// the write did not. There is no catch-all, and there is no third model-call shape for one to
+/// catch: an adapter that raises something other than the normalized exception its contract requires
+/// is converted by <c>InvestigationModelCaller</c> into the same classified failure, so a contract
+/// violation arrives here as an ordinary <c>remediation_model_call_failed</c> dead-letter with the
+/// call recorded, rather than as an exception that escaped the pass entirely. Recorded is the exact
+/// word: the <c>ModelCall</c> row names the route, the configured provider and the requested model
+/// and flags the defect with the <c>provider_contract_violation</c> error code, but it carries no
+/// token counts and charges nothing, because a breaching adapter reports no usage. What the pass
+/// spent at such a provider is not recovered, only the fact that it called one.
 /// </para>
 /// </remarks>
 public sealed class RemediationPostReportActionWorkflow(
@@ -186,6 +191,23 @@ public sealed class RemediationPostReportActionWorkflow(
             // number.
             timeProvider.GetUtcNow());
 
+        // These two catches cover every way a model call FAILS, and no catch-all belongs beside
+        // them. What makes that true is InvestigationModelCaller, which converts the breach of an
+        // adapter that raised something else rather than rethrowing it, so there is no third shape
+        // for a failed call to arrive in.
+        //
+        // The qualifier is the whole of it. Everything else that can leave this method is not a
+        // failed call: host cancellation, a persistence fault from any ledger read or append, a
+        // workspace or repository fault. All of those belong to the evaluation pump, which retries
+        // them, and catching them here would turn a shutdown or a retryable write into a settled
+        // outcome.
+        //
+        // One known imprecision, deliberately not papered over. The second catch is not exclusively
+        // a failed call: TriageLedgerAppender wraps a failed accounting append in the same exception
+        // type, so a call that SUCCEEDED whose ledger write did not is reported here as
+        // remediation_model_call_failed, discarding a diff that was really produced. That is wrong
+        // and is tracked separately; it is written down here so the next reader does not conclude
+        // from this comment that the mapping is exact.
         try
         {
             var result = await services.GetRequiredService<RemediationDiffRunner>()
