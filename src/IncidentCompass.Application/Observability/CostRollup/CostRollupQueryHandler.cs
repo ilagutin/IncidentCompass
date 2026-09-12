@@ -25,6 +25,10 @@ public sealed class CostRollupQueryHandler(
             request.FromUtc,
             request.ToUtc,
             cancellationToken);
-        return new CostRollupResponse(request.FromUtc, request.ToUtc, hours);
+        return new CostRollupResponse(
+            request.FromUtc,
+            request.ToUtc,
+            hours,
+            CostRollupResponse.EmbeddingCallsExcludedNotice);
     }
 }

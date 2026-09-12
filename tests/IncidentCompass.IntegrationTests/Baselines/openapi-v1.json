@@ -1355,23 +1355,31 @@
         "required": [
           "fromUtc",
           "toUtc",
-          "hours"
+          "hours",
+          "spendCoverageStatement"
         ],
         "type": "object",
         "properties": {
           "fromUtc": {
             "type": "string",
+            "description": "The inclusive UTC start of the requested window.",
             "format": "date-time"
           },
           "toUtc": {
             "type": "string",
+            "description": "The exclusive UTC end of the requested window.",
             "format": "date-time"
           },
           "hours": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/CostRollupHour"
-            }
+            },
+            "description": "Per-hour usage and spend totals covering the requested window."
+          },
+          "spendCoverageStatement": {
+            "type": "string",
+            "description": "A short restatement of what the spend totals in this response cover and what they structurally exclude."
           }
         }
       },
