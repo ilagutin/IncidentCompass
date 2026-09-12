@@ -4,6 +4,51 @@
 
 - No unreleased changes.
 
+## 0.4.1 - 2026-09-12
+
+A patch release. Every fix in it makes something 0.4.0 already claims in public true, and none of it
+adds a capability.
+
+### Fixed
+
+- The API and the Worker retry their first PostgreSQL connection within a budget expressed in
+  configuration, at `IncidentCompass:Postgres:StartupRetry`, instead of treating a database that is
+  not listening yet as fatal and relying on the container restart policy to recover. Only a socket
+  failure, an `IOException` such as a connection dropped mid-handshake, a timeout and SQLSTATE
+  `57P03` are retried; an unresolvable host, a wrong credential and a missing database still fail on
+  the first attempt. The shipped Compose files already gate both services on the database health
+  check; this covers a host started outside that gate and the window after it passes. The retry is
+  latched to the first success, so a database that goes away in steady state still surfaces at once,
+  and an exhausted budget fails the host loudly with the normalized persistence error.
+- A model client that raises anything other than a normalized provider exception or a caller-driven
+  cancellation is now recorded rather than lost. The governed caller converts the breach into a
+  durable `ModelCall` row under the error code `provider_contract_violation`, so the exception every
+  caller depends on is exhaustive instead of something an adapter could escape unaccounted. The row
+  names no answering adapter and carries no usage, so the call counts and is never priced.
+- A worker tool can no longer put free text into `triage_artifacts.domain_ref`. A domain reference is
+  built through a bounded type that refuses control, format, unassigned, private-use and ill-formed
+  code points, whitespace other than the plain space, and the separator, and it now passes the same
+  redactor the payload passes. Where the reference is built from connector text, one that cannot be
+  expressed is refused rather than thrown: a source match is dropped with the new
+  `source_reference_rejected` limitation, and a release id or role key that could never be expressed
+  is rejected when the configuration loads.
+- The `ToolResult` artifact's redaction marker now answers for the whole tool call rather than for
+  its output alone, so the two citable kinds a tool call produces cannot disagree about whether
+  anything was withheld. A report's withholding sentence no longer depends on which of the two the
+  model cites.
+- The cost rollup says what it covers. An embedding call writes no `ModelCall` row, so it is absent
+  from every count, token total and spend total the rollup produces rather than merely unpriced; the
+  response carries that statement and `docs/cost-tracking.md` explains it, both worded by call kind
+  and adapter so they stay true if an embedding is served locally.
+
+### Changed
+
+- `GET /api/v1/observability/cost-rollups` gains one additive response property,
+  `spendCoverageStatement`. No existing property changed.
+- `docs/security-model.md` now states where the tool redaction boundary ends: the action-result
+  writer records a dispatched action's own result outside it, and rows written before the boundary
+  existed are not rewritten. Both say which rows are affected and why.
+
 ## 0.4.0 - 2026-09-11
 
 ### Added

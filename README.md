@@ -14,7 +14,15 @@ code write, a branch, a pull request and a ticket backlink; per-provider endpoin
 with one-hop route fail-over; scheduled payload retention; working cost accounting; and an opt-in
 evaluation harness with one measured run committed to this repository. Every external write is
 separately approved, nothing merges, no test command is executed and the whole chain ships disabled.
-See the [release notes](docs/release-notes-v0.4.0.md) for changes and verification.
+
+Version **0.4.1** is a patch. It adds no capability and makes four things 0.4.0 already claimed hold
+on their own terms: the first database connection waits inside a budget the configuration states, a
+model client that breaks its port contract is recorded instead of escaping unaccounted, a tool's
+domain reference is bounded and redacted like the payload beside it, and a spend figure now says that
+it cannot contain an embedding call. It also tightens two configuration values, so a release id or
+role key that cannot be an artifact domain reference now stops the host at start rather than failing
+later; read [the notes](docs/release-notes-v0.4.1.md) before upgrading. Earlier releases:
+[0.4.0](docs/release-notes-v0.4.0.md).
 
 ## One investigation
 
@@ -201,7 +209,8 @@ it, judge it. The direct routes are:
   [Versioning and release flow](docs/versioning.md), [Contributing](CONTRIBUTING.md) and the
   [security policy](SECURITY.md)
 - Reference: [Changelog](CHANGELOG.md) and release notes
-  [0.4.0](docs/release-notes-v0.4.0.md), [0.3.0](docs/release-notes-v0.3.0.md),
+  [0.4.1](docs/release-notes-v0.4.1.md), [0.4.0](docs/release-notes-v0.4.0.md),
+  [0.3.0](docs/release-notes-v0.3.0.md),
   [0.2.0](docs/release-notes-v0.2.0.md), [0.1.1](docs/release-notes-v0.1.1.md) and
   [0.1.0](docs/release-notes-v0.1.0.md)
 
