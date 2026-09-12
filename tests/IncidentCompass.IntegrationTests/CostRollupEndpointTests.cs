@@ -3,6 +3,7 @@ using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using IncidentCompass.Application.Observability.CostRollup;
 using IncidentCompass.Infrastructure.Observability;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -57,6 +58,16 @@ public sealed class CostRollupEndpointTests(PostgresRepositoryFixture postgres)
         Assert.Empty(JsonDocument.Parse(foreignBody).RootElement.GetProperty("hours").EnumerateArray());
         Assert.Empty(JsonDocument.Parse(absentBody).RootElement.GetProperty("hours").EnumerateArray());
         AssertHour(tenantBBody, 400, 500, 900, 0.0014m);
+
+        // Every response carries a fixed statement of what the spend figures cover, regardless of
+        // whether the window has any hours at all, because it is a fact about the feature and not
+        // about any one window's data.
+        foreach (var body in new[] { tenantABody, foreignBody, absentBody, tenantBBody })
+        {
+            Assert.Equal(
+                CostRollupResponse.EmbeddingCallsExcludedNotice,
+                JsonDocument.Parse(body).RootElement.GetProperty("spendCoverageStatement").GetString());
+        }
 
         var publicAndLogs = tenantABody + foreignBody + absentBody + tenantBBody + string.Join(' ', capturedLogs);
         foreach (var forbidden in new[]

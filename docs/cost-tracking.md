@@ -78,11 +78,40 @@ answerable question.
 A spend figure is a lower bound on what the tenant was billed for the window, denominated per
 currency, built only from calls that named their configured provider, reported their own token counts
 and matched exactly one price. It is not the invoice: this system holds no discounts, minimums,
-cached-token rates, batch rates or embedding charges, and it never converts or combines currencies.
+cached-token rates or batch rates, and it never converts or combines currencies. Those are missing
+prices and a missing conversion, applied to calls this system did record. An embedding call is a
+stronger case than any of them: it is a call kind this system never records at all, so no missing
+price or conversion is even the right shape for what is wrong with it. "Embedding Calls Are Absent,
+Not Unpriced" below states that on its own rather than folding it into this list.
 
 `unpricedCallCount` above zero means the hour contains work that is not in the spend figure. It does
 not say why on its own. `estimatedUsageCallCount` separates out one reason. The rest are a missing or
 ambiguous price row, unreadable metadata, and a row that does not name its configured provider.
+
+### Embedding Calls Are Absent, Not Unpriced
+
+An embedding call writes no `ModelCall` ledger row. That is a fact about which call kinds this system
+records, not about which adapter answers them, and it holds regardless of whether the call is served
+by a remote provider today or by an in-process adapter later. Because the row is never written, an
+embedding call is not merely excluded from spend: it is absent from every number this rollup produces
+for the hour it happened in. It is not in `callCount`, not in `unpricedCallCount`, not in the input,
+output or total token counts, and not in any currency's spend total. No price row could bring it into
+the figure, because pricing matches against a recorded call and there is no call recorded to match
+against.
+
+`incidentcompass.ai_model_pricing` carries an `embedding_token_price_per_million` column. Nothing in
+this codebase reads it today; it exists in the schema without a code path that queries it. An operator
+who finds that column should not conclude embedding spend is tracked, priced or otherwise represented
+anywhere in this rollup - it is not.
+
+The consequence for reading a spend figure: treat it as a lower bound on chat-completion spend for the
+window and nothing more. This system does not record what an embedding call cost, whoever or whatever
+served it. If the deployment's embedding adapter bills at all, that cost is knowable only wherever
+that adapter's own billing lives, not here.
+
+The response carries this as data, not only as documentation: `spendCoverageStatement` says the same
+thing in shorter form, so a caller reading the JSON learns the figure's scope without having to find
+this file first.
 
 ### Rows Written Before The Provider ID Was Recorded
 
@@ -106,7 +135,8 @@ unpriced rather than as zero-cost.
 - currency;
 - input token price;
 - output token price;
-- embedding token price where applicable;
+- embedding token price where applicable - see "Embedding Calls Are Absent, Not Unpriced" above for
+  why this column has nothing to price today;
 - effective dates;
 - who last changed the row, when, and optionally why.
 
