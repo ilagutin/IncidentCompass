@@ -36,6 +36,13 @@ internal static class WorkerHostEntryPoint
             return;
         }
 
+        var memoryModelExitCode = await MemoryModelCommand.RunIfRequestedAsync(args, host.Services);
+        if (memoryModelExitCode.HasValue)
+        {
+            Environment.ExitCode = memoryModelExitCode.Value;
+            return;
+        }
+
         host.Run();
     }
 }

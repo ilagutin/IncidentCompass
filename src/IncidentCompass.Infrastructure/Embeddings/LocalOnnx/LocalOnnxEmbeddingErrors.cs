@@ -26,17 +26,23 @@ internal static class LocalOnnxEmbeddingErrors
     public static EmbeddingClientException RouteProviderMismatch(string detail) =>
         Create(detail, LocalOnnxEmbeddingProvider.RouteProviderMismatchErrorCode, ProviderFailureKind.RejectedRequest);
 
+    /// <summary>
+    /// Unavailable rather than rejected: the request is well formed, and what is missing is the model
+    /// it names on this host. A job whose <c>memory_search</c> meets it is delayed as a provider outage
+    /// instead of failing for good. It keeps meeting it until an operator installs the configured model
+    /// and restarts the Worker, because a running Worker keeps the model it verified at start.
+    /// </summary>
     public static EmbeddingClientException ModelMismatch(string requestedModel, string installedModel) =>
         Create(
             $"The request names embedding model '{requestedModel}', but the installed local embedding model is" +
             $" '{installedModel}'.",
             LocalOnnxEmbeddingProvider.ModelMismatchErrorCode,
-            ProviderFailureKind.RejectedRequest);
+            ProviderFailureKind.Unavailable);
 
-    public static EmbeddingClientException NotAvailable(LocalOnnxModelInstallSnapshot snapshot) =>
+    public static EmbeddingClientException NotAvailable(LocalOnnxInstalledModelLookup lookup) =>
         Create(
-            snapshot.Detail ?? "The local embedding model is not installed on this host.",
-            snapshot.ErrorCode ?? LocalOnnxEmbeddingProvider.ModelNotInstalledErrorCode,
+            lookup.Detail ?? "The local embedding model is not installed on this host.",
+            lookup.ErrorCode ?? LocalOnnxEmbeddingProvider.ModelNotInstalledErrorCode,
             ProviderFailureKind.Unavailable);
 
     public static EmbeddingClientException LoadFailed(string detail, Exception? innerException = null) =>

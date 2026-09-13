@@ -68,9 +68,10 @@ public sealed class LocalOnnxProviderKindTests
     [Fact]
     public async Task LocalOnnxEmbeddingClient_RefusesACallWhileNoModelIsInstalled()
     {
+        using var modelDirectory = new LocalOnnxTestDirectory();
         using var runtime = new LocalOnnxModelRuntime(Options.Create(new LocalOnnxEmbeddingOptions()));
         var client = new LocalOnnxEmbeddingClient(
-            new LocalOnnxModelInstallState(),
+            LocalModelTestSupport.Reader(new LocalOnnxModelInstallState(), modelDirectory.FullPath),
             runtime,
             new UnreadConfigurationRepository());
 

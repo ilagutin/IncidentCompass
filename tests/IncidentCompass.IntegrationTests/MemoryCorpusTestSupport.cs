@@ -26,10 +26,13 @@ internal static class MemoryCorpusTestSupport
         IEmbeddingClient embeddingClient,
         string embeddingModel,
         string providerId = "local-oai",
-        bool seedingEnabled = true) =>
+        bool seedingEnabled = true,
+        string? providerKind = null,
+        IReadOnlyDictionary<string, string?>? settings = null,
+        Action<IServiceCollection>? configureServices = null) =>
         new HostBuilder()
-            .ConfigureAppConfiguration(configuration => configuration.AddInMemoryCollection(
-                new Dictionary<string, string?>
+            .ConfigureAppConfiguration(configuration => configuration
+                .AddInMemoryCollection(new Dictionary<string, string?>
                 {
                     ["ConnectionStrings:IncidentCompass"] = connectionString,
                     ["IncidentCompass:ConfigSource:Path"] =
@@ -40,7 +43,8 @@ internal static class MemoryCorpusTestSupport
                     ["IncidentCompass:Memory:Seed:RuntimeResyncEnabled"] = "false",
                     ["IncidentCompass:Memory:Seed:RuntimeResyncIntervalSeconds"] = "60",
                     ["IncidentCompass:Memory:Seed:SourceDirectory"] = sourceDirectory
-                }))
+                })
+                .AddInMemoryCollection(settings ?? new Dictionary<string, string?>()))
             .ConfigureServices((context, services) =>
             {
                 services.AddLogging();
@@ -50,12 +54,15 @@ internal static class MemoryCorpusTestSupport
                 services.AddEmbeddingHost(context.Configuration);
 
                 // Registered last so it wins resolution: the file-backed repository still supplies
-                // the whole configuration, and only the memory embedding route is rewritten.
+                // the whole configuration, and only the memory embedding route is rewritten, with its
+                // provider entry when a provider kind is given.
                 services.AddScoped<ITriageConfigurationRepository>(serviceProvider =>
                     new MemoryRouteOverridingConfigurationRepository(
                         serviceProvider.GetRequiredService<FileTriageConfigurationRepository>(),
                         embeddingModel,
-                        providerId));
+                        providerId,
+                        providerKind));
+                configureServices?.Invoke(services);
             })
             .Build();
 
@@ -221,7 +228,8 @@ internal static class MemoryCorpusTestSupport
     private sealed class MemoryRouteOverridingConfigurationRepository(
         ITriageConfigurationRepository inner,
         string embeddingModel,
-        string providerId) : ITriageConfigurationRepository
+        string providerId,
+        string? providerKind) : ITriageConfigurationRepository
     {
         public async Task<TriageConfiguration> GetCurrentAsync(CancellationToken cancellationToken) =>
             Override(await inner.GetCurrentAsync(cancellationToken));
@@ -242,7 +250,13 @@ internal static class MemoryCorpusTestSupport
                     ProviderId = providerId
                 }
             };
-            return configuration with { Routes = routes };
+            var providers = providerKind is null
+                ? configuration.Providers
+                : new Dictionary<string, TriageProviderSettings>(configuration.Providers, StringComparer.Ordinal)
+                {
+                    [providerId] = new(providerKind, Endpoint: null, ApiKeySecretRef: null)
+                };
+            return configuration with { Routes = routes, Providers = providers };
         }
     }
 }

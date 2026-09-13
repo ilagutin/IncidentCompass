@@ -6,14 +6,14 @@ using IncidentCompass.Infrastructure.EmbeddingModels;
 namespace IncidentCompass.Infrastructure.Embeddings.LocalOnnx;
 
 /// <summary>
-/// The in-process embedding adapter the <c>LocalOnnx</c> provider kind selects. It runs the model
-/// the install pass verified, and refuses a call with a named code when it cannot answer it honestly:
-/// an undefined input kind, a route provider that is not a <c>LocalOnnx</c> provider, a model name
-/// other than the installed one, or no usable installed model. A refused call never falls back to
-/// another model.
+/// The in-process embedding adapter the <c>LocalOnnx</c> provider kind selects. It runs the installed
+/// model, and refuses a call with a named code when it cannot answer it honestly: an undefined input
+/// kind, a route provider that is not a <c>LocalOnnx</c> provider, a model name other than the
+/// installed one, or no usable installed model. A refused call never falls back to another model.
+/// Every vector it returns names the encoded identity of the model file that produced it.
 /// </summary>
 internal sealed class LocalOnnxEmbeddingClient(
-    LocalOnnxModelInstallState installState,
+    LocalOnnxInstalledModelReader installedModelReader,
     LocalOnnxModelRuntime runtime,
     ITriageConfigurationRepository configurationRepository) : IEmbeddingClient
 {
@@ -30,10 +30,11 @@ internal sealed class LocalOnnxEmbeddingClient(
         }
 
         await EnsureRouteProviderIsLocalAsync(request.ProviderId, cancellationToken);
-        var installed = RequireInstalledModel();
+        var lookup = await installedModelReader.ReadAsync(cancellationToken);
+        var installed = lookup.Model ?? throw LocalOnnxEmbeddingErrors.NotAvailable(lookup);
         if (!LocalOnnxModelIdentity.Matches(request.Model, installed.Manifest))
         {
-            throw LocalOnnxEmbeddingErrors.ModelMismatch(request.Model, LocalOnnxModelIdentity.Describe(installed.Manifest));
+            throw LocalOnnxEmbeddingErrors.ModelMismatch(request.Model, installed.Manifest.Id);
         }
 
         var (vector, inputTokens) = await runtime.EmbedAsync(installed, request.Input, request.Kind, cancellationToken);
@@ -81,13 +82,5 @@ internal sealed class LocalOnnxEmbeddingClient(
                 $" {ProviderKindHostDefaultRule.LocalOnnxKind}, which serves only providers of Kind" +
                 $" '{ProviderKindHostDefaultRule.LocalOnnxKind}'.");
         }
-    }
-
-    private LocalOnnxInstalledModel RequireInstalledModel()
-    {
-        var snapshot = installState.Snapshot;
-        return snapshot is { Status: LocalOnnxModelInstallStatus.Installed, Model: not null }
-            ? snapshot.Model
-            : throw LocalOnnxEmbeddingErrors.NotAvailable(snapshot);
     }
 }

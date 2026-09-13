@@ -31,7 +31,7 @@ internal sealed class LocalOnnxModelFileFetcher(HttpClient httpClient)
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(artifact);
-        var temporaryPath = destinationPath + "." + Guid.NewGuid().ToString("N") + ".partial";
+        var temporaryPath = LocalOnnxModelLayout.CreateTemporaryDownloadPath(destinationPath);
         try
         {
             var actualSha256 = await DownloadAsync(artifact, temporaryPath, maxBytes, cancellationToken);
@@ -43,7 +43,11 @@ internal sealed class LocalOnnxModelFileFetcher(HttpClient httpClient)
                     $" pinned {artifact.Sha256}; it was discarded.");
             }
 
-            File.Move(temporaryPath, destinationPath, overwrite: false);
+            if (!TryMoveIntoPlace(temporaryPath, destinationPath))
+            {
+                LocalOnnxModelFiles.TryDeleteTemporaryFile(temporaryPath);
+                await VerifyConcurrentlyPlacedFileAsync(artifact, destinationPath, cancellationToken);
+            }
         }
         catch (LocalOnnxModelStoreException)
         {
@@ -60,6 +64,43 @@ internal sealed class LocalOnnxModelFileFetcher(HttpClient httpClient)
         {
             LocalOnnxModelFiles.TryDeleteTemporaryFile(temporaryPath);
             throw FetchFailed(artifact, exception.GetType().Name, exception);
+        }
+    }
+
+    /// <summary>
+    /// Renames the verified download into place, never over an existing file. Returns false when the
+    /// destination appeared while this download ran, which is another installer finishing first.
+    /// </summary>
+    private static bool TryMoveIntoPlace(string temporaryPath, string destinationPath)
+    {
+        try
+        {
+            File.Move(temporaryPath, destinationPath, overwrite: false);
+            return true;
+        }
+        catch (IOException) when (File.Exists(destinationPath))
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// A file another installer placed first is accepted when its digest is the pinned one, which is
+    /// all this store asks of any file, and refused with the digest code otherwise. It is left in
+    /// place either way.
+    /// </summary>
+    private static async Task VerifyConcurrentlyPlacedFileAsync(
+        LocalOnnxModelArtifact artifact,
+        string destinationPath,
+        CancellationToken cancellationToken)
+    {
+        var existingSha256 = await LocalOnnxModelFiles.ComputeSha256Async(destinationPath, cancellationToken);
+        if (!string.Equals(existingSha256, artifact.Sha256, StringComparison.Ordinal))
+        {
+            throw new LocalOnnxModelStoreException(
+                LocalOnnxModelErrorCodes.DigestMismatch,
+                $"The {artifact.Kind} file {artifact.Path} appeared while it was being downloaded and has" +
+                $" SHA-256 {existingSha256}, not {artifact.Sha256}; it was left in place and not replaced.");
         }
     }
 

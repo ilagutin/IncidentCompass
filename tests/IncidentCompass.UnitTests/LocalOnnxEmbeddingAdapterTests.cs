@@ -1,6 +1,8 @@
 using IncidentCompass.Application.Core.Embeddings;
 using IncidentCompass.Application.Core.Errors;
+using IncidentCompass.Application.Core.Resilience;
 using IncidentCompass.Application.Intake.Configuration;
+using IncidentCompass.Application.Memory;
 using IncidentCompass.Infrastructure.EmbeddingModels;
 using IncidentCompass.Infrastructure.Embeddings.LocalOnnx;
 using IncidentCompass.TestSupport;
@@ -10,8 +12,9 @@ namespace IncidentCompass.UnitTests;
 
 /// <summary>
 /// The local adapter end to end on the committed fixture model: tokenization, the ONNX run, mean
-/// pooling, normalization and the window cap, plus every refusal with its code. Assertions are about
-/// dimensions, norms, token counts and codes; no test compares vector values.
+/// pooling, normalization and the window cap, the encoded model identity it reports, plus every
+/// refusal with its code. Assertions are about dimensions, norms, token counts, names and codes; no
+/// test compares vector values.
 /// </summary>
 public sealed class LocalOnnxEmbeddingAdapterTests : IAsyncLifetime
 {
@@ -38,7 +41,7 @@ public sealed class LocalOnnxEmbeddingAdapterTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task CreateEmbedding_ReturnsAUnitVectorOfTheManifestDimensions()
+    public async Task CreateEmbedding_ReturnsAUnitVectorOfTheManifestDimensionsUnderTheEncodedIdentity()
     {
         var response = await CreateClient().CreateEmbeddingAsync(
             Request("checkout timeout while calling the payment service"),
@@ -46,10 +49,38 @@ public sealed class LocalOnnxEmbeddingAdapterTests : IAsyncLifetime
 
         Assert.Equal(Fixture.FixtureManifest.Dimensions, response.Vector.Count);
         Assert.InRange(Norm(response.Vector), 0.999, 1.001);
-        Assert.Equal(Fixture.FixtureManifest.Id, response.Model);
+        Assert.Equal(LocalOnnxModelIdentity.Describe(Fixture.FixtureManifest), response.Model);
+        Assert.True(EncodedEmbeddingModelIdentity.TryParse(response.Model, out var modelId, out var digestPrefix));
+        Assert.Equal(Fixture.FixtureManifest.Id, modelId);
+        Assert.Equal(Fixture.FixtureManifest.ModelFile.Sha256[..16], digestPrefix);
         Assert.Equal(LocalOnnxEmbeddingProvider.Name, response.Provider);
         Assert.Equal("local-onnx-adapter-test", response.CorrelationId);
         Assert.InRange(response.InputTokens!.Value, 3, Fixture.FixtureManifest.MaxTokens);
+    }
+
+    [Fact]
+    public async Task CreateEmbedding_AcceptsTheInstalledModelByItsEncodedIdentity()
+    {
+        var encoded = LocalOnnxModelIdentity.Describe(Fixture.FixtureManifest);
+
+        var response = await CreateClient().CreateEmbeddingAsync(
+            Request("checkout timeout", model: encoded),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(encoded, response.Model);
+    }
+
+    [Fact]
+    public async Task CreateEmbedding_WithNoInstallPass_ReadsTheVerifiedModelFromTheStore()
+    {
+        var state = new LocalOnnxModelInstallState();
+
+        var response = await CreateClient(state).CreateEmbeddingAsync(
+            Request("checkout timeout"),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(Fixture.FixtureManifest.Dimensions, response.Vector.Count);
+        Assert.Equal(LocalOnnxModelInstallStatus.Installed, state.Snapshot.Status);
     }
 
     [Fact]
@@ -109,7 +140,7 @@ public sealed class LocalOnnxEmbeddingAdapterTests : IAsyncLifetime
     [Fact]
     public async Task CreateEmbedding_WhenTheTriageConfigurationCannotBeRead_IsRefusedWithACode()
     {
-        var client = new LocalOnnxEmbeddingClient(InstalledState(), Runtime, new ConfigurationRepository(null));
+        var client = new LocalOnnxEmbeddingClient(Reader(InstalledState()), Runtime, new ConfigurationRepository(null));
 
         var exception = await Assert.ThrowsAsync<EmbeddingClientException>(() =>
             client.CreateEmbeddingAsync(Request("checkout timeout"), TestContext.Current.CancellationToken));
@@ -164,7 +195,7 @@ public sealed class LocalOnnxEmbeddingAdapterTests : IAsyncLifetime
     [Fact]
     public async Task CreateEmbedding_WithNoRouteProvider_ReadsNoConfiguration()
     {
-        var client = new LocalOnnxEmbeddingClient(InstalledState(), Runtime, new ConfigurationRepository(null));
+        var client = new LocalOnnxEmbeddingClient(Reader(InstalledState()), Runtime, new ConfigurationRepository(null));
 
         var response = await client.CreateEmbeddingAsync(
             Request("checkout timeout", providerId: null),
@@ -173,8 +204,13 @@ public sealed class LocalOnnxEmbeddingAdapterTests : IAsyncLifetime
         Assert.Equal(Fixture.FixtureManifest.Dimensions, response.Vector.Count);
     }
 
+    /// <summary>
+    /// A request for another model, which is what <c>memory_search</c> sends when the installed model
+    /// is not the one its route names, is a provider outage the job waits out rather than a request
+    /// the job fails on: that is the existing unavailable outcome of a tool call.
+    /// </summary>
     [Fact]
-    public async Task CreateEmbedding_RefusesAModelOtherThanTheInstalledOne()
+    public async Task CreateEmbedding_RefusesAModelOtherThanTheInstalledOneAsAProviderOutage()
     {
         var exception = await Assert.ThrowsAsync<EmbeddingClientException>(() =>
             CreateClient().CreateEmbeddingAsync(
@@ -182,6 +218,8 @@ public sealed class LocalOnnxEmbeddingAdapterTests : IAsyncLifetime
                 TestContext.Current.CancellationToken));
 
         Assert.Equal(LocalOnnxEmbeddingProvider.ModelMismatchErrorCode, exception.ErrorCode);
+        Assert.Equal(ProviderFailureKind.Unavailable, exception.FailureKind);
+        Assert.True(ProviderOutageExceptionClassifier.IsProviderOutage(exception));
         Assert.Contains("intfloat/multilingual-e5-base", exception.Message, StringComparison.Ordinal);
         Assert.Contains(Fixture.FixtureManifest.Id, exception.Message, StringComparison.Ordinal);
     }
@@ -189,17 +227,21 @@ public sealed class LocalOnnxEmbeddingAdapterTests : IAsyncLifetime
     [Fact]
     public async Task CreateEmbedding_BeforeAnyInstall_IsRefusedAsNotInstalled()
     {
+        using var emptyDirectory = new LocalOnnxTestDirectory();
+        var client = new LocalOnnxEmbeddingClient(
+            LocalModelTestSupport.Reader(new LocalOnnxModelInstallState(), emptyDirectory.FullPath),
+            Runtime,
+            new ConfigurationRepository([(LocalProviderId, "LocalOnnx")]));
+
         var exception = await Assert.ThrowsAsync<EmbeddingClientException>(() =>
-            CreateClient(new LocalOnnxModelInstallState()).CreateEmbeddingAsync(
-                Request("checkout timeout"),
-                TestContext.Current.CancellationToken));
+            client.CreateEmbeddingAsync(Request("checkout timeout"), TestContext.Current.CancellationToken));
 
         Assert.Equal(LocalOnnxEmbeddingProvider.ModelNotInstalledErrorCode, exception.ErrorCode);
         Assert.Equal(ProviderFailureKind.Unavailable, exception.FailureKind);
     }
 
     [Fact]
-    public async Task CreateEmbedding_AfterAFailedInstall_IsRefusedWithTheInstallCode()
+    public async Task CreateEmbedding_AfterAFailedInstall_IsRefusedWithTheInstallCodeAsAProviderOutage()
     {
         var state = new LocalOnnxModelInstallState();
         state.RecordFailed(LocalOnnxModelErrorCodes.DigestMismatch, "The onnx file has the wrong digest.");
@@ -209,6 +251,7 @@ public sealed class LocalOnnxEmbeddingAdapterTests : IAsyncLifetime
 
         Assert.Equal(LocalOnnxModelErrorCodes.DigestMismatch, exception.ErrorCode);
         Assert.Equal(ProviderFailureKind.Unavailable, exception.FailureKind);
+        Assert.True(ProviderOutageExceptionClassifier.IsProviderOutage(exception));
     }
 
     [Fact]
@@ -258,11 +301,14 @@ public sealed class LocalOnnxEmbeddingAdapterTests : IAsyncLifetime
         return state;
     }
 
+    private LocalOnnxInstalledModelReader Reader(LocalOnnxModelInstallState state) =>
+        LocalModelTestSupport.Reader(state, Fixture.Options.ModelDirectory);
+
     private LocalOnnxEmbeddingClient CreateClient(
         LocalOnnxModelInstallState? state = null,
         (string Id, string Kind)[]? providers = null) =>
         new(
-            state ?? InstalledState(),
+            Reader(state ?? InstalledState()),
             Runtime,
             new ConfigurationRepository(providers ?? [(LocalProviderId, "LocalOnnx")]));
 

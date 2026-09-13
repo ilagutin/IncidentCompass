@@ -39,6 +39,7 @@ internal static class LocalOnnxModelSetup
             .RemoveAllLoggers();
         services.TryAddTransient<LocalOnnxModelStore>();
         services.TryAddSingleton<LocalOnnxModelInstallState>();
+        services.TryAddSingleton<LocalOnnxInstalledModelReader>();
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, LocalOnnxModelInstallHostedService>());
 
         return services;

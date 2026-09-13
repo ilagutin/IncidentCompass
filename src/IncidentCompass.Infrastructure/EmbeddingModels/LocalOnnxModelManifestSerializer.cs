@@ -95,6 +95,48 @@ internal static class LocalOnnxModelManifestSerializer
         }
     }
 
+    /// <summary>
+    /// Copies a manifest byte for byte to <paramref name="destinationPath" /> through a temporary file
+    /// and a rename, so a kept copy is never partial. The bytes are copied rather than re-serialized,
+    /// so a manifest this version cannot read is kept exactly as it was.
+    /// </summary>
+    public static async Task CopyAtomicallyAsync(
+        string sourcePath,
+        string destinationPath,
+        CancellationToken cancellationToken)
+    {
+        var temporaryPath = destinationPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            await using (var source = new FileStream(
+                             sourcePath,
+                             FileMode.Open,
+                             FileAccess.Read,
+                             FileShare.Read,
+                             4096,
+                             FileOptions.Asynchronous))
+            {
+                await using var destination = new FileStream(
+                    temporaryPath,
+                    FileMode.CreateNew,
+                    FileAccess.Write,
+                    FileShare.None,
+                    4096,
+                    FileOptions.Asynchronous);
+                await source.CopyToAsync(destination, cancellationToken);
+                await destination.FlushAsync(cancellationToken);
+                destination.Flush(flushToDisk: true);
+            }
+
+            File.Move(temporaryPath, destinationPath, overwrite: true);
+        }
+        catch
+        {
+            LocalOnnxModelFiles.TryDeleteTemporaryFile(temporaryPath);
+            throw;
+        }
+    }
+
     private static bool IsComplete(LocalOnnxModelManifest manifest) =>
         manifest.SchemaVersion == LocalOnnxModelManifest.CurrentSchemaVersion &&
         !string.IsNullOrWhiteSpace(manifest.Id) &&

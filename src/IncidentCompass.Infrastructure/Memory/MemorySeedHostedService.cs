@@ -1,4 +1,5 @@
 using IncidentCompass.Application.Core.Observability;
+using IncidentCompass.Application.Memory;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -124,13 +125,16 @@ internal sealed partial class MemorySeedHostedService(
     }
 
     /// <summary>
-    /// Reports a route change without failing the host start.
+    /// Reports a pass that published nothing without failing the host start: a route change, a corpus
+    /// holding mixed routes, an installed local model that is not the route's model, or no usable
+    /// local model.
     /// </summary>
     /// <remarks>
-    /// This is deliberately not an exception. The corpus is intact, the previous route still
-    /// retrieves it, and a host that refused to start would take the API and the Worker down over a
-    /// configuration edit that a single operator command resolves. What it must not do is look
-    /// healthy, so the status carries an error code and the health check reports degraded.
+    /// This is deliberately not an exception. The corpus is intact and still current, and a host that
+    /// refused to start would take the Worker down over a state an operator resolves with a command:
+    /// a rebuild for a route change or mixed routes, an install or a route correction for the two model
+    /// states. What it must not do is look healthy, so the status carries the state's code and the
+    /// health check reports degraded.
     /// </remarks>
     private async Task RecordRebuildRequiredAsync(
         MemorySeedSyncOutcome outcome,
@@ -139,8 +143,32 @@ internal sealed partial class MemorySeedHostedService(
         syncStatus.RecordRebuildRequired(MemoryCorpusErrorCodes.From(outcome.State), outcome.Generation);
         await statusPersistence.SaveAsync(syncStatus.Snapshot, cancellationToken);
         telemetry?.RecordMemorySync(RuntimeTelemetryOutcome.Failed);
+        if (outcome.State is MemoryCorpusState.EmbeddingModelMismatch or MemoryCorpusState.EmbeddingModelUnavailable)
+        {
+            LogEmbeddingModelBlocked(
+                logger,
+                outcome.Route.RouteId,
+                outcome.State.ToString(),
+                outcome.ModelErrorCode ?? "none",
+                outcome.ItemCount);
+            return;
+        }
+
         LogRebuildRequired(logger, outcome.State.ToString(), outcome.Route.RouteId, outcome.ItemCount);
     }
+
+    [LoggerMessage(
+        2304,
+        LogLevel.Warning,
+        "Memory seed synchronization published nothing because the local embedding model for route {RouteId} is " +
+        "{CorpusState} (model code {ModelErrorCode}); {ActiveItemCount} previously seeded items remain active. " +
+        "Install the configured model with the memory model install command or correct the route.")]
+    private static partial void LogEmbeddingModelBlocked(
+        ILogger logger,
+        string routeId,
+        string corpusState,
+        string modelErrorCode,
+        int activeItemCount);
 
     [LoggerMessage(2301, LogLevel.Warning, "Memory seed runtime synchronization failed with {FailureType}.")]
     private static partial void LogRuntimeSyncFailed(ILogger logger, string failureType);
