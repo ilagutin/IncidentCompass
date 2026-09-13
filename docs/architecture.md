@@ -179,11 +179,16 @@ Incident memory uses PostgreSQL through `incidentcompass.memory_items` and
 incident, operational note, release note and postmortem with optional service/component/release
 metadata; the repository ships runbook and known-incident corpora only.
 
+The Worker is the only host composed with an embedding client, and the corpus commands
+`memory status` and `memory rebuild` run there; the API serves the corpus status and health reads.
+
 Within a configured seed owner, source path is the stable identity: changed files update and
 re-embed one active item, while removed files are deactivated and excluded from search. Each
 complete corpus is published atomically as an owner-scoped generation, so a divergent owner cannot
-deactivate another owner's items. API and Worker can sync the same owner concurrently under a corpus
-database lock.
+deactivate another owner's items. The Worker is the only process that synchronizes the corpus.
+Reconciliation takes an owner-scoped PostgreSQL advisory lock, so a startup or resync pass and a
+`memory rebuild` run as a separate Worker process serialize on the same owner instead of
+interleaving.
 
 Runtime resync is opt-in, single-flight and cancellation-aware. It persists only timestamps,
 generation and a sanitized error code by seed tenant and owner for the memory-sync health status, so
@@ -202,7 +207,7 @@ provider reports one adapter name and a route moved to a second embedding server
 invisible. A route change is detected before any embedding call: an incremental pass publishes
 nothing, leaves the previous corpus current and retrievable, and reports
 `memory_embedding_route_changed`. Re-embedding the whole corpus is an operator action, run as
-`memory rebuild` on either host; `memory status` and `GET /api/v1/health/memory-corpus` report the
+`memory rebuild` on the Worker; `memory status` and `GET /api/v1/health/memory-corpus` report the
 same bounded route identity and counts.
 
 The manual `CurrentReleases` map is the single per-service release marker: memory retrieval labels

@@ -492,7 +492,7 @@ deactivated from retrieval. This keeps provenance simple and prevents an edited 
 second stale live item. Runtime resync is opt-in and bounded; operators may enable it for reviewed file changes without adding a memory write API. The default remains startup-only synchronization.
 
 Whole-corpus re-embedding stays on the same side of that line. It is a console command on the
-existing hosts, `memory rebuild`, rather than an HTTP endpoint, because it is a host-wide
+Worker, `memory rebuild`, rather than an HTTP endpoint, because it is a host-wide
 maintenance action with no tenant-scoped caller behind it and a write API for it would need an
 administrative identity this system does not have.
 
@@ -517,7 +517,7 @@ What changed is that the corpus no longer goes quiet about it. Each published ge
 route that built it, a synchronization pass compares that against the configured route before it
 requests a single embedding, and a mismatch leaves the previous corpus current and reports
 `memory_embedding_route_changed` through the memory-sync health status and
-`GET /api/v1/health/memory-corpus`. `memory rebuild` on either host performs the re-embedding and
+`GET /api/v1/health/memory-corpus`. `memory rebuild` on the Worker performs the re-embedding and
 publishes one new generation transactionally.
 
 Two limits are worth stating. The pre-check sees only what configuration declares, a provider
