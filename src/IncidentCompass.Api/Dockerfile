@@ -36,8 +36,7 @@ COPY --chown=incidentcompass:incidentcompass config ./config
 COPY --chown=incidentcompass:incidentcompass samples ./samples
 
 ENV ASPNETCORE_URLS=http://+:8080 \
-    IncidentCompass__ConfigSource__Path=/app/config/incidentcompass.config.json \
-    IncidentCompass__Memory__Seed__SourceDirectory=/app/samples
+    IncidentCompass__ConfigSource__Path=/app/config/incidentcompass.config.json
 
 EXPOSE 8080
 USER incidentcompass

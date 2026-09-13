@@ -191,6 +191,15 @@ docker @compose run --rm worker memory rebuild
 serve the configured route, and 0 otherwise. `docs/quickstart.md`, "Changing The Embedding Route",
 describes what a rebuild publishes and what it leaves current when it fails.
 
+The API and the Worker must share one memory seed tenant and owner. The Worker writes the corpus and its
+synchronization status under that scope, and the API's `GET /api/v1/health/memory-sync` and
+`GET /api/v1/health/memory-corpus` read them under the scope the API is given, so an API configured with
+another tenant or owner reports a corpus that nothing writes. `compose.production.yml` sets both services
+from the same two variables: the tenant from `INCIDENTCOMPASS_TENANT_ID` and the owner from
+`INCIDENTCOMPASS_MEMORY_SEED_OWNER`, which is `production` when unset. A host started outside this file
+must set `IncidentCompass__Memory__Seed__TenantId` and `IncidentCompass__Memory__Seed__Owner` to the same
+values for both.
+
 ## Local embedding model
 
 The Worker embeds memory with the in-process model unless the environment file selects

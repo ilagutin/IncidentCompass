@@ -22,6 +22,14 @@ x-production-environment: &production-environment
   INCIDENTCOMPASS_EMBEDDINGS_MODEL: ${INCIDENTCOMPASS_EMBEDDINGS_MODEL:?set INCIDENTCOMPASS_EMBEDDINGS_MODEL}
   INCIDENTCOMPASS_EMBEDDINGS_PROVIDER_ID: ${INCIDENTCOMPASS_EMBEDDINGS_PROVIDER_ID:-local-embed}
 
+# The memory seed scope. The Worker writes the corpus and its synchronization status under it, and the
+# API's memory-sync and memory-corpus health readers look them up under it, so both services take it from
+# this one place. Without it the API would inherit docker-compose.yml's local/default scope, which the
+# production Worker never writes.
+x-memory-seed-scope: &memory-seed-scope
+  IncidentCompass__Memory__Seed__TenantId: ${INCIDENTCOMPASS_TENANT_ID:?set INCIDENTCOMPASS_TENANT_ID}
+  IncidentCompass__Memory__Seed__Owner: ${INCIDENTCOMPASS_MEMORY_SEED_OWNER:-production}
+
 x-bounded-logs: &bounded-logs
   driver: json-file
   options:
@@ -46,7 +54,7 @@ services:
   api:
     image: incidentcompass-api:${INCIDENTCOMPASS_IMAGE_TAG:-local}
     environment:
-      <<: *production-environment
+      <<: [*production-environment, *memory-seed-scope]
       ASPNETCORE_ENVIRONMENT: Production
       ASPNETCORE_URLS: http://+:8080
       IncidentCompass__ApiKeyAuth__Enabled: ${INCIDENTCOMPASS_API_KEY_AUTH_ENABLED:?set INCIDENTCOMPASS_API_KEY_AUTH_ENABLED}
@@ -65,11 +73,9 @@ services:
   worker:
     image: incidentcompass-worker:${INCIDENTCOMPASS_IMAGE_TAG:-local}
     environment:
-      <<: *production-environment
+      <<: [*production-environment, *memory-seed-scope]
       DOTNET_ENVIRONMENT: Production
       IncidentCompass__Memory__Seed__Enabled: ${INCIDENTCOMPASS_MEMORY_SEED_ENABLED:-true}
-      IncidentCompass__Memory__Seed__TenantId: ${INCIDENTCOMPASS_TENANT_ID:?set INCIDENTCOMPASS_TENANT_ID}
-      IncidentCompass__Memory__Seed__Owner: ${INCIDENTCOMPASS_MEMORY_SEED_OWNER:-production}
       IncidentCompass__Memory__Seed__SourceDirectory: /app/samples
       IncidentCompass__Embeddings__LocalOnnx__ModelDirectory: /app/models
       IncidentCompass__SourceContext__Roots__0__ServiceName: ${INCIDENTCOMPASS_SOURCE_SERVICE:?set INCIDENTCOMPASS_SOURCE_SERVICE}
