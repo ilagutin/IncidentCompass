@@ -90,6 +90,7 @@ public sealed class MemorySeedRouteGuardTests(PostgresRepositoryFixture postgres
                 services.AddSingleton<IEmbeddingClient>(embeddingClient);
                 services.AddTestApplication(context.Configuration);
                 services.AddInfrastructure(context.Configuration);
+                services.AddEmbeddingHost(context.Configuration);
                 configureServices?.Invoke(services);
             })
             .Build();

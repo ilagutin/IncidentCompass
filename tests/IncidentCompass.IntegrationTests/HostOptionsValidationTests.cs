@@ -90,7 +90,7 @@ public sealed class HostOptionsValidationTests
     [MemberData(nameof(AcceptedProviderSpellings))]
     public async Task HostServices_AcceptsDocumentedProviderSpellings(string provider)
     {
-        using var host = CreateHostWithConfiguration(new Dictionary<string, string?>
+        using var host = CreateEmbeddingHostWithConfiguration(new Dictionary<string, string?>
         {
             ["IncidentCompass:ModelGateway:Provider"] = provider,
             ["IncidentCompass:ModelGateway:OpenAiCompatible:ApiKey"] = "test-api-key",
@@ -290,7 +290,7 @@ public sealed class HostOptionsValidationTests
     [Fact]
     public async Task MockEmbeddingClient_UsesConfiguredDimensions()
     {
-        using var host = CreateHostWithConfiguration(new Dictionary<string, string?>
+        using var host = CreateEmbeddingHostWithConfiguration(new Dictionary<string, string?>
         {
             ["IncidentCompass:Embeddings:MockDimensions"] = "1024"
         });
@@ -391,6 +391,36 @@ public sealed class HostOptionsValidationTests
                 services.AddLogging();
                 services.AddTestApplication(context.Configuration);
                 services.AddInfrastructure(context.Configuration);
+            })
+            .Build();
+    }
+
+    /// <summary>
+    /// The same host as <see cref="CreateHostWithConfiguration" /> plus the Worker-only embedding host,
+    /// for the embedding client and its provider options, which <c>AddInfrastructure</c> does not
+    /// compose. The memory seed pass that comes with it is disabled unless configured, so
+    /// <c>StartAsync</c> still reaches no database.
+    /// </summary>
+    private static IHost CreateEmbeddingHostWithConfiguration(
+        IReadOnlyDictionary<string, string?> values)
+    {
+        var configurationOverrides = new Dictionary<string, string?>(values)
+        {
+            ["IncidentCompass:ConfigSource:Path"] =
+                Path.Combine(RepositoryRootLocator.Find(), "config", "incidentcompass.config.json")
+        };
+
+        return new HostBuilder()
+            .ConfigureAppConfiguration(configuration =>
+            {
+                configuration.AddInMemoryCollection(configurationOverrides);
+            })
+            .ConfigureServices((context, services) =>
+            {
+                services.AddLogging();
+                services.AddTestApplication(context.Configuration);
+                services.AddInfrastructure(context.Configuration);
+                services.AddEmbeddingHost(context.Configuration);
             })
             .Build();
     }

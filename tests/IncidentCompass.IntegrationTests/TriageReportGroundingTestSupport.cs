@@ -24,6 +24,7 @@ internal static class TriageReportGroundingTestSupport
         {
             builder.UseSetting("ConnectionStrings:IncidentCompass", connectionString);
             builder.UseExplicitMockProviders();
+            builder.UseWorkerModelHost();
             builder.UseSetting("IncidentCompass:Pseudonymization:Salt", "redaction-e2e-salt");
             if (configureServices is not null)
             {

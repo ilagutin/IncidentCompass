@@ -57,6 +57,10 @@ public sealed class MemoryOnlyCompositionTests
         services.AddSingleton<IModelCostRollupRepository, InMemoryModelCostRollupRepository>();
         services.AddSingleton<IActionProposalRepository, InMemoryActionProposalRepository>();
         services.AddSingleton<IActionApprovalReviewRepository, InMemoryActionApprovalReviewRepository>();
+        // memory_search is registered only on the Worker's embedding host, so it is composed here
+        // explicitly: the memory path needs an embedding client and the memory repository, and no
+        // chat model service.
+        services.AddMemorySearchTool();
         services.AddSingleton<IEmbeddingClient, InMemoryEmbeddingClient>();
         services.AddSingleton<IMemoryRepository, InMemoryMemoryRepository>();
 

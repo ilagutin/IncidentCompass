@@ -8,6 +8,7 @@ using IncidentCompass.Application.Core.Observability;
 using IncidentCompass.Application.Core.Resilience;
 using IncidentCompass.Application.Core.Users;
 using IncidentCompass.Application.Governance;
+using IncidentCompass.Application.Governance.Tools;
 using IncidentCompass.Application.Intake;
 using IncidentCompass.Application.Intake.Configuration;
 using IncidentCompass.Application.Intake.Redaction;
@@ -56,6 +57,19 @@ public static class Setup
         services.AddTicketsCore();
         services.TryAddScoped<IRequestHandler<CostRollupQuery, CostRollupResponse>, CostRollupQueryHandler>();
         services.AddSingleton(TelegramNotificationToolDescriptor.Value);
+
+        return services;
+    }
+
+    /// <summary>
+    /// Registers the <c>memory_search</c> tool, which <c>AddApplication</c> deliberately does not.
+    /// The tool embeds every worker query, so it belongs only to the host composed with an embedding
+    /// client, and that host is the Worker. Its descriptor stays in <c>AddApplication</c>, because a
+    /// configuration naming the tool has to validate on every host.
+    /// </summary>
+    public static IServiceCollection AddMemorySearchTool(this IServiceCollection services)
+    {
+        services.TryAddEnumerable(ServiceDescriptor.Scoped<IImmediateAgentTool, MemorySearchTool>());
 
         return services;
     }

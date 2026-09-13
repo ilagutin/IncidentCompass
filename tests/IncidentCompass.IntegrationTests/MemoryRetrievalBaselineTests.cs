@@ -194,6 +194,7 @@ internal sealed class BenchmarkHarness(
         {
             builder.UseSetting("ConnectionStrings:IncidentCompass", connectionString);
             builder.UseExplicitMockProviders();
+            builder.UseWorkerModelHost();
             builder.UseSetting(
                 "IncidentCompass:ConfigSource:Path",
                 Path.Combine(

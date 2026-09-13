@@ -47,6 +47,7 @@ internal static class MemoryCorpusTestSupport
                 services.AddSingleton<IEmbeddingClient>(embeddingClient);
                 services.AddTestApplication(context.Configuration);
                 services.AddInfrastructure(context.Configuration);
+                services.AddEmbeddingHost(context.Configuration);
 
                 // Registered last so it wins resolution: the file-backed repository still supplies
                 // the whole configuration, and only the memory embedding route is rewritten.

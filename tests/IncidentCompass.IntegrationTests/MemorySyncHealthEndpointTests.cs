@@ -92,6 +92,7 @@ public sealed class MemorySyncHealthEndpointTests(PostgresRepositoryFixture post
                 services.AddSingleton<IEmbeddingClient, DeterministicEmbeddingClient>();
                 services.AddTestApplication(context.Configuration);
                 services.AddInfrastructure(context.Configuration);
+                services.AddEmbeddingHost(context.Configuration);
             })
             .Build();
 

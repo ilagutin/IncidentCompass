@@ -101,6 +101,7 @@ public sealed class TriageEvaluationWorkflowTests(PostgresRepositoryFixture post
         {
             builder.UseSetting("ConnectionStrings:IncidentCompass", connectionString);
             builder.UseExplicitMockProviders();
+            builder.UseWorkerModelHost();
             builder.UseSetting("IncidentCompass:ConfigSource:Path", configuration.Path);
             builder.UseSetting("IncidentCompass:Embeddings:MockDimensions", corpus.EmbeddingDimensions.ToString(CultureInfo.InvariantCulture));
             builder.UseSetting("IncidentCompass:Memory:Seed:Enabled", "false");

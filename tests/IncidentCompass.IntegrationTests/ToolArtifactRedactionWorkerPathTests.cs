@@ -218,6 +218,7 @@ public sealed class ToolArtifactRedactionWorkerPathTests(PostgresRepositoryFixtu
         {
             builder.UseSetting("ConnectionStrings:IncidentCompass", connectionString);
             builder.UseExplicitMockProviders();
+            builder.UseWorkerModelHost();
             builder.UseSetting("IncidentCompass:ConfigSource:Path", configPath);
             configureHost?.Invoke(builder);
             builder.ConfigureTestServices(services =>

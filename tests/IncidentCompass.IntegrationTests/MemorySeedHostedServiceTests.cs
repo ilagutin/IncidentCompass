@@ -516,6 +516,7 @@ public sealed class MemorySeedHostedServiceTests(PostgresRepositoryFixture postg
                 services.AddSingleton<IEmbeddingClient>(embeddingClient);
                 services.AddTestApplication(context.Configuration);
                 services.AddInfrastructure(context.Configuration);
+                services.AddEmbeddingHost(context.Configuration);
                 configureServices?.Invoke(services);
             })
             .Build();
