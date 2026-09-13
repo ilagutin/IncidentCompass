@@ -158,7 +158,11 @@ the call was the failure log line naming its exception type. Enforcement gives t
 kind and a row. On the remediation post-report path the loss was larger: the raw exception matched
 neither of the workflow's two catches and escaped it entirely, leaving the evaluation pump to log it
 and the lease to expire. Enforcement turns it into the pass's ordinary
-`remediation_model_call_failed` dead-letter with the call recorded.
+`remediation_model_call_failed` dead-letter with the call recorded. That code is reserved for calls
+that failed: a call the provider answered whose accounting append failed arrives in the same
+exception, is told apart by the outcome it carries, and is dead-lettered as
+`remediation_answer_unrecorded` once the owed row is written, with the answer discarded and no diff
+kept.
 
 Recorded is weaker than accounted. The row names the route, the configured provider id and the
 requested model, so a reader can tell which call this was; it carries no token counts and writes no

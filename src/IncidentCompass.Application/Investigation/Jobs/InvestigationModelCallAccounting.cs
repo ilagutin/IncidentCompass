@@ -13,6 +13,14 @@ public sealed record InvestigationModelCallAccounting(
 {
     public string PayloadRef => $"model-call:{CallId:N}";
 
+    /// <summary>
+    /// Whether this is the accounting of a call the provider answered rather than one that failed.
+    /// <c>success</c> is the outcome <c>ModelCallLedgerAccountant.RecordSuccessAsync</c> writes; a
+    /// failed call carries the failure outcome instead. Such accounting is only ever owed when the
+    /// answer's own ledger append failed.
+    /// </summary>
+    public bool ProviderAnswered => string.Equals(Metadata.Outcome, "success", StringComparison.Ordinal);
+
     public IReadOnlyList<TriageLedgerAppendRequest> CreateLedgerRequests(TriageJob job)
     {
         var modelCall = new TriageLedgerAppendRequest(

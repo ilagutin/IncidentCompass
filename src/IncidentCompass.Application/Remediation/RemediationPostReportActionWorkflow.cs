@@ -48,13 +48,19 @@ namespace IncidentCompass.Application.Remediation;
 /// pass again makes an unconfigured host configured or gives an uncited report source evidence, so
 /// every closed code the pass returns completes the intent carrying that code. A budget exhaustion
 /// and a model-call failure dead-letter, because both mean the attempt has spent what it had and a
-/// second pass would only spend more of it. A persistence failure is deliberately not caught here:
-/// the evaluation pump already retries that one, which is right, because the work succeeded and only
-/// the write did not. There is no catch-all, and there is no third model-call shape for one to
-/// catch: an adapter that raises something other than the normalized exception its contract requires
-/// is converted by <c>InvestigationModelCaller</c> into the same classified failure, so a contract
-/// violation arrives here as an ordinary <c>remediation_model_call_failed</c> dead-letter with the
-/// call recorded, rather than as an exception that escaped the pass entirely. Recorded is the exact
+/// second pass would only spend more of it. A call the provider answered but whose accounting could
+/// not be written dead-letters for its own reason: its owed row is written here and its answer is
+/// discarded, and it is not retried because no diff was kept to propose from, so a retry would run
+/// and pay for the model call again, and a spent pass does not run again. It
+/// arrives in the same exception as a failed call and is told apart by the outcome that exception
+/// carries, so the mapping from how a call ended to its code is exact. Any other persistence failure
+/// is deliberately not caught here: the evaluation pump already retries that one, which is right,
+/// because the work succeeded and only the write did not. There is no catch-all, and there is no
+/// third model-call shape for one to catch: an adapter that raises something other than the
+/// normalized exception its contract requires is converted by <c>InvestigationModelCaller</c> into
+/// the same classified failure, so a contract violation arrives here as an ordinary
+/// <c>remediation_model_call_failed</c> dead-letter with the call recorded, rather than as an
+/// exception that escaped the pass entirely. Recorded is the exact
 /// word: the <c>ModelCall</c> row names the route, the configured provider and the requested model
 /// and flags the defect with the <c>provider_contract_violation</c> error code, but it carries no
 /// token counts and charges nothing, because a breaching adapter reports no usage. What the pass
@@ -82,10 +88,17 @@ public sealed class RemediationPostReportActionWorkflow(
     internal const string ModelCallFailedCode = "remediation_model_call_failed";
 
     /// <summary>
-    /// The model call failed and the tokens it spent could not be written to the ledger. A distinct
-    /// code because it is a different claim: the roll-up is now missing spend that happened.
+    /// The model call, failed or answered, spent tokens that could not be written to the ledger. A
+    /// distinct code because it is a different claim: the roll-up is now missing spend that happened.
     /// </summary>
     internal const string AccountingPendingCode = "remediation_model_call_accounting_pending";
+
+    /// <summary>
+    /// The provider answered, but the append of that answer's accounting failed, so the answer never
+    /// reached the pass and was discarded. The owed row has since been written, so the call is paid
+    /// for, and no diff was kept.
+    /// </summary>
+    internal const string AnswerUnrecordedCode = "remediation_answer_unrecorded";
 
     public string ToolId => RemediationDiffToolDescriptor.ToolId;
 
@@ -191,23 +204,19 @@ public sealed class RemediationPostReportActionWorkflow(
             // number.
             timeProvider.GetUtcNow());
 
-        // These two catches cover every way a model call FAILS, and no catch-all belongs beside
-        // them. What makes that true is InvestigationModelCaller, which converts the breach of an
-        // adapter that raised something else rather than rethrowing it, so there is no third shape
-        // for a failed call to arrive in.
+        // These two catches cover every way a model call FAILS, plus one way an answered call cannot
+        // be kept, and no catch-all belongs beside them. What makes that true is
+        // InvestigationModelCaller, which converts the breach of an adapter that raised something
+        // else rather than rethrowing it, so there is no third shape for a failed call to arrive in.
+        // The second catch also receives a call the provider answered whose accounting append
+        // failed, because TriageLedgerAppender wraps that failure in the same exception type; the
+        // outcome recorded on the carried accounting tells the two apart, so the mapping is exact.
         //
         // The qualifier is the whole of it. Everything else that can leave this method is not a
-        // failed call: host cancellation, a persistence fault from any ledger read or append, a
-        // workspace or repository fault. All of those belong to the evaluation pump, which retries
-        // them, and catching them here would turn a shutdown or a retryable write into a settled
-        // outcome.
-        //
-        // One known imprecision, deliberately not papered over. The second catch is not exclusively
-        // a failed call: TriageLedgerAppender wraps a failed accounting append in the same exception
-        // type, so a call that SUCCEEDED whose ledger write did not is reported here as
-        // remediation_model_call_failed, discarding a diff that was really produced. That is wrong
-        // and is tracked separately; it is written down here so the next reader does not conclude
-        // from this comment that the mapping is exact.
+        // model call ending: host cancellation, a persistence fault from any other ledger read or
+        // append, a workspace or repository fault. All of those belong to the evaluation pump, which
+        // retries them, and catching them here would turn a shutdown or a retryable write into a
+        // settled outcome.
         try
         {
             var result = await services.GetRequiredService<RemediationDiffRunner>()
@@ -223,21 +232,29 @@ public sealed class RemediationPostReportActionWorkflow(
         }
         catch (InvestigationModelCallFailureException failure)
         {
-            return await AccountForFailedCallAsync(services, context, failure);
+            return await AccountForUnfinishedCallAsync(services, context, failure);
         }
     }
 
     /// <summary>
-    /// Pays for a model call that failed at the provider.
+    /// Pays for a model call that failed at the provider, or that the provider answered but whose
+    /// accounting could not be written, and dead-letters it under the code for whichever it was.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// The investigation path writes this accounting from its attempt-failure handler, under the job
-    /// lock. A remediation pass has no attempt-failure handler, so without this the tokens a failed
+    /// lock. A remediation pass has no attempt-failure handler, so without this the tokens such a
     /// call spent would be owed and never written, and the cost roll-up would under-report exactly
     /// the calls that went wrong. Cancellation is deliberately not propagated into the append: the
     /// spend already happened, and a shutdown is not a reason to lose the record of it.
+    /// </para>
+    /// <para>
+    /// An answered call is told apart by the outcome its accounting records. Its answer never
+    /// reached the runner, so no diff was kept; it ends as <see cref="AnswerUnrecordedCode" />
+    /// rather than as a failure it was not.
+    /// </para>
     /// </remarks>
-    private static async Task<PostReportActionWorkflowResult> AccountForFailedCallAsync(
+    private static async Task<PostReportActionWorkflowResult> AccountForUnfinishedCallAsync(
         IServiceProvider services,
         RemediationPassContext context,
         InvestigationModelCallFailureException failure)
@@ -252,7 +269,8 @@ public sealed class RemediationPostReportActionWorkflow(
             return PostReportActionWorkflowResult.DeadLetter(AccountingPendingCode);
         }
 
-        return PostReportActionWorkflowResult.DeadLetter(ModelCallFailedCode);
+        return PostReportActionWorkflowResult.DeadLetter(
+            failure.Accounting.ProviderAnswered ? AnswerUnrecordedCode : ModelCallFailedCode);
     }
 
     private bool HasMatchingIdentity(PostReportActionIntent intent) =>

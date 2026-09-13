@@ -194,6 +194,32 @@ public sealed class RemediationTriggerTests
     }
 
     /// <summary>
+    /// An answered call whose accounting append failed is not a failed call: its owed success row is
+    /// written and the answer is discarded with no diff kept. If that row cannot be written either,
+    /// the intent says the spend is still unaccounted.
+    /// </summary>
+    [Theory]
+    [InlineData(1, RemediationPostReportActionWorkflow.AnswerUnrecordedCode, 1)]
+    [InlineData(2, RemediationPostReportActionWorkflow.AccountingPendingCode, 0)]
+    public async Task Evaluate_DiscardsAnAnsweredCallWhoseAccountingFailed(int failingAppends, string expected, int rows)
+    {
+        var ledger = new RecordingLedgerWriter(failingAppends);
+        var diffs = new RecordingDiffRepository();
+        using var provider = BuildProvider(PatchAnsweringModel(), ledger: ledger, diffRepository: diffs);
+
+        var result = await CreateWorkflow(Enabled(), provider).EvaluateAsync(
+            CreateIntent(), TestContext.Current.CancellationToken);
+
+        Assert.False(result.IsCompleted || result.ShouldRetry);
+        Assert.Equal(expected, result.Code);
+        var modelCalls = ledger.Requests.Where(request => request.EventType == TriageLedgerEventType.ModelCall).ToArray();
+        Assert.Equal(rows, modelCalls.Length);
+        Assert.All(modelCalls, call =>
+            Assert.Equal("success", JsonSerializer.Deserialize<ModelCallLedgerMetadata>(call.Rationale!)!.Outcome));
+        Assert.Empty(diffs.Added);
+    }
+
+    /// <summary>
     /// The whole point of the feature, in one evaluation: a pass runs, records a diff, and the diff
     /// is frozen into one proposal a person has to approve.
     /// </summary>
@@ -380,6 +406,7 @@ public sealed class RemediationTriggerTests
     [InlineData(RemediationPostReportActionWorkflow.BudgetExhaustedCode)]
     [InlineData(RemediationPostReportActionWorkflow.ModelCallFailedCode)]
     [InlineData(RemediationPostReportActionWorkflow.AccountingPendingCode)]
+    [InlineData(RemediationPostReportActionWorkflow.AnswerUnrecordedCode)]
     [InlineData(RemediationCodes.Produced)]
     [InlineData(RemediationCodes.NotConfigured)]
     [InlineData(RemediationCodes.ReleaseUnavailable)]
@@ -665,10 +692,7 @@ public sealed class RemediationTriggerTests
         }
 
         public Task<IReadOnlyList<RemediationDiff>> FindForReportAsync(
-            string tenantId,
-            Guid reportId,
-            int maximum,
-            CancellationToken cancellationToken) =>
+            string tenantId, Guid reportId, int maximum, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<RemediationDiff>>(Added
                 .Where(diff =>
                     string.Equals(diff.TenantId, tenantId, StringComparison.Ordinal) &&
@@ -711,9 +735,7 @@ public sealed class RemediationTriggerTests
     {
         public int CallCount { get; private set; }
 
-        public Task<AiModelResponse> CompleteAsync(
-            AiModelRequest request,
-            CancellationToken cancellationToken)
+        public Task<AiModelResponse> CompleteAsync(AiModelRequest request, CancellationToken cancellationToken)
         {
             CallCount++;
             return Task.FromResult(answer(request));
@@ -728,26 +750,23 @@ public sealed class RemediationTriggerTests
             Task.FromResult(new TriageBudgetLedgerUsage(tokensSpent, 0));
 
         public Task<int> CountPolicyDecisionsAsync(
-            TriageJob job,
-            string toolName,
-            ToolRuleScope scope,
-            TriageLedgerDecision decision,
+            TriageJob job, string toolName, ToolRuleScope scope, TriageLedgerDecision decision,
             CancellationToken cancellationToken) => Task.FromResult(0);
 
         public Task<bool> HasSuccessfulToolResultAsync(
-            TriageJob job,
-            string toolName,
-            ToolRuleScope scope,
-            CancellationToken cancellationToken) => Task.FromResult(false);
+            TriageJob job, string toolName, ToolRuleScope scope, CancellationToken cancellationToken) =>
+            Task.FromResult(false);
 
         public Task<IReadOnlyList<FaultLedgerEntry>> ReadByFaultIdAsync(
-            Guid faultId,
-            string tenantId,
-            CancellationToken cancellationToken) =>
+            Guid faultId, string tenantId, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<FaultLedgerEntry>>([]);
     }
 
-    private sealed class RecordingLedgerWriter : ITriageLedgerWriter
+    /// <summary>
+    /// Records every append. The first <paramref name="failingModelCallBatches" /> batches carrying a
+    /// <c>ModelCall</c> row throw and record nothing; only model-call accounting is appended as a batch.
+    /// </summary>
+    private sealed class RecordingLedgerWriter(int failingModelCallBatches = 0) : ITriageLedgerWriter
     {
         private long nextId;
 
@@ -769,13 +788,13 @@ public sealed class RemediationTriggerTests
             IReadOnlyList<TriageLedgerAppendRequest> requests,
             CancellationToken cancellationToken)
         {
-            var entries = new List<TriageLedgerEntry>(requests.Count);
-            foreach (var request in requests)
+            if (requests.Any(request => request.EventType == TriageLedgerEventType.ModelCall) && failingModelCallBatches-- > 0)
             {
-                entries.Add(await AppendAsync(request, cancellationToken));
+                throw new InvalidOperationException("The ledger is unavailable.");
             }
 
-            return entries;
+            // Sequential: each append completes synchronously, so order and ids match a plain loop.
+            return await Task.WhenAll(requests.Select(request => AppendAsync(request, cancellationToken)));
         }
     }
 }
