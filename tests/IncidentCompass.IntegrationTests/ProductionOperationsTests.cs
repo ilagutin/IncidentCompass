@@ -152,6 +152,8 @@ public sealed class ProductionOperationsTests
         Assert.Equal("json-file", services.GetProperty("postgres").GetProperty("logging").GetProperty("driver").GetString());
         Assert.False(services.TryGetProperty("postgres-restore", out _));
         AssertLocalEmbeddingModelDefaults(document.RootElement, fixture.Settings["INCIDENTCOMPASS_COMPOSE_PROJECT"]);
+        Assert.False(fixture.Settings.ContainsKey("INCIDENTCOMPASS_MEMORY_SEED_OWNER"));
+        AssertMemorySeedScopeShared(services, fixture.Settings["INCIDENTCOMPASS_TENANT_ID"], "production");
 
         var recoveryRendered = await RunProcessAsync(
             "docker", fixture.Settings, fixture.ComposeArguments("--profile", "recovery", "config", "--format", "json"));
@@ -176,6 +178,23 @@ public sealed class ProductionOperationsTests
         var dockerIgnore = await File.ReadAllLinesAsync(Path.Combine(fixture.RepositoryRoot, ".dockerignore"));
         Assert.Contains(".env.production", gitIgnore);
         Assert.Contains(".env.production", dockerIgnore);
+    }
+
+    [Fact]
+    public async Task ProductionCompose_ApiAndWorkerTakeTheConfiguredMemorySeedOwner()
+    {
+        await using var fixture = await ProductionFixture.CreateAsync();
+        fixture.Set("INCIDENTCOMPASS_MEMORY_SEED_OWNER", "operator-corpus");
+        await fixture.WriteEnvironmentAsync();
+
+        var rendered = await RunProcessAsync("docker", fixture.Settings, fixture.ComposeArguments("config", "--format", "json"));
+
+        Assert.Equal(0, rendered.ExitCode);
+        using var document = JsonDocument.Parse(rendered.StandardOutput);
+        AssertMemorySeedScopeShared(
+            document.RootElement.GetProperty("services"),
+            fixture.Settings["INCIDENTCOMPASS_TENANT_ID"],
+            "operator-corpus");
     }
 
     [Fact]
@@ -309,6 +328,28 @@ public sealed class ProductionOperationsTests
         Assert.NotEqual(0, result.ExitCode);
         Assert.Contains("bounded timeout", result.StandardError, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain(secretArgument, result.StandardOutput + result.StandardError, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The Worker writes the memory corpus and its synchronization status under its seed tenant and
+    /// owner, and the API's memory health readers look them up under the API's, so both services must
+    /// render the same non-empty scope, and it must be the one the environment file configures.
+    /// </summary>
+    private static void AssertMemorySeedScopeShared(JsonElement services, string expectedTenant, string expectedOwner)
+    {
+        var api = services.GetProperty("api").GetProperty("environment");
+        var worker = services.GetProperty("worker").GetProperty("environment");
+        foreach (var (name, expected) in new[]
+                 {
+                     ("IncidentCompass__Memory__Seed__TenantId", expectedTenant),
+                     ("IncidentCompass__Memory__Seed__Owner", expectedOwner)
+                 })
+        {
+            var workerValue = worker.GetProperty(name).GetString();
+            Assert.False(string.IsNullOrWhiteSpace(workerValue), $"The worker renders no {name}.");
+            Assert.Equal(expected, workerValue);
+            Assert.Equal(workerValue, api.GetProperty(name).GetString());
+        }
     }
 
     /// <summary>
