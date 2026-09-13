@@ -26,6 +26,11 @@ internal static class ProviderKindParser
         return TryParse(provider, out var kind) && kind == ProviderKind.OpenAiCompatible;
     }
 
+    public static bool IsLocalOnnx(string? provider)
+    {
+        return TryParse(provider, out var kind) && kind == ProviderKind.LocalOnnx;
+    }
+
     private static string Normalize(string? provider)
     {
         return provider?

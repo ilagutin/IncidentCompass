@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "id": "incidentcompass/fixture-embedding-model",
+  "revision": "fixture-1",
+  "modelFile": {
+    "path": "model.onnx",
+    "url": "https://fixture.invalid/incidentcompass/model.onnx",
+    "sha256": "0b9e23ab8288b361c82e8af8f7d8f677062fef16d6bf5b89051efd809dd9c659",
+    "kind": "onnx"
+  },
+  "tokenizerFile": {
+    "path": "sentencepiece.bpe.model",
+    "url": "https://fixture.invalid/incidentcompass/sentencepiece.bpe.model",
+    "sha256": "c766ee588117fce9b35a54b24b099561f190082f11ea4f36fe1c5d7afe48fd23",
+    "kind": "sentencepiece"
+  },
+  "dimensions": 8,
+  "maxTokens": 48,
+  "pooling": "mean",
+  "normalize": true,
+  "queryPrefix": "query: ",
+  "passagePrefix": "passage: ",
+  "license": "Apache-2.0"
+}

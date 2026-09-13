@@ -51,10 +51,11 @@ public sealed class HostCompositionTests
             ValidateScopes = true
         });
 
-        // Investigation/action/retention workers + the Infrastructure config warmup + the optional
-        // memory seeding that the Worker's embedding host brings.
+        // Investigation/action/retention workers + the Infrastructure config warmup + the local
+        // embedding model install pass and the optional memory seeding that the Worker's embedding
+        // host brings.
         var hostedServices = provider.GetServices<IHostedService>().ToArray();
-        Assert.Equal(9, hostedServices.Length);
+        Assert.Equal(10, hostedServices.Length);
         Assert.Contains(hostedServices, service =>
             service.GetType().FullName == "IncidentCompass.Worker.TelegramConfigurationStartupValidator");
         Assert.Contains(hostedServices, service =>
@@ -72,6 +73,14 @@ public sealed class HostCompositionTests
             service.GetType().FullName == "IncidentCompass.Infrastructure.Intake.TriageConfigurationWarmupHostedService");
         Assert.Contains(hostedServices, service =>
             service.GetType().FullName == "IncidentCompass.Infrastructure.Memory.MemorySeedHostedService");
+        Assert.Contains(hostedServices, service =>
+            service.GetType().FullName == ModelInstallHostedServiceTypeName);
+        // The generic host starts hosted services in resolution order, so the first seed pass finds
+        // the local model installed or finds its named failure.
+        Assert.True(
+            Array.FindIndex(hostedServices, service => service.GetType().FullName == ModelInstallHostedServiceTypeName) <
+            Array.FindIndex(hostedServices, service => service.GetType().FullName == MemorySeedHostedServiceTypeName),
+            "The memory seed pass would start before the local embedding model install.");
         using var scope = provider.CreateScope();
         var backgroundContext = scope.ServiceProvider.GetRequiredService<IBackgroundUserContext>();
         var userContext = scope.ServiceProvider.GetRequiredService<IUserContext>();
@@ -163,6 +172,7 @@ public sealed class HostCompositionTests
 
         Assert.DoesNotContain(services, descriptor => descriptor.ServiceType == typeof(IEmbeddingClient));
         Assert.DoesNotContain(services, IsMemorySeedHostedService);
+        Assert.DoesNotContain(services, IsModelInstallHostedService);
         Assert.DoesNotContain(services, IsMemorySearchTool);
         Assert.Contains(services, descriptor => descriptor.ServiceType == typeof(IMemoryCorpusStatusReader));
         Assert.Contains(services, descriptor => descriptor.ServiceType == typeof(IMemorySeedSyncStatusReader));
@@ -170,6 +180,7 @@ public sealed class HostCompositionTests
         services.AddWorker(configuration);
 
         Assert.Contains(services, descriptor => descriptor.ServiceType == typeof(IEmbeddingClient));
+        Assert.Single(services, IsModelInstallHostedService);
         Assert.Single(services, IsMemorySeedHostedService);
         Assert.Single(services, IsMemorySearchTool);
     }
@@ -243,12 +254,20 @@ public sealed class HostCompositionTests
 
     private const string MemorySeedHostedServiceTypeName = "IncidentCompass.Infrastructure.Memory.MemorySeedHostedService";
 
+    private const string ModelInstallHostedServiceTypeName =
+        "IncidentCompass.Infrastructure.EmbeddingModels.LocalOnnxModelInstallHostedService";
+
     private const string MemorySearchToolTypeName = "IncidentCompass.Application.Memory.MemorySearchTool";
 
     private static bool IsMemorySeedHostedService(ServiceDescriptor descriptor) =>
         descriptor.ServiceType == typeof(IHostedService) &&
         !descriptor.IsKeyedService &&
         descriptor.ImplementationType?.FullName == MemorySeedHostedServiceTypeName;
+
+    private static bool IsModelInstallHostedService(ServiceDescriptor descriptor) =>
+        descriptor.ServiceType == typeof(IHostedService) &&
+        !descriptor.IsKeyedService &&
+        descriptor.ImplementationType?.FullName == ModelInstallHostedServiceTypeName;
 
     private static bool IsMemorySearchTool(ServiceDescriptor descriptor) =>
         descriptor.ServiceType == typeof(IImmediateAgentTool) &&

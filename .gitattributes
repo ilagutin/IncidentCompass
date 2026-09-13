@@ -10,6 +10,8 @@
 *.ico  binary
 *.pdf  binary
 *.snk  binary
+*.onnx binary
+tests/Shared/fixtures/embedding-model/*.model binary
 
 # Sample incident fixtures are byte-pinned by SHA-256 in tests (see
 # DemoInjectionScenarioLoader.ExpectedSha256 and TesterInjectionDemoTests). Force LF checkout
