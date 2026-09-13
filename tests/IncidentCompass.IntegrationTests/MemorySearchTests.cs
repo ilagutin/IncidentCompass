@@ -255,6 +255,7 @@ public sealed class MemorySearchTests(PostgresRepositoryFixture postgres)
         {
             builder.UseSetting("ConnectionStrings:IncidentCompass", connectionString);
             builder.UseExplicitMockProviders();
+            builder.UseWorkerModelHost();
             if (configPath is not null)
             {
                 builder.UseSetting("IncidentCompass:ConfigSource:Path", configPath);

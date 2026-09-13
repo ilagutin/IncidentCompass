@@ -1,4 +1,5 @@
 using IncidentCompass.Application.Core.Configuration;
+using IncidentCompass.Application.Core.Embeddings;
 using IncidentCompass.Application.Core.Security;
 using IncidentCompass.Application.Governance.PostReportActions;
 using IncidentCompass.Application.Governance.Tools;
@@ -7,6 +8,7 @@ using IncidentCompass.Application.Investigation.Retention;
 using IncidentCompass.Application.Tickets;
 using IncidentCompass.Domain.Incidents.Actions;
 using IncidentCompass.Infrastructure;
+using IncidentCompass.Infrastructure.Memory;
 using IncidentCompass.Worker;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -49,8 +51,8 @@ public sealed class HostCompositionTests
             ValidateScopes = true
         });
 
-        // Investigation/action/retention workers + Infrastructure warmups for config and optional
-        // memory seeding.
+        // Investigation/action/retention workers + the Infrastructure config warmup + the optional
+        // memory seeding that the Worker's embedding host brings.
         var hostedServices = provider.GetServices<IHostedService>().ToArray();
         Assert.Equal(9, hostedServices.Length);
         Assert.Contains(hostedServices, service =>
@@ -137,6 +139,60 @@ public sealed class HostCompositionTests
         Assert.Equal(30, schedule.IntervalMinutes);
     }
 
+    /// <summary>
+    /// The other side of the embedding boundary. <c>AddInfrastructure</c> without <c>AddWorker</c> is
+    /// what the Api composes, and it carries no embedding client, no memory seed pass and no
+    /// <c>memory_search</c> tool, while the corpus status and health readers the Api serves stay. The
+    /// same collection gains all three once <c>AddWorker</c> runs, so they are shown to arrive through
+    /// the Worker rather than merely to be missing.
+    /// </summary>
+    [Fact]
+    public void InfrastructureWithoutWorker_ComposesNoEmbeddingModel()
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["IncidentCompass:Application:ApiVersion"] = "v1",
+                ["IncidentCompass:Postgres:ConnectionStringName"] = "IncidentCompass"
+            })
+            .Build();
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddTestApplication(configuration);
+        services.AddInfrastructure(configuration);
+
+        Assert.DoesNotContain(services, descriptor => descriptor.ServiceType == typeof(IEmbeddingClient));
+        Assert.DoesNotContain(services, IsMemorySeedHostedService);
+        Assert.DoesNotContain(services, IsMemorySearchTool);
+        Assert.Contains(services, descriptor => descriptor.ServiceType == typeof(IMemoryCorpusStatusReader));
+        Assert.Contains(services, descriptor => descriptor.ServiceType == typeof(IMemorySeedSyncStatusReader));
+
+        services.AddWorker(configuration);
+
+        Assert.Contains(services, descriptor => descriptor.ServiceType == typeof(IEmbeddingClient));
+        Assert.Single(services, IsMemorySeedHostedService);
+        Assert.Single(services, IsMemorySearchTool);
+    }
+
+    /// <summary>
+    /// The real Api host, built through its own <c>Program</c>, resolves no embedding client, starts no
+    /// memory seed pass and offers no <c>memory_search</c> tool, and still resolves the corpus status
+    /// reader its health route serves.
+    /// </summary>
+    [Fact]
+    public void ApiHost_ResolvesNoEmbeddingClientOrMemorySeedPass()
+    {
+        using var factory = new MockProvidersWebApplicationFactory();
+        using var scope = factory.Services.CreateScope();
+
+        Assert.Null(scope.ServiceProvider.GetService<IEmbeddingClient>());
+        Assert.DoesNotContain(scope.ServiceProvider.GetServices<IImmediateAgentTool>(), tool =>
+            tool.GetType().FullName == MemorySearchToolTypeName);
+        Assert.DoesNotContain(factory.Services.GetServices<IHostedService>(), service =>
+            service.GetType().FullName == MemorySeedHostedServiceTypeName);
+        Assert.NotNull(scope.ServiceProvider.GetService<IMemoryCorpusStatusReader>());
+    }
+
     [Fact]
     public void WorkerHostServices_RejectMissingInfrastructureWiring()
     {
@@ -184,6 +240,20 @@ public sealed class HostCompositionTests
 
         Assert.Contains("does not match its backend descriptor", exception.Message);
     }
+
+    private const string MemorySeedHostedServiceTypeName = "IncidentCompass.Infrastructure.Memory.MemorySeedHostedService";
+
+    private const string MemorySearchToolTypeName = "IncidentCompass.Application.Memory.MemorySearchTool";
+
+    private static bool IsMemorySeedHostedService(ServiceDescriptor descriptor) =>
+        descriptor.ServiceType == typeof(IHostedService) &&
+        !descriptor.IsKeyedService &&
+        descriptor.ImplementationType?.FullName == MemorySeedHostedServiceTypeName;
+
+    private static bool IsMemorySearchTool(ServiceDescriptor descriptor) =>
+        descriptor.ServiceType == typeof(IImmediateAgentTool) &&
+        !descriptor.IsKeyedService &&
+        descriptor.ImplementationType?.FullName == MemorySearchToolTypeName;
 
     private sealed class InvalidPostReportActionWorkflow : IPostReportActionWorkflow
     {

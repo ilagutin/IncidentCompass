@@ -27,6 +27,8 @@ public sealed class OpenAiCompatibleHttpClientRegistrationTests
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddInfrastructure(configuration);
+        // The embedding typed client belongs to the Worker-only embedding host.
+        services.AddEmbeddingHost(configuration);
 
         using var provider = services.BuildServiceProvider();
 

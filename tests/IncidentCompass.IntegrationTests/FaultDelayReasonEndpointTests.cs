@@ -107,6 +107,7 @@ public sealed class FaultDelayReasonEndpointTests(PostgresRepositoryFixture post
         {
             builder.UseSetting("ConnectionStrings:IncidentCompass", connectionString);
             builder.UseExplicitMockProviders();
+            builder.UseWorkerModelHost();
             builder.UseSetting("IncidentCompass:ProviderResilience:FailureThreshold", "1");
             builder.UseSetting("IncidentCompass:ProviderResilience:BackpressureSeconds", "30");
             if (useOutageModelClient)

@@ -4,6 +4,7 @@ using IncidentCompass.Application.Governance.PostReportActions;
 using IncidentCompass.Application.Governance.Tools;
 using IncidentCompass.Application.Notifications;
 using IncidentCompass.Application.Remediation;
+using IncidentCompass.Infrastructure;
 using IncidentCompass.Infrastructure.Notifications.Telegram;
 using IncidentCompass.Infrastructure.Remediation;
 using IncidentCompass.Infrastructure.Tickets;
@@ -18,6 +19,11 @@ public static class Setup
         this IServiceCollection services,
         IConfiguration configuration)
     {
+        // The Worker is the only host composed with the embedding model: the embedding client, the
+        // memory seed and resync pass, and the memory_search tool investigation calls. It comes first
+        // so the seed pass still starts before the claim loop does.
+        services.AddEmbeddingHost(configuration);
+
         services
             .AddOptions<WorkerOptions>()
             .Bind(configuration.GetSection(WorkerOptions.SectionName))

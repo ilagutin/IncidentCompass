@@ -20,9 +20,7 @@ internal static class MemoryInfrastructureSetup
         services.TryAddScoped<IMemorySeedSyncStatusWriter>(serviceProvider =>
             serviceProvider.GetRequiredService<PostgresMemorySeedSyncStatusStore>());
         services.TryAddScoped<IMemoryRepository, PostgresMemoryRepository>();
-        services.TryAddScoped<MemorySeedSynchronizer>();
         services.TryAddScoped<IMemoryCorpusStatusReader, MemoryCorpusStatusReader>();
-        services.AddHostedService<MemorySeedHostedService>();
 
         return services;
     }

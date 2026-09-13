@@ -77,6 +77,7 @@ public sealed class TriageScenarioTests(PostgresRepositoryFixture postgres)
         {
             builder.UseSetting("ConnectionStrings:IncidentCompass", connectionString);
             builder.UseExplicitMockProviders();
+            builder.UseWorkerModelHost();
         });
         var client = factory.CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = new Uri("https://localhost") });
         return new TestScope(factory, client, connectionString);

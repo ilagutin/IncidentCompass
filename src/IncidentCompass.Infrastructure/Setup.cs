@@ -1,3 +1,4 @@
+using IncidentCompass.Application;
 using IncidentCompass.Application.Core.Embeddings;
 using IncidentCompass.Application.Core.ModelClients;
 using IncidentCompass.Application.Core.ModelGateway;
@@ -48,7 +49,6 @@ public static class Setup
     {
         services.AddInfrastructureOptions(configuration);
         services.AddModelGatewayAdapters();
-        services.AddEmbeddingAdapters();
         services.AddGovernedInvestigationServices();
         services.Replace(ServiceDescriptor.Scoped<IClaimedTriageJobProcessor, GovernedTriageInvestigationProcessor>());
         services.AddObservabilityInfrastructure(configuration);
@@ -76,6 +76,26 @@ public static class Setup
             serviceProvider => serviceProvider.GetRequiredService<PostgresMigrationReadiness>());
         services.TryAddSingleton<PostgresMigrationRunner>();
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, PostgresMigrationHostedService>());
+
+        return services;
+    }
+
+    /// <summary>
+    /// The embedding model host: the provider-selected <see cref="IEmbeddingClient" /> and its options,
+    /// the memory seed and resync pass, the synchronizer the <c>memory rebuild</c> command runs, and the
+    /// <c>memory_search</c> tool. It is not part of <see cref="AddInfrastructure" /> because one process
+    /// owns the embedding model, and that is the Worker, whose <c>AddWorker</c> calls it. The Api keeps
+    /// the corpus status and health readers, none of which embeds anything. The client, the
+    /// synchronizer, the hosted service and the tool are TryAdd registrations, so a client bound
+    /// before this call wins and a second call adds no second hosted service or tool.
+    /// </summary>
+    public static IServiceCollection AddEmbeddingHost(this IServiceCollection services, IConfiguration configuration)
+    {
+        services.AddEmbeddingOptions(configuration);
+        services.AddEmbeddingAdapters();
+        services.TryAddScoped<MemorySeedSynchronizer>();
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, MemorySeedHostedService>());
+        services.AddMemorySearchTool();
 
         return services;
     }
@@ -119,13 +139,6 @@ public static class Setup
             IValidateOptions<ModelGatewayOptions>,
             ModelGatewayProviderOptionsValidator>());
         services
-            .AddOptions<EmbeddingOptions>()
-            .Bind(configuration.GetSection(EmbeddingOptions.SectionName))
-            .ValidateOnStart();
-        services.TryAddEnumerable(ServiceDescriptor.Singleton<
-            IValidateOptions<EmbeddingOptions>,
-            EmbeddingProviderOptionsValidator>());
-        services
             .AddOptions<OpenAiCompatibleModelClientOptions>()
             .Bind(configuration.GetSection(OpenAiCompatibleModelClientOptions.SectionName))
             .Validate<IOptions<ModelGatewayOptions>>(
@@ -134,6 +147,21 @@ public static class Setup
                     openAiOptions.IsValid(),
                 "OpenAI-compatible model gateway configuration is invalid.")
             .ValidateOnStart();
+
+        return services;
+    }
+
+    private static IServiceCollection AddEmbeddingOptions(
+        this IServiceCollection services,
+        IConfiguration configuration)
+    {
+        services
+            .AddOptions<EmbeddingOptions>()
+            .Bind(configuration.GetSection(EmbeddingOptions.SectionName))
+            .ValidateOnStart();
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<
+            IValidateOptions<EmbeddingOptions>,
+            EmbeddingProviderOptionsValidator>());
         services
             .AddOptions<OpenAiCompatibleEmbeddingClientOptions>()
             .Bind(configuration.GetSection(OpenAiCompatibleEmbeddingClientOptions.SectionName))

@@ -391,6 +391,7 @@ public sealed class OpenAiCompatibleEmbeddingClientTests
         services.AddLogging();
         services.AddTestApplication(configuration);
         services.AddInfrastructure(configuration);
+        services.AddEmbeddingHost(configuration);
         return services.BuildServiceProvider();
     }
 
