@@ -522,7 +522,11 @@ publishes one new generation transactionally.
 
 Two limits are worth stating. The pre-check sees only what configuration declares, a provider
 identifier and a model name, so a provider that serves different weights under an unchanged model
-name is not detected until something is re-embedded and the returned vector shape is compared. And a
+name is not detected until something is re-embedded and the returned vector shape is compared. The
+in-process default narrows this for its own route: the Worker judges that route against the installed
+model file's digest as well, so a model file replaced under the same id is reported as a route change
+before anything is embedded, and a model that cannot serve the route is reported as
+`memory_embedding_model_mismatch` or `memory_embedding_model_unavailable` instead. And a
 corpus seeded before generations recorded a provider identifier is reported as `Unrecorded` rather
 than assigned one, because attributing it to the currently configured provider would assert
 something nobody observed; a rebuild records it.

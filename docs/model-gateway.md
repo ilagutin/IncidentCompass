@@ -38,13 +38,22 @@ public interface IEmbeddingClient
 
 Implemented adapters:
 
+- local ONNX embedding client, which runs a pinned model inside the Worker process and is the shipped
+  default; see "Local Embedding Model" below;
 - OpenAI-compatible embedding client;
 - mock embedding client.
 
-Application use cases call `IEmbeddingClient` through the Application layer. The OpenAI-compatible provider is the normal local/demo runtime path and uses the configured embeddings endpoint, model, timeout and retry settings. The mock provider is for tests and explicit mock-only checks.
+Application use cases call `IEmbeddingClient` through the Application layer. The OpenAI-compatible
+provider uses the configured embeddings endpoint, model, timeout and retry settings, and is the
+operator's choice when embeddings should come from a server. The mock provider is for tests and
+explicit mock-only checks.
 
-Embedding requests keep a wider idempotent retry boundary than chat generation, because an embedding
-request has no side effect: HTTP 408, 429 and every 5xx response except 501/505, plus configured
+Every `EmbeddingRequest` states its input kind, `Query` or `Passage`, and the field has no default:
+`memory_search` sends `Query` and the memory seed pass sends `Passage`. The local adapter maps the
+kind to the model's prefix; the OpenAI-compatible and mock adapters ignore it.
+
+OpenAI-compatible embedding requests keep a wider idempotent retry boundary than chat generation,
+because an embedding request has no side effect: HTTP 408, 429 and every 5xx response except 501/505, plus configured
 timeouts and transport failures, are retried up to the embedding retry limit. HTTP 501 and 505 are
 not retried, on either path. They describe a request the endpoint will never accept, so replaying it
 only spends attempts and delay before the same terminal answer. The retry predicate and the terminal
@@ -62,6 +71,97 @@ typed `HttpClient` has no separate deadline, so its framework default cannot end
 attempt early. `MaxWallClockSeconds` is a distinct investigation-attempt budget:
 `InvestigationModelCaller` checks it before each model call and passes the remaining attempt budget
 into that call through linked cancellation.
+
+## Local Embedding Model
+
+`LocalOnnx` is the third provider kind, and like the other two it is named at both layers. The host
+setting `IncidentCompass:Embeddings:Provider` set to `LocalOnnx` makes the Worker compose the
+in-process adapter, and a triage-configuration provider entry of `Kind` `LocalOnnx` is what a route
+names to be served by it. The two must agree: the adapter refuses a route whose provider entry is of
+another kind with `embedding_route_provider_mismatch`, as the OpenAI-compatible adapter refuses a
+provider entry that is not `OpenAICompatible`. There is no local chat adapter, and
+`IncidentCompass:ModelGateway:Provider` refuses `LocalOnnx` at start.
+
+It is the shipped default. `config/incidentcompass.config.json` routes `memory-embed` to the
+`local-embed` provider entry and the model `intfloat/multilingual-e5-small`, both compose files set
+the host provider to `LocalOnnx` unless `INCIDENTCOMPASS_EMBEDDINGS_PROVIDER` says otherwise, and the
+chat routes stay on `local-oai`. The route's provider id and model are the placeholders
+`${INCIDENTCOMPASS_EMBEDDINGS_PROVIDER_ID:-local-embed}` and
+`${INCIDENTCOMPASS_EMBEDDINGS_MODEL:-intfloat/multilingual-e5-small}`, so embedding through an
+OpenAI-compatible server instead means setting three values together: the host provider to
+`OpenAICompatible`, the provider id to `local-oai` and the model to that server's model id.
+
+### Model, Store And Identity
+
+The shipped model is `intfloat/multilingual-e5-small`, MIT-licensed, pinned to one Hugging Face
+revision: its int8 ONNX file `onnx/model_qint8_avx512_vnni.onnx` (118,346,824 bytes) and its
+SentencePiece tokenizer `onnx/sentencepiece.bpe.model` (5,069,051 bytes), each pinned by SHA-256 in
+the defaults under `IncidentCompass:Embeddings:LocalOnnx`. The adapter prefixes a query with
+`query: ` and a passage with `passage: `, truncates input at 512 tokens including the two sequence
+markers, mean-pools, L2-normalizes and returns 384 dimensions.
+
+The model lives in `IncidentCompass:Embeddings:LocalOnnx:ModelDirectory`, an absolute path that is
+required when the host provider is `LocalOnnx` and has no default; both compose files set it to
+`/app/models`, the Worker's `embedding-models` volume. The directory holds `manifest.json`, which names
+the active model's id, revision, license, run settings and both files' paths and digests;
+`manifest.previous.json`, the manifest the last `memory model install` replaced; and each file at
+`artifacts/<its SHA-256>/<its file name>`.
+
+The Worker installs or verifies the model while it starts, before the memory seed pass, and only when
+its host provider is `LocalOnnx`. An installed manifest wins: both of its files are hashed again on
+every start, and it is never replaced by changed host defaults. An empty directory is filled from the
+pinned URLs, and a file already at its artifact path is verified and used instead of downloaded. The
+Worker's start waits for this pass for up to `InstallTimeoutSeconds`, 900 by default and at most
+7200. A pass that fails does not stop the Worker. It records and logs one of
+`embedding_model_not_installed`, `embedding_model_digest_mismatch`, `embedding_model_file_missing`,
+`embedding_model_fetch_failed`, `embedding_model_download_too_large`,
+`embedding_model_install_timed_out`, `embedding_model_manifest_invalid` or
+`embedding_model_store_unavailable`, and every local embedding call is refused with that code until a
+later start installs the model.
+
+Every vector the adapter returns names the model file that produced it with an encoded identity,
+`<model id>@sha256:<first 16 lowercase hex characters of the model file's SHA-256>`, and a corpus built
+from those vectors records that string as its embedding model. A request may name the installed model
+by its id, which is what a route names, or by that encoded identity; any other name is refused with
+`embedding_model_mismatch`, as unavailable rather than rejected.
+
+The Worker judges the memory route against the installed model before it embeds anything. An
+installed model whose id is not the route's model makes the pass publish nothing and record
+`memory_embedding_model_mismatch`; no usable installed model makes it publish nothing and record
+`memory_embedding_model_unavailable`. Otherwise the route's model is read as the installed model's
+encoded identity, so a model file replaced under the same id no longer matches the corpus and is the
+existing `memory_embedding_route_changed`. A Worker whose host provider is `Mock` takes the route as
+configured, because the mock adapter answers every route itself and has no installed model to judge
+it against. `docs/single-host-production.md`, "Local embedding model", says what each state means for
+an operator.
+
+The Api has no model volume, so it cannot compose the digest. For a route whose provider entry is
+`LocalOnnx`, `GET /api/v1/health/memory-corpus` compares the configured model with only the id part of
+the corpus model, and takes the two model states, and a route change the Worker detected from the
+digest, from the synchronization code the Worker last persisted. It can therefore lag the Worker until
+the Worker's next synchronization pass.
+
+A local embedding call writes no `ModelCall` ledger row, like every embedding call, and has no
+provider to bill; see `docs/cost-tracking.md`, "Embedding Calls Are Absent, Not Unpriced".
+
+### Host Requirements
+
+- CPU: the int8 file targets processors with AVX-512 VNNI and runs more slowly on processors without
+  it. One embedding call runs on `IntraOpThreads` threads, 1 by default and at most 16, with one
+  inter-op thread and sequential execution, and calls are serialized within the process, so the
+  default keeps embedding to one core at a time however many the host has. With one thread, one
+  desktop x64 processor measured about 4 ms for a 14-token query and about 180 ms for a full
+  512-token passage.
+- Memory: the model is loaded on the first embedding call and kept for the life of the Worker
+  process. Plan for the Worker to grow by roughly the model file's size plus 100 to 200 MB; that is a
+  planning figure, not a measurement recorded in this repository.
+- Disk: about 123 MB in the model directory per installed model version. Artifact directories are
+  never deleted, so a directory that has held two versions holds both.
+- Network: a Worker starting on an empty model directory downloads both files over HTTPS from
+  `huggingface.co`, following redirects only to HTTPS locations. A directory prepared offline needs no
+  network.
+- Start: the install or verification pass runs before the memory seed pass, and the Worker's start
+  waits for it for up to `InstallTimeoutSeconds`.
 
 ## Requirements
 
@@ -196,7 +296,8 @@ credential the request presents. Chat completions and embeddings resolve through
 table, so a route naming a provider and an embedding route naming a different one reach different
 endpoints.
 
-A provider entry carries two fields beyond its `Kind`:
+An `OpenAICompatible` provider entry carries two fields beyond its `Kind`; a `Mock` or `LocalOnnx`
+entry needs neither:
 
 - `Endpoint`: the absolute base URL for that provider. It is validated at load and must be `http`
   or `https`; whether plaintext HTTP is actually permitted is still the host-wide loopback decision
@@ -236,6 +337,9 @@ credential requirement, because it has no endpoint to reach and no credential to
 still counts. A `LocalOnnx` entry is exempt from both the requirement and the count: it names the
 in-process embedding model, so it has no endpoint, no credential, and no way to receive another
 provider's credential. The load validator and the call-time resolver apply the same counting rule.
+The shipped configuration relies on that exemption: it declares `local-oai` for chat and
+`local-embed`, of kind `LocalOnnx`, for memory embeddings, and `local-oai` still keeps the default
+profile.
 
 The provider table is read from the currently loaded configuration rather than from the snapshot a
 running job is pinned to. A job's route - its model, its ceilings, its reasoning preference - stays
@@ -344,8 +448,9 @@ ceilings, not target token consumption or expected latency, and each call is sti
 the investigation's remaining wall-clock budget expires.
 
 `ContextWindowTokens` only limits the backend's prompt-size estimate for a route. It does not
-subtract from or reserve room inside the separate 8000-token provider output ceiling. The embedding
-adapter retains its separate 30-second default timeout.
+subtract from or reserve room inside the separate 8000-token provider output ceiling. The
+OpenAI-compatible embedding adapter, when an operator selects it, retains its separate 30-second
+default timeout.
 
 The separation between these deadlines preserves two intentionally different dispositions. A
 stalled call that reaches its provider-owned deadline first fails as

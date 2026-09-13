@@ -1,8 +1,9 @@
 # Quickstart
 
 This is the runnable path. Every command needed to build, configure and run IncidentCompass locally
-is on this page. It runs against OpenAI-compatible model and embedding endpoints; mock providers are
-reserved for automated tests and explicit `-Mock` checks.
+is on this page. It runs against an OpenAI-compatible chat endpoint and, by default, embeds memory with
+an in-process model on the Worker; mock providers are reserved for automated tests and explicit
+`-Mock` checks.
 [Local demo walkthrough](local-demo.md) covers what the demo contains and how to read its output,
 and does not repeat these commands.
 
@@ -10,8 +11,11 @@ and does not repeat these commands.
 
 - .NET 10 SDK.
 - Docker, for PostgreSQL and the compose demo.
-- An OpenAI-compatible chat completions endpoint and embeddings endpoint. A local server on port 1234
-  works with the checked-in defaults if it accepts the configured model names.
+- An OpenAI-compatible chat completions endpoint. A local server on port 1234 works with the
+  checked-in defaults if it accepts the configured model name. An embeddings endpoint is needed only
+  when embeddings are switched to an OpenAI-compatible provider.
+- Outbound HTTPS to `huggingface.co` on the first Compose start, when the Worker downloads the
+  in-process embedding model, about 123 MB, into its `embedding-models` volume.
 - PowerShell examples below assume Windows, but the same dotnet and docker compose commands work
   cross-platform with shell syntax changes.
 
@@ -23,8 +27,15 @@ Configure local model names first when your provider requires exact ids:
 Copy-Item .env.example .env
 # Edit .env:
 # INCIDENTCOMPASS_LLM_MODEL=<chat-model-id>
-# INCIDENTCOMPASS_EMBEDDINGS_MODEL=<embedding-model-id>
 ~~~
+
+The copied `.env` embeds memory with the in-process model, through
+`INCIDENTCOMPASS_EMBEDDINGS_PROVIDER=LocalOnnx`, `INCIDENTCOMPASS_EMBEDDINGS_PROVIDER_ID=local-embed`
+and `INCIDENTCOMPASS_EMBEDDINGS_MODEL=intfloat/multilingual-e5-small`, so there is no embedding model id
+to set. To embed through an OpenAI-compatible server instead, set the provider to `OpenAICompatible`,
+the provider id to `local-oai`, the model to that server's model id and, where they differ, the
+embedding base URL, path and key; [Local demo walkthrough](local-demo.md#model-configuration) lists
+them.
 
 Run the compose demo:
 
@@ -83,6 +94,9 @@ you point it at.
 
 - Image build and container start come first, and `scripts/demo.ps1` then waits up to 3 minutes for
   the API health endpoint before failing.
+- On a fresh `embedding-models` volume the Worker downloads the embedding model before its memory seed
+  pass, and its start waits for that for up to 900 seconds. The Worker's Compose health check does not
+  wait for it, so the Tester can start before the corpus is seeded.
 - The Tester bounds itself at 13 minutes per scenario and 75 minutes for the whole run, which covers
   the OTLP export plus the five table scenarios.
 - Inside a scenario, one investigation attempt is bounded by the shipped 600-second
@@ -123,11 +137,22 @@ The triage runtime also loads `config/incidentcompass.config.json`. Route-level 
 file are the model names used by the Worker investigation loop:
 
 - `INCIDENTCOMPASS_LLM_MODEL` controls chat routes such as `analysis-chat` and `report-chat`.
-- `INCIDENTCOMPASS_EMBEDDINGS_MODEL` controls the `memory-embed` route used by `memory_search`.
+- `INCIDENTCOMPASS_EMBEDDINGS_MODEL` controls the model of the `memory-embed` route used by
+  `memory_search`, `intfloat/multilingual-e5-small` by default.
+- `INCIDENTCOMPASS_EMBEDDINGS_PROVIDER_ID` names the provider entry that route uses: `local-embed`, the
+  in-process `LocalOnnx` model, by default, or `local-oai` for the OpenAI-compatible server.
 
 The host `ModelGateway` and `Embeddings` sections configure the provider, the request ceilings and
 the transport. They carry no model name of their own: the route config is the source of truth for
 which model a triage call uses.
+
+The Worker's `appsettings.json` selects the OpenAI-compatible embedding adapter, while the shipped
+triage configuration routes `memory-embed` to `local-embed`. A Worker started with `dotnet run` and
+neither changed still starts, but has no working memory embedding route. With seeding enabled its seed
+pass publishes nothing and reports `memory_embedding_model_unavailable`, and a triage job that reaches
+`memory_search` fails without a retry, because the OpenAI-compatible adapter refuses a `LocalOnnx`
+provider entry as a rejected request. Set the host provider to `LocalOnnx` with a model directory, or point the route at `local-oai`,
+as "Provider Configuration" below shows. Docker Compose sets the host provider itself.
 
 The shipped local-safe profile uses these ceilings:
 
@@ -135,6 +160,7 @@ The shipped local-safe profile uses these ceilings:
 |---|---|
 | Chat `ModelGateway:OpenAiCompatible:TimeoutSeconds`, per HTTP attempt | 300 seconds |
 | Embedding `Embeddings:OpenAiCompatible:TimeoutSeconds`, per HTTP attempt | 30 seconds |
+| Local embedding model `Embeddings:LocalOnnx:InstallTimeoutSeconds`, per install | 900 seconds |
 | `Orchestrator.Budget.MaxWallClockSeconds`, per investigation attempt | 600 seconds |
 | `analysis-chat` and `report-chat` `MaxOutputTokens`, per call | 8000 each |
 | `analysis-chat` and `report-chat` `ContextWindowTokens` | 8192 each |
@@ -236,9 +262,13 @@ $env:IncidentCompass__Memory__Seed__Enabled = "true"
 $env:IncidentCompass__Memory__Seed__TenantId = "local"
 $env:IncidentCompass__Memory__Seed__Owner = "default"
 $env:IncidentCompass__Memory__Seed__SourceDirectory = "../../samples"
+$env:IncidentCompass__Embeddings__Provider = "LocalOnnx"
+$env:IncidentCompass__Embeddings__LocalOnnx__ModelDirectory = "<absolute directory outside the checkout>"
 $env:ConnectionStrings__IncidentCompass = "Host=localhost;Port=5432;Database=incidentcompass;Username=incidentcompass;Password=incidentcompass_dev_password"
 dotnet run --project src/IncidentCompass.Worker
 ~~~
+
+The first run downloads the embedding model, about 123 MB, into that directory before it seeds.
 
 To assess documentation freshness, set the reviewed `CurrentReleases` map in the triage config, for example
 `"CurrentReleases": { "checkout-api": "0.2.0" }`. The marker is captured in the triage config snapshot;
@@ -253,8 +283,9 @@ status is available at `GET /api/v1/health/memory-sync`. The Worker persists thi
 
 A seeded corpus belongs to the embedding route that built it. `memory_search` filters candidates by
 the query embedding's provider, model and dimensions, so changing `INCIDENTCOMPASS_EMBEDDINGS_MODEL`,
-pointing `memory-embed` at a different provider entry, or switching the host between the mock and
-OpenAI-compatible embedding adapters leaves the existing corpus unreachable until it is re-embedded.
+pointing `memory-embed` at a different provider entry, switching the host between the mock,
+OpenAI-compatible and local embedding adapters, or installing a different local model file leaves the
+existing corpus unreachable until it is re-embedded.
 
 Startup does not re-embed it for you. A pass that finds the configured route no longer matches the
 corpus publishes nothing, leaves every previously seeded item active and retrievable under the route
@@ -270,12 +301,18 @@ dotnet run --project src/IncidentCompass.Worker -- memory status
 dotnet run --project src/IncidentCompass.Worker -- memory rebuild
 ~~~
 
-`memory status` exits 1 when a rebuild is needed and 0 otherwise. `memory rebuild` re-embeds every
+`memory status` exits 1 when a rebuild is needed, and when the installed local embedding model cannot
+serve the configured route, and 0 otherwise. `memory rebuild` re-embeds every
 reviewed file under the configured route and publishes the result as one new generation: it becomes
 current only after every embedding and every database write has succeeded, so a provider failure or
 a cancelled run leaves the previous corpus current and searchable. A rebuild and a concurrent
 startup synchronization serialize on the same owner-scoped corpus lock, and a rebuild never touches
 another seed owner's corpus.
+
+The in-process model has its own two commands, run the same way with `LocalOnnx` as the host provider:
+`memory model status` compares the installed model, the route and the corpus, and `memory model install`
+installs the configured model beside the installed one. `docs/single-host-production.md`, "Local
+embedding model", covers both, the two states a model that cannot serve the route reports, and rollback.
 
 Run the API:
 
@@ -326,9 +363,18 @@ not inferred from the model name. `ReasoningEffort` sends lowercase `reasoning_e
 it does not preserve intensity, and a local server may ignore it. A missing mapping sends no
 reasoning-specific field.
 
-For embeddings:
+For embeddings through the in-process model, which is what the shipped `memory-embed` route names:
 
 ~~~powershell
+$env:IncidentCompass__Embeddings__Provider = "LocalOnnx"
+$env:IncidentCompass__Embeddings__LocalOnnx__ModelDirectory = "<absolute directory outside the checkout>"
+~~~
+
+For embeddings through an OpenAI-compatible endpoint, point the route at the `local-oai` provider entry
+as well:
+
+~~~powershell
+$env:INCIDENTCOMPASS_EMBEDDINGS_PROVIDER_ID = "local-oai"
 $env:INCIDENTCOMPASS_EMBEDDINGS_MODEL = "<embedding-model-id>"
 $env:IncidentCompass__Embeddings__Provider = "OpenAiCompatible"
 $env:IncidentCompass__Embeddings__OpenAiCompatible__BaseUrl = "http://localhost:1234"

@@ -1,12 +1,13 @@
 {
   "$schema": "./incidentcompass.schema.json",
   "Providers": {
-    "local-oai": { "Kind": "OpenAICompatible", "Endpoint": "${INCIDENTCOMPASS_LLM_BASE_URL:-http://localhost:1234}", "ApiKeySecretRef": "INCIDENTCOMPASS_LLM_API_KEY" }
+    "local-oai": { "Kind": "OpenAICompatible", "Endpoint": "${INCIDENTCOMPASS_LLM_BASE_URL:-http://localhost:1234}", "ApiKeySecretRef": "INCIDENTCOMPASS_LLM_API_KEY" },
+    "local-embed": { "Kind": "LocalOnnx" }
   },
   "Routes": {
     "analysis-chat": { "Kind": "Chat", "ProviderId": "local-oai", "Model": "${INCIDENTCOMPASS_LLM_MODEL:-local-model}", "Temperature": 0.1, "MaxOutputTokens": 8000, "ContextWindowTokens": 8192 },
     "report-chat":   { "Kind": "Chat", "ProviderId": "local-oai", "Model": "${INCIDENTCOMPASS_LLM_MODEL:-local-model}", "Temperature": 0.2, "MaxOutputTokens": 8000, "ContextWindowTokens": 8192 },
-    "memory-embed":  { "Kind": "Embedding", "ProviderId": "local-oai", "Model": "${INCIDENTCOMPASS_EMBEDDINGS_MODEL:-local-embedding-model}" }
+    "memory-embed":  { "Kind": "Embedding", "ProviderId": "${INCIDENTCOMPASS_EMBEDDINGS_PROVIDER_ID:-local-embed}", "Model": "${INCIDENTCOMPASS_EMBEDDINGS_MODEL:-intfloat/multilingual-e5-small}" }
   },
   "Orchestrator": {
     "Instructions": "ref:instructions/orchestrator.md",

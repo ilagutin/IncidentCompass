@@ -91,8 +91,9 @@ ambiguous price row, unreadable metadata, and a row that does not name its confi
 ### Embedding Calls Are Absent, Not Unpriced
 
 An embedding call writes no `ModelCall` ledger row. That is a fact about which call kinds this system
-records, not about which adapter answers them, and it holds regardless of whether the call is served
-by a remote provider today or by an in-process adapter later. Because the row is never written, an
+records, not about which adapter answers them, and it holds for every embedding adapter: the
+OpenAI-compatible one that calls a server, the mock one, and the in-process local model that is the
+shipped default. Because the row is never written, an
 embedding call is not merely excluded from spend: it is absent from every number this rollup produces
 for the hour it happened in. It is not in `callCount`, not in `unpricedCallCount`, not in the input,
 output or total token counts, and not in any currency's spend total. No price row could bring it into
@@ -108,6 +109,12 @@ The consequence for reading a spend figure: treat it as a lower bound on chat-co
 window and nothing more. This system does not record what an embedding call cost, whoever or whatever
 served it. If the deployment's embedding adapter bills at all, that cost is knowable only wherever
 that adapter's own billing lives, not here.
+
+The shipped default does not bill at all. The local model runs inside the Worker process and has no
+provider to pay, so its calls carry no charge. They are still outside the figure for the same reason
+as any other embedding call, their call kind, and not because they were counted as zero: no row is
+written for them, so the rollup has no local embedding call to report, priced or not. What they do
+cost is Worker CPU and memory, described in `docs/model-gateway.md`, "Local Embedding Model".
 
 The response carries this as data, not only as documentation: `spendCoverageStatement` says the same
 thing in shorter form, so a caller reading the JSON learns the figure's scope without having to find

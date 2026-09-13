@@ -450,6 +450,12 @@ public sealed class ProductionRecoveryTests
                 ["INCIDENTCOMPASS_LLM_CHAT_COMPLETIONS_PATH"] = "/v1/chat/completions",
                 ["INCIDENTCOMPASS_LLM_MODEL"] = "production-chat-model",
                 ["INCIDENTCOMPASS_LLM_API_KEY"] = "model-secret-value-12345",
+                // OpenAI-compatible embeddings on purpose, not the LocalOnnx default: with LocalOnnx the
+                // Worker's start-time install downloads the model from Hugging Face, which this recovery
+                // run must not depend on. The LocalOnnx default is asserted on the rendered stack in
+                // ProductionOperationsTests; the model volume mount is asserted here on the live Worker.
+                ["INCIDENTCOMPASS_EMBEDDINGS_PROVIDER"] = "OpenAICompatible",
+                ["INCIDENTCOMPASS_EMBEDDINGS_PROVIDER_ID"] = "local-oai",
                 ["INCIDENTCOMPASS_EMBEDDINGS_BASE_URL"] = "https://provider.test",
                 ["INCIDENTCOMPASS_EMBEDDINGS_PATH"] = "/v1/embeddings",
                 ["INCIDENTCOMPASS_EMBEDDINGS_MODEL"] = "production-embedding-model",
@@ -520,6 +526,15 @@ public sealed class ProductionRecoveryTests
                     var user = await RunComposeAsync("exec", "--no-TTY", service, "id", "-u");
                     AssertSuccess(user);
                     Assert.NotEqual("0", user.StandardOutput.Trim());
+                }
+                if (service == "worker")
+                {
+                    // A fresh named volume takes the ownership of the image directory it is mounted on,
+                    // so the non-root Worker can install the model only if the image created it.
+                    AssertSuccess(await RunProcessAsync(
+                        "docker", null, "volume", "inspect", SourceProject + "_embedding-models"));
+                    AssertSuccess(await RunComposeAsync(
+                        "exec", "--no-TTY", service, "sh", "-c", "test -d /app/models && test -w /app/models"));
                 }
                 var inspect = await RunProcessAsync("docker", null, "inspect", "--format",
                     "{{.State.Health.Status}}|{{.HostConfig.LogConfig.Type}}|{{.HostConfig.RestartPolicy.Name}}",

@@ -106,10 +106,34 @@ public sealed class MemorySeedSynchronizerLocalModelTests : IDisposable
         Assert.Equal(encoded, memory.Reconciled!.Identity.EmbeddingModel);
     }
 
+    /// <summary>
+    /// A Mock host has no local model, and the mock adapter answers the local route itself, so the route
+    /// is neither judged nor encoded: the corpus is built under the model id the route names.
+    /// </summary>
+    [Fact]
+    public async Task Synchronize_OnAMockHost_BuildsTheLocalRouteAsConfiguredWithoutReadingAnInstalledModel()
+    {
+        await WriteSeedFileAsync();
+        var embedding = new RecordingEmbeddingClient();
+        var memory = new InventoryMemoryRepository(new MemoryCorpusInventory(null, [], 0, 0));
+        var synchronizer = CreateSynchronizer(
+            LocalModelTestSupport.FailedState(LocalOnnxModelErrorCodes.NotInstalled),
+            embedding,
+            memory,
+            hostProvider: "Mock");
+
+        var outcome = await synchronizer.SynchronizeAsync(MemorySeedSyncMode.Incremental, TestContext.Current.CancellationToken);
+
+        Assert.True(outcome.Published);
+        Assert.Equal(LocalModelTestSupport.ModelId, Assert.Single(embedding.Requests).Model);
+        Assert.Equal(LocalModelTestSupport.ModelId, memory.Reconciled!.Identity.EmbeddingModel);
+    }
+
     private MemorySeedSynchronizer CreateSynchronizer(
         LocalOnnxModelInstallState state,
         IEmbeddingClient embedding,
-        IMemoryRepository memory) =>
+        IMemoryRepository memory,
+        string hostProvider = "LocalOnnx") =>
         new(
             Options.Create(new MemorySeedOptions
             {
@@ -120,7 +144,9 @@ public sealed class MemorySeedSynchronizerLocalModelTests : IDisposable
             }),
             new TestHostEnvironment(sourceDirectory.FullPath),
             new StaticConfigurationRepository(LocalModelTestSupport.Configuration()),
-            new WorkerMemoryEmbeddingRouteResolver(LocalModelTestSupport.Reader(state)),
+            new WorkerMemoryEmbeddingRouteResolver(
+                Options.Create(new EmbeddingOptions { Provider = hostProvider }),
+                LocalModelTestSupport.Reader(state, provider: hostProvider)),
             embedding,
             memory);
 

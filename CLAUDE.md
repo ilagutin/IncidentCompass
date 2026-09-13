@@ -90,7 +90,7 @@ Before making non-trivial changes, read the relevant public docs:
 - Persistence: raw Npgsql for explicit PostgreSQL behavior.
 - Auth: foreground `IUserContext` for API callers, `IBackgroundUserContext`
   for Worker/system jobs, and demo header auth only for local/sample use.
-- Providers: OpenAI-compatible providers are the normal local/demo runtime path; deterministic mock providers are for automated tests and explicit mock-only checks.
+- Providers: OpenAI-compatible providers are the normal local/demo runtime path for chat, and the in-process `LocalOnnx` model on the Worker is the default for memory embeddings; deterministic mock providers are for automated tests and explicit mock-only checks.
 - Governance: the live Worker path validates role grants and configured rules before backend tool execution, records decisions in the triage ledger and fails closed through a single rule path.
 - Intake fingerprinting: a strong fingerprint requires both a real non-`unknown` service name and structured `errorType`. A user/manual report with only an operator-entered `serviceName` remains weak and opens its own fault.
 

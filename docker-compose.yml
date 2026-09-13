@@ -6,14 +6,18 @@ x-incidentcompass-ai-env: &incidentcompass-ai-env
   IncidentCompass__ModelGateway__OpenAiCompatible__ChatCompletionsPath: ${INCIDENTCOMPASS_LLM_CHAT_COMPLETIONS_PATH:-/v1/chat/completions}
   IncidentCompass__ModelGateway__OpenAiCompatible__ApiKey: ${INCIDENTCOMPASS_LLM_API_KEY:-local-dev-key}
   IncidentCompass__ModelGateway__OpenAiCompatible__AllowInsecureHttpForLoopback: "true"
-  IncidentCompass__Embeddings__Provider: OpenAICompatible
+  # The memory embedding route defaults to the in-process model on the Worker. To embed through an
+  # OpenAI-compatible server instead, set INCIDENTCOMPASS_EMBEDDINGS_PROVIDER=OpenAICompatible and
+  # INCIDENTCOMPASS_EMBEDDINGS_PROVIDER_ID=local-oai together; the four lines below are then used.
+  IncidentCompass__Embeddings__Provider: ${INCIDENTCOMPASS_EMBEDDINGS_PROVIDER:-LocalOnnx}
   IncidentCompass__Embeddings__OpenAiCompatible__BaseUrl: ${INCIDENTCOMPASS_EMBEDDINGS_BASE_URL:-http://host.docker.internal:1234}
   IncidentCompass__Embeddings__OpenAiCompatible__EmbeddingsPath: ${INCIDENTCOMPASS_EMBEDDINGS_PATH:-/v1/embeddings}
   IncidentCompass__Embeddings__OpenAiCompatible__ApiKey: ${INCIDENTCOMPASS_EMBEDDINGS_API_KEY:-local-dev-key}
   IncidentCompass__Embeddings__OpenAiCompatible__AllowInsecureHttpForLoopback: "true"
   INCIDENTCOMPASS_LLM_BASE_URL: ${INCIDENTCOMPASS_LLM_BASE_URL:-http://host.docker.internal:1234}
   INCIDENTCOMPASS_LLM_MODEL: ${INCIDENTCOMPASS_LLM_MODEL:-local-model}
-  INCIDENTCOMPASS_EMBEDDINGS_MODEL: ${INCIDENTCOMPASS_EMBEDDINGS_MODEL:-local-embedding-model}
+  INCIDENTCOMPASS_EMBEDDINGS_MODEL: ${INCIDENTCOMPASS_EMBEDDINGS_MODEL:-intfloat/multilingual-e5-small}
+  INCIDENTCOMPASS_EMBEDDINGS_PROVIDER_ID: ${INCIDENTCOMPASS_EMBEDDINGS_PROVIDER_ID:-local-embed}
 
 services:
   postgres:
@@ -77,8 +81,11 @@ services:
       IncidentCompass__Memory__Seed__TenantId: ${INCIDENTCOMPASS_MEMORY_SEED_TENANT_ID:-local}
       IncidentCompass__Memory__Seed__Owner: ${INCIDENTCOMPASS_MEMORY_SEED_OWNER:-default}
       IncidentCompass__Memory__Seed__SourceDirectory: /app/samples
+      IncidentCompass__Embeddings__LocalOnnx__ModelDirectory: /app/models
       IncidentCompass__Worker__PollIntervalSeconds: "1"
       IncidentCompass__Worker__RetryDelaySeconds: "2"
+    volumes:
+      - embedding-models:/app/models
     depends_on:
       postgres:
         condition: service_healthy
@@ -122,3 +129,4 @@ services:
 
 volumes:
   postgres-data:
+  embedding-models:

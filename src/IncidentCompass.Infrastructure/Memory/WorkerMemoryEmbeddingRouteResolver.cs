@@ -1,7 +1,10 @@
+using IncidentCompass.Application.Core.Embeddings;
 using IncidentCompass.Application.Intake.Configuration;
 using IncidentCompass.Application.Memory;
+using IncidentCompass.Infrastructure.Configuration;
 using IncidentCompass.Infrastructure.EmbeddingModels;
 using IncidentCompass.Infrastructure.Embeddings.LocalOnnx;
+using Microsoft.Extensions.Options;
 
 namespace IncidentCompass.Infrastructure.Memory;
 
@@ -17,15 +20,23 @@ namespace IncidentCompass.Infrastructure.Memory;
 /// other route is returned as configured. The Api, which has no model, judges through
 /// <see cref="MemoryEmbeddingRouteResolver" /> and <see cref="MemoryCorpusStatusReader" /> instead.
 /// </para>
+/// <para>
+/// On a host whose embedding provider is <c>Mock</c> every route is returned as configured, the local
+/// one included. The mock adapter answers any route itself and embeds nothing with a model, so there is
+/// no installed model to judge the route against; this is what lets the mock compose overlay and the
+/// deterministic tests run the shipped configuration, whose memory route names the local model.
+/// </para>
 /// </summary>
-internal sealed class WorkerMemoryEmbeddingRouteResolver(LocalOnnxInstalledModelReader installedModelReader)
+internal sealed class WorkerMemoryEmbeddingRouteResolver(
+    IOptions<EmbeddingOptions> embeddingOptions,
+    LocalOnnxInstalledModelReader installedModelReader)
 {
     public async Task<MemoryEmbeddingRouteResolution> ResolveAsync(
         TriageConfiguration configuration,
         CancellationToken cancellationToken)
     {
         var route = MemoryEmbeddingRouteResolver.Resolve(configuration);
-        if (!MemoryEmbeddingRouteResolver.IsLocalOnnxRoute(configuration, route))
+        if (!MemoryEmbeddingRouteResolver.IsLocalOnnxRoute(configuration, route) || IsMockHost())
         {
             return MemoryEmbeddingRouteResolution.Ready(route);
         }
@@ -53,4 +64,7 @@ internal sealed class WorkerMemoryEmbeddingRouteResolver(LocalOnnxInstalledModel
 
         return MemoryEmbeddingRouteResolution.Ready(route with { Model = LocalOnnxModelIdentity.Describe(manifest) });
     }
+
+    private bool IsMockHost() =>
+        ProviderKindParser.TryParse(embeddingOptions.Value.Provider, out var kind) && kind == ProviderKind.Mock;
 }
