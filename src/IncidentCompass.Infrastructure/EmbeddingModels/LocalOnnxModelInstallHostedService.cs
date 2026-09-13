@@ -12,12 +12,12 @@ namespace IncidentCompass.Infrastructure.EmbeddingModels;
 /// generic host starts hosted services one after another, and this one is registered before the
 /// memory seed pass, so the first seed pass finds the model installed or finds the named failure.
 /// <para>
-/// A failed install does not fail this pass. The failure is recorded with its code in
+/// A failed install does not fail this pass or the host. The failure is recorded with its code in
 /// <see cref="LocalOnnxModelInstallState" />, every embedding call is refused with that code, and
-/// the host goes on to its next hosted service. What an unavailable model then means for the host
-/// is decided by the memory seed pass: with memory seeding enabled it embeds at start, is refused
-/// with the recorded code and fails the host start, exactly as an unreachable OpenAI-compatible
-/// embedding endpoint does. The pass is bounded by
+/// the host goes on to its next hosted service. With memory seeding enabled, the seed pass sees the
+/// unavailable model before it embeds anything, publishes nothing, records
+/// <c>memory_embedding_model_unavailable</c> and lets the host keep starting; the previous corpus
+/// stays current. The pass is bounded by
 /// <see cref="LocalOnnxEmbeddingOptions.InstallTimeoutSeconds" /> and stops with the host.
 /// </para>
 /// </summary>
@@ -69,7 +69,7 @@ internal sealed partial class LocalOnnxModelInstallHostedService(
         catch (Exception exception)
         {
             // Anything else is still a recorded install failure rather than an exception out of this
-            // pass; the memory seed pass decides what an unavailable model means at start.
+            // pass, so the Worker keeps starting with the embedding path closed.
             RecordFailure(
                 LocalOnnxModelErrorCodes.StoreUnavailable,
                 $"The local embedding model install failed with {exception.GetType().Name}.");

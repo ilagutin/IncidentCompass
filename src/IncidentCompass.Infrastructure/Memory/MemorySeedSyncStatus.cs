@@ -50,13 +50,16 @@ internal sealed class MemorySeedSyncStatus : IMemorySeedSyncStatus
     }
 
     /// <summary>
-    /// Records that the pass declined to publish because the configured embedding route no longer
-    /// matches the corpus.
+    /// Records that the pass declined to publish, with the code that says why: the configured
+    /// embedding route no longer matches the corpus (<c>memory_embedding_route_changed</c>), the corpus
+    /// holds more than one route (<c>memory_embedding_routes_mixed</c>), the installed local model is
+    /// not the route's model (<c>memory_embedding_model_mismatch</c>), or no usable local model is
+    /// installed (<c>memory_embedding_model_unavailable</c>).
     /// </summary>
     /// <remarks>
     /// The generation reported is the one the database still calls current, read from the corpus
     /// itself rather than from this process, because the host that published it may not be the host
-    /// that noticed the route change. The last success timestamp is left as it stands: a host that
+    /// that noticed why the pass could not publish. The last success timestamp is left as it stands: a host that
     /// has never synchronized successfully has no honest value to put there, and inventing one
     /// would claim a success that did not happen in this process.
     /// </remarks>

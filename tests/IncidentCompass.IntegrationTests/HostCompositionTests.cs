@@ -174,7 +174,9 @@ public sealed class HostCompositionTests
         Assert.DoesNotContain(services, IsMemorySeedHostedService);
         Assert.DoesNotContain(services, IsModelInstallHostedService);
         Assert.DoesNotContain(services, IsMemorySearchTool);
-        Assert.Contains(services, descriptor => descriptor.ServiceType == typeof(IMemoryCorpusStatusReader));
+        Assert.Equal(
+            typeof(MemoryCorpusStatusReader),
+            Assert.Single(services, descriptor => descriptor.ServiceType == typeof(IMemoryCorpusStatusReader)).ImplementationType);
         Assert.Contains(services, descriptor => descriptor.ServiceType == typeof(IMemorySeedSyncStatusReader));
 
         services.AddWorker(configuration);
@@ -183,6 +185,12 @@ public sealed class HostCompositionTests
         Assert.Single(services, IsModelInstallHostedService);
         Assert.Single(services, IsMemorySeedHostedService);
         Assert.Single(services, IsMemorySearchTool);
+
+        // The Worker judges the corpus against the installed local model, so its status reader
+        // replaces the Api's rather than sitting beside it.
+        Assert.Equal(
+            typeof(WorkerMemoryCorpusStatusReader),
+            Assert.Single(services, descriptor => descriptor.ServiceType == typeof(IMemoryCorpusStatusReader)).ImplementationType);
     }
 
     /// <summary>

@@ -78,9 +78,9 @@ internal sealed class LocalOnnxEmbeddingOptions
 
     /// <summary>
     /// The bound on one install pass at start, fetch and verification included. A pass that runs past
-    /// it is recorded as a named failure and the host goes on to its next hosted service. With memory
-    /// seeding enabled, that seed pass then embeds, is refused with the recorded code and fails the
-    /// host start, exactly as an unreachable OpenAI-compatible embedding endpoint does.
+    /// it is recorded as a named failure and the host keeps starting. With memory seeding enabled, the
+    /// seed pass then publishes nothing and records <c>memory_embedding_model_unavailable</c>; the
+    /// previous corpus stays current.
     /// </summary>
     public int InstallTimeoutSeconds { get; init; } = 900;
 

@@ -32,5 +32,19 @@ internal enum MemoryCorpusState
     /// The corpus matches the configured model but no current generation names it, so the provider
     /// half of its identity was never recorded. A rebuild records it.
     /// </summary>
-    Unrecorded = 4
+    Unrecorded = 4,
+
+    /// <summary>
+    /// The route is served by the in-process local model, and the installed model's id is not the
+    /// model the route names. Nothing is embedded under it; the previous corpus stays current. The
+    /// operator installs the configured model or corrects the route, which a rebuild alone cannot do.
+    /// </summary>
+    EmbeddingModelMismatch = 5,
+
+    /// <summary>
+    /// The route is served by the in-process local model, and no usable local model is installed:
+    /// the install failed, has not run, or its files no longer verify. Nothing is embedded; the
+    /// previous corpus stays current.
+    /// </summary>
+    EmbeddingModelUnavailable = 6
 }

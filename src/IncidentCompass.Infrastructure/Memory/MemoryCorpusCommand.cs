@@ -1,4 +1,5 @@
 using System.Globalization;
+using IncidentCompass.Application.Memory;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 
@@ -11,7 +12,8 @@ namespace IncidentCompass.Infrastructure.Memory;
 /// </summary>
 /// <remarks>
 /// <para>
-/// It is a console command on the existing hosts rather than an HTTP endpoint, for the same reason
+/// It is a console command on the Worker, the only host that composes the embedding model, rather
+/// than an HTTP endpoint, for the same reason
 /// the triage configuration validator is: this is a host-wide maintenance action with no
 /// tenant-scoped caller behind it, and adding a write API for it would need an administrative
 /// identity this system does not have. It also stays a read-only surface for memory as far as the
@@ -79,6 +81,16 @@ public static class MemoryCorpusCommand
     {
         var synchronizer = scopedServices.GetRequiredService<MemorySeedSynchronizer>();
         var outcome = await synchronizer.SynchronizeAsync(MemorySeedSyncMode.Rebuild, cancellationToken);
+        if (!outcome.Published)
+        {
+            // A rebuild publishes nothing only when the installed local model cannot serve the route.
+            throw new InvalidOperationException(
+                "Memory corpus rebuild published nothing: the local embedding model for route " +
+                outcome.Route.RouteId + " is " + outcome.State + " (model code " + (outcome.ModelErrorCode ?? "none") +
+                "). The previous corpus is unchanged. Run 'memory model status', install the configured model" +
+                " with 'memory model install' or correct the route, then rerun the rebuild.");
+        }
+
         Console.WriteLine(
             "Rebuilt memory corpus generation " + outcome.Generation?.ToString() + " from " +
             outcome.ItemCount.ToString(CultureInfo.InvariantCulture) + " reviewed files.");
@@ -116,6 +128,15 @@ public static class MemoryCorpusCommand
             " chunks=" + snapshot.ActiveChunkCount.ToString(CultureInfo.InvariantCulture) +
             " embeddingIdentities=" +
             snapshot.ActiveEmbeddingIdentityCount.ToString(CultureInfo.InvariantCulture));
+        if (snapshot.State is nameof(MemoryCorpusState.EmbeddingModelMismatch) or nameof(MemoryCorpusState.EmbeddingModelUnavailable))
+        {
+            Console.Error.WriteLine(
+                "The installed local embedding model cannot serve the configured route, so nothing is embedded" +
+                " under it. The active corpus is intact and still current. Run 'memory model status' to compare" +
+                " the installed and configured models.");
+            return 1;
+        }
+
         if (!snapshot.RebuildRequired)
         {
             return 0;

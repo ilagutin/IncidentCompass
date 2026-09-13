@@ -45,12 +45,17 @@ public sealed class LocalOnnxRealModelTests
         };
         using var installCancellation = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
         installCancellation.CancelAfter(TimeSpan.FromSeconds(options.InstallTimeoutSeconds));
-        var installed = await new LocalOnnxModelStore(new LocalOnnxModelFileFetcher(httpClient))
-            .EnsureInstalledAsync(options, installCancellation.Token);
+        var store = new LocalOnnxModelStore(new LocalOnnxModelFileFetcher(httpClient));
+        var installed = await store.EnsureInstalledAsync(options, installCancellation.Token);
         var installState = new LocalOnnxModelInstallState();
         installState.RecordInstalled(installed);
         using var runtime = new LocalOnnxModelRuntime(Options.Create(options));
-        var client = new LocalOnnxEmbeddingClient(installState, runtime, new UnreadConfigurationRepository());
+        var reader = new LocalOnnxInstalledModelReader(
+            Options.Create(new EmbeddingOptions { Provider = "LocalOnnx" }),
+            Options.Create(options),
+            installState,
+            store);
+        var client = new LocalOnnxEmbeddingClient(reader, runtime, new UnreadConfigurationRepository());
 
         foreach (var (language, query, relevant, unrelated) in Cases)
         {

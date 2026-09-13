@@ -10,8 +10,10 @@ namespace IncidentCompass.Infrastructure.Memory;
 /// provider identifier is the key of an entry in the configured provider table and nothing more.
 /// <para>
 /// <c>State</c> is one of <c>NotBuilt</c>, <c>Current</c>, <c>EmbeddingRouteChanged</c>,
-/// <c>MixedEmbeddingRoutes</c> or <c>Unrecorded</c>. <c>RebuildRequired</c> is true when retrieval
-/// under the configured route cannot reach this corpus until a rebuild runs.
+/// <c>MixedEmbeddingRoutes</c>, <c>Unrecorded</c>, <c>EmbeddingModelMismatch</c> or
+/// <c>EmbeddingModelUnavailable</c>. <c>RebuildRequired</c> is true when retrieval under the
+/// configured route cannot reach this corpus until a rebuild runs; it is false for the two model
+/// states, which a rebuild cannot repair.
 /// </para>
 /// </remarks>
 public sealed record MemoryCorpusSnapshot(

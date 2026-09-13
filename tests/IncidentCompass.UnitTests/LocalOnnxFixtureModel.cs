@@ -59,8 +59,7 @@ internal sealed class LocalOnnxFixtureModel : IDisposable
         try
         {
             var options = OptionsFor(fixtureManifest, directory.FullPath);
-            PlaceFixtureFile(fixtureManifest.ModelFile, directory.FullPath);
-            PlaceFixtureFile(fixtureManifest.TokenizerFile, directory.FullPath);
+            PlaceFixtureFiles(fixtureManifest, directory.FullPath);
             using var handler = ScriptedHttpMessageHandler.Refusing();
             var installed = await LocalOnnxTestArtifacts.Store(handler).EnsureInstalledAsync(options, cancellationToken);
             return new LocalOnnxFixtureModel(directory, fixtureManifest, options, installed);
@@ -72,25 +71,42 @@ internal sealed class LocalOnnxFixtureModel : IDisposable
         }
     }
 
-    public static LocalOnnxEmbeddingOptions OptionsFor(LocalOnnxModelManifest manifest, string modelDirectory) => new()
+    public static LocalOnnxEmbeddingOptions OptionsFor(
+        LocalOnnxModelManifest manifest,
+        string modelDirectory,
+        int installTimeoutSeconds = 900)
     {
-        ModelDirectory = modelDirectory,
-        ModelId = manifest.Id,
-        Revision = manifest.Revision,
-        ModelFileUrl = manifest.ModelFile.Url,
-        ModelFileSha256 = manifest.ModelFile.Sha256,
-        TokenizerFileUrl = manifest.TokenizerFile.Url,
-        TokenizerFileSha256 = manifest.TokenizerFile.Sha256,
-        Dimensions = manifest.Dimensions,
-        MaxTokens = manifest.MaxTokens,
-        QueryPrefix = manifest.QueryPrefix,
-        PassagePrefix = manifest.PassagePrefix,
-        Pooling = manifest.Pooling,
-        Normalize = manifest.Normalize,
-        License = manifest.License
-    };
+        return new LocalOnnxEmbeddingOptions
+        {
+            InstallTimeoutSeconds = installTimeoutSeconds,
+            ModelDirectory = modelDirectory,
+            ModelId = manifest.Id,
+            Revision = manifest.Revision,
+            ModelFileUrl = manifest.ModelFile.Url,
+            ModelFileSha256 = manifest.ModelFile.Sha256,
+            TokenizerFileUrl = manifest.TokenizerFile.Url,
+            TokenizerFileSha256 = manifest.TokenizerFile.Sha256,
+            Dimensions = manifest.Dimensions,
+            MaxTokens = manifest.MaxTokens,
+            QueryPrefix = manifest.QueryPrefix,
+            PassagePrefix = manifest.PassagePrefix,
+            Pooling = manifest.Pooling,
+            Normalize = manifest.Normalize,
+            License = manifest.License
+        };
+    }
 
     public void Dispose() => directory.Dispose();
+
+    /// <summary>
+    /// Places both fixture files where the store expects them in <paramref name="modelDirectory" />,
+    /// without writing a manifest, as an operator installing offline would.
+    /// </summary>
+    public static void PlaceFixtureFiles(LocalOnnxModelManifest fixtureManifest, string modelDirectory)
+    {
+        PlaceFixtureFile(fixtureManifest.ModelFile, modelDirectory);
+        PlaceFixtureFile(fixtureManifest.TokenizerFile, modelDirectory);
+    }
 
     private static void PlaceFixtureFile(LocalOnnxModelArtifact artifact, string modelDirectory)
     {

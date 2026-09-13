@@ -102,6 +102,11 @@ public static class Setup
         services.AddEmbeddingOptions(configuration);
         services.AddEmbeddingAdapters();
         services.AddLocalOnnxModelStore(configuration);
+
+        // The Worker judges the corpus against the installed local model; the Api cannot, so the
+        // Worker's status reader replaces the one AddInfrastructure binds for both hosts.
+        services.TryAddSingleton<WorkerMemoryEmbeddingRouteResolver>();
+        services.Replace(ServiceDescriptor.Scoped<IMemoryCorpusStatusReader, WorkerMemoryCorpusStatusReader>());
         services.TryAddScoped<MemorySeedSynchronizer>();
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, MemorySeedHostedService>());
         services.AddMemorySearchTool();

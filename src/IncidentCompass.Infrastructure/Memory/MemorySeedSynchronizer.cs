@@ -26,11 +26,18 @@ namespace IncidentCompass.Infrastructure.Memory;
 /// known only from a real response. A pass whose vectors disagree with the corpus it is adding to
 /// stops before the reconciliation transaction, so nothing partial reaches the database.
 /// </para>
+/// <para>
+/// A route served by the in-process local model is resolved against the installed model first. When
+/// that model cannot serve the route, because its id is another model's or because no usable model
+/// is installed, the pass publishes nothing in either mode and embeds nothing, and the previous
+/// corpus stays current. A rebuild cannot repair that; installing the configured model can.
+/// </para>
 /// </remarks>
 internal sealed class MemorySeedSynchronizer(
     IOptions<MemorySeedOptions> options,
     IHostEnvironment environment,
     ITriageConfigurationRepository configurationRepository,
+    WorkerMemoryEmbeddingRouteResolver routeResolver,
     IEmbeddingClient embeddingClient,
     IMemoryRepository memoryRepository)
 {
@@ -40,9 +47,15 @@ internal sealed class MemorySeedSynchronizer(
     {
         var settings = options.Value;
         var configuration = await configurationRepository.GetCurrentAsync(cancellationToken);
-        var route = MemoryEmbeddingRouteResolver.Resolve(configuration);
+        var resolution = await routeResolver.ResolveAsync(configuration, cancellationToken);
+        var route = resolution.Route;
         var inventory = await memoryRepository.GetCorpusInventoryAsync(
             settings.TenantId, settings.Owner, cancellationToken);
+        if (resolution.BlockedState is { } modelState)
+        {
+            return Blocked(modelState, inventory, route, resolution.ModelErrorCode);
+        }
+
         var state = MemoryCorpusStateEvaluator.Evaluate(route.ProviderId, route.Model, inventory);
         if (mode == MemorySeedSyncMode.Incremental && RequiresRebuild(state))
         {
@@ -84,8 +97,9 @@ internal sealed class MemorySeedSynchronizer(
     private static MemorySeedSyncOutcome Blocked(
         MemoryCorpusState state,
         MemoryCorpusInventory inventory,
-        MemoryEmbeddingRoute route) =>
-        new(Published: false, state, inventory.Current?.Generation, route, inventory.ActiveItemCount);
+        MemoryEmbeddingRoute route,
+        string? modelErrorCode = null) =>
+        new(Published: false, state, inventory.Current?.Generation, route, inventory.ActiveItemCount, modelErrorCode);
 
     /// <summary>
     /// Picks the one identity this pass is allowed to publish, or null when the vectors it just

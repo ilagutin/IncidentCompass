@@ -17,7 +17,8 @@ public sealed class ModelHostArchitectureTests
         "IncidentCompass.Infrastructure.EmbeddingModels",
         "IEmbeddingClient",
         "AddEmbeddingHost",
-        "MemoryCorpusCommand"
+        "MemoryCorpusCommand",
+        "MemoryModelCommand"
     ];
 
     [Fact]
