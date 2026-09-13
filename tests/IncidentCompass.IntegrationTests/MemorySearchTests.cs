@@ -288,7 +288,7 @@ public sealed class MemorySearchTests(PostgresRepositoryFixture postgres)
         var embeddingRoute = configuration.Routes["memory-embed"];
         var content = await File.ReadAllTextAsync(Path.Combine(FindRepoRoot(), "samples", "runbooks", "checkout-timeout.md"), TestContext.Current.CancellationToken);
         var embedding = await embeddingClient.CreateEmbeddingAsync(
-            new EmbeddingRequest(content, embeddingRoute.Model, "memory-test-seed"),
+            new EmbeddingRequest(content, embeddingRoute.Model, "memory-test-seed", EmbeddingInputKind.Passage),
             TestContext.Current.CancellationToken);
         var item = new MemorySeedItem(
             Guid.NewGuid(),

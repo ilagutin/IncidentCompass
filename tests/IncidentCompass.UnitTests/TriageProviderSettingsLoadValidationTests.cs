@@ -156,6 +156,66 @@ public sealed class TriageProviderSettingsLoadValidationTests
     }
 
     /// <summary>
+    /// A <c>LocalOnnx</c> entry is not counted toward the single-provider default, so the shipped
+    /// chat provider beside it keeps the host-wide endpoint and credential, and the local entry
+    /// itself needs neither.
+    /// </summary>
+    [Fact]
+    public void OpenAiCompatibleAndLocalOnnxProviders_KeepTheHostDefault()
+    {
+        var providers = new Dictionary<string, TriageProviderSettings>(StringComparer.Ordinal)
+        {
+            ["local-oai"] = new("OpenAICompatible", Endpoint: null, ApiKeySecretRef: null),
+            ["local-embed"] = new("LocalOnnx", Endpoint: null, ApiKeySecretRef: null)
+        };
+
+        TriageProviderSettingsLoadValidator.Validate(providers, new EmptySecretReader());
+    }
+
+    [Fact]
+    public void LocalOnnxProvider_BesideTwoOpenAiCompatibleProviders_NeedsNoEndpointOrSecretRef()
+    {
+        var providers = TwoProviders("https://provider-b.example", SecretRef);
+        providers["local-embed"] = new("LocalOnnx", Endpoint: null, ApiKeySecretRef: null);
+
+        TriageProviderSettingsLoadValidator.Validate(providers, ReaderWithSecret());
+    }
+
+    /// <summary>
+    /// A <c>Mock</c> entry still counts, exactly as before the local kind existed: an
+    /// <c>OpenAICompatible</c> entry beside it gets no host-wide default endpoint.
+    /// </summary>
+    [Fact]
+    public void MockAndOpenAiCompatibleProviders_StillGetNoHostDefault()
+    {
+        var providers = new Dictionary<string, TriageProviderSettings>(StringComparer.Ordinal)
+        {
+            ["local-oai"] = new("OpenAICompatible", Endpoint: null, ApiKeySecretRef: null),
+            ["mock"] = new("Mock", Endpoint: null, ApiKeySecretRef: null)
+        };
+
+        var exception = Assert.Throws<TriageConfigurationLoadException>(() =>
+            TriageProviderSettingsLoadValidator.Validate(providers, new EmptySecretReader()));
+
+        Assert.Contains("Providers.local-oai.Endpoint", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("more than one", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ProviderWithAnUnknownKind_FailsAtLoad()
+    {
+        var providers = new Dictionary<string, TriageProviderSettings>(StringComparer.Ordinal)
+        {
+            ["local-embed"] = new("LocalOnyx", Endpoint: null, ApiKeySecretRef: null)
+        };
+
+        var exception = Assert.Throws<TriageConfigurationLoadException>(() =>
+            TriageProviderSettingsLoadValidator.Validate(providers, new EmptySecretReader()));
+
+        Assert.Contains("Providers.local-embed.Kind", exception.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// The route-level check that a provider id names a real entry already existed; this pins it
     /// against the full load path a host runs at startup, so making <c>Providers</c> real cannot
     /// quietly weaken it.

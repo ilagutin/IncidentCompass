@@ -3,6 +3,7 @@ using IncidentCompass.Application.Core.ModelClients;
 using IncidentCompass.Application.Remediation;
 using IncidentCompass.Application.Tickets;
 using IncidentCompass.Infrastructure;
+using IncidentCompass.Infrastructure.Embeddings.LocalOnnx;
 using IncidentCompass.Infrastructure.Tickets;
 using IncidentCompass.TestSupport;
 using IncidentCompass.Worker;
@@ -298,10 +299,61 @@ public sealed class HostOptionsValidationTests
 
         var embeddingClient = host.Services.GetRequiredService<IEmbeddingClient>();
         var response = await embeddingClient.CreateEmbeddingAsync(
-            new EmbeddingRequest("dimension test", "mock-embedding", CorrelationId: null),
+            new EmbeddingRequest("dimension test", "mock-embedding", CorrelationId: null, Kind: EmbeddingInputKind.Query),
             TestContext.Current.CancellationToken);
 
         Assert.Equal(1024, response.Vector.Count);
+    }
+
+    /// <summary>
+    /// <c>LocalOnnx</c> parses as a provider kind because both gateways share the parser, but there is
+    /// no local chat adapter, so naming it for the model gateway has to stop the host rather than
+    /// reach the selector.
+    /// </summary>
+    [Fact]
+    public async Task HostServices_RejectLocalOnnxAsTheModelGatewayProviderOnStart()
+    {
+        using var host = CreateHostWithConfiguration(new Dictionary<string, string?>
+        {
+            ["IncidentCompass:ModelGateway:Provider"] = "LocalOnnx"
+        });
+
+        var exception = await Record.ExceptionAsync(() => host.StartAsync());
+
+        Assert.NotNull(exception);
+        Assert.Contains(
+            GetOptionsValidationFailures(exception),
+            failure => failure.Contains("LocalOnnx", StringComparison.Ordinal) &&
+                       failure.Contains("embedding-only", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// The embedding gateway's selector arm for <c>LocalOnnx</c> resolves the local adapter, and with
+    /// no model installed its first call fails with the named code rather than answering.
+    /// </summary>
+    [Fact]
+    public async Task EmbeddingHost_SelectsTheLocalOnnxAdapter_WhichRefusesACallAsNotInstalled()
+    {
+        using var host = CreateEmbeddingHostWithConfiguration(new Dictionary<string, string?>
+        {
+            ["IncidentCompass:Embeddings:Provider"] = "LocalOnnx"
+        });
+        await host.StartAsync();
+
+        using var scope = host.Services.CreateScope();
+        var embeddingClient = scope.ServiceProvider.GetRequiredService<IEmbeddingClient>();
+        var exception = await Assert.ThrowsAsync<EmbeddingClientException>(() =>
+            embeddingClient.CreateEmbeddingAsync(
+                new EmbeddingRequest(
+                    "checkout timeout",
+                    "intfloat/multilingual-e5-small",
+                    "local-onnx-selector-test",
+                    EmbeddingInputKind.Query),
+                TestContext.Current.CancellationToken));
+
+        Assert.IsType<LocalOnnxEmbeddingClient>(embeddingClient);
+        Assert.Equal(LocalOnnxEmbeddingProvider.ModelNotInstalledErrorCode, exception.ErrorCode);
+        Assert.Equal(LocalOnnxEmbeddingProvider.Name, exception.Provider);
     }
 
     [Fact]

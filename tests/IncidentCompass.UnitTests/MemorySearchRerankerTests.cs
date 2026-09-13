@@ -108,6 +108,22 @@ public sealed class MemorySearchRerankerTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_EmbedsTheSearchTextAsAQuery()
+    {
+        var embedding = new CountingEmbeddingClient();
+        var tool = new MemorySearchTool(embedding, new CountingMemoryRepository([]));
+        var validation = tool.Validate(JsonSerializer.SerializeToElement(new { query = "checkout timeout" }));
+
+        await tool.ExecuteAsync(
+            Context(Configuration()),
+            validation.SanitizedArguments,
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(EmbeddingInputKind.Query, embedding.LastRequest!.Kind);
+        Assert.Equal("checkout timeout", embedding.LastRequest.Input);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_MissingEmbeddingRouteFailsClosedBeforeEmbeddingOrMemorySearch()
     {
         var embedding = new CountingEmbeddingClient();
@@ -216,11 +232,14 @@ public sealed class MemorySearchRerankerTests
     {
         public int CallCount { get; private set; }
 
+        public EmbeddingRequest? LastRequest { get; private set; }
+
         public Task<EmbeddingResponse> CreateEmbeddingAsync(
             EmbeddingRequest request,
             CancellationToken cancellationToken)
         {
             CallCount++;
+            LastRequest = request;
             return Task.FromResult(new EmbeddingResponse([1f, 0f], request.Model, "mock", 2, request.CorrelationId));
         }
     }

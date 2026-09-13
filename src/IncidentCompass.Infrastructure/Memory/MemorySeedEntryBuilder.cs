@@ -36,7 +36,12 @@ internal sealed class MemorySeedEntryBuilder(
         }
 
         var embedding = await embeddingClient.CreateEmbeddingAsync(
-            new EmbeddingRequest(file.Content, route.Model, "memory-seed:" + file.Source, route.ProviderId),
+            new EmbeddingRequest(
+                file.Content,
+                route.Model,
+                "memory-seed:" + file.Source,
+                EmbeddingInputKind.Passage,
+                route.ProviderId),
             cancellationToken);
         var chunk = new MemorySeedChunk(
             MemorySeedFileLoader.DeterministicId(

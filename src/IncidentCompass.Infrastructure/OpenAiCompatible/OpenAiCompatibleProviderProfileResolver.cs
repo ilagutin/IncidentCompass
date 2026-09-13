@@ -22,6 +22,12 @@ namespace IncidentCompass.Infrastructure.OpenAiCompatible;
 /// key or moving an endpoint must not have to drain every in-flight job first.
 /// </para>
 /// <para>
+/// Whether the host-wide default profile may fill an entry's missing endpoint or credential is
+/// <see cref="ProviderKindHostDefaultRule" />, the same rule
+/// <see cref="Intake.TriageProviderSettingsLoadValidator" /> applies at load: at most one counted
+/// provider, where <c>LocalOnnx</c> entries are not counted and <c>Mock</c> entries are.
+/// </para>
+/// <para>
 /// A blank provider id resolves to the host-wide defaults without reading configuration at all.
 /// That is the path a direct <c>IAiModelClient</c> caller outside the governed investigation takes,
 /// and it is what keeps a host that has no triage configuration file able to make a model call.
@@ -80,7 +86,7 @@ internal sealed class OpenAiCompatibleProviderProfileResolver(
                 $"Route provider '{providerId}' has Kind '{provider.Kind}', which this adapter cannot serve.");
         }
 
-        var hostDefaultApplies = configuration.Providers.Count <= 1;
+        var hostDefaultApplies = ProviderKindHostDefaultRule.HostDefaultApplies(configuration.Providers);
         return CreateProfile(
             ResolveBaseUrl(providerId, provider, defaults, hostDefaultApplies, createConfigurationException),
             ResolveApiKey(providerId, provider, defaults, hostDefaultApplies, createConfigurationException),

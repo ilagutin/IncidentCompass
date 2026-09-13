@@ -219,18 +219,23 @@ What is per-provider and what is host-wide:
 The fallback has one rule, and it is what keeps every existing configuration working unchanged:
 
 > `IncidentCompass:ModelGateway:OpenAiCompatible` and `IncidentCompass:Embeddings:OpenAiCompatible`
-> are the **default provider profile**. A configuration that declares exactly one provider keeps
-> using them; that provider's `Endpoint` and `ApiKeySecretRef` override the default where they
-> resolve, and the default fills whatever they leave. A configuration that declares more than one
-> provider gets no default at all: every `OpenAICompatible` entry must name its own `Endpoint` and
-> its own `ApiKeySecretRef`, and each named variable must be set.
+> are the **default provider profile**. A configuration that declares exactly one OpenAI-compatible
+> provider, and no `Mock` provider beside it, keeps using them; that provider's `Endpoint` and
+> `ApiKeySecretRef` override the default where they resolve, and the default fills whatever they
+> leave. A configuration that declares more than one provider, counting `OpenAICompatible` and
+> `Mock` entries, gets no default at all: every `OpenAICompatible` entry must name its own
+> `Endpoint` and its own `ApiKeySecretRef`, and each named variable must be set. `LocalOnnx`
+> entries are not counted.
 
 The line is drawn at the provider count rather than per entry because the failure a default would
 cause in a multi-provider configuration is not a missing call. It is the first provider's credential
 arriving at the second provider's endpoint. Refusing to start is the only safe answer to that, so a
 multi-provider configuration missing an endpoint or a resolvable credential fails while the host is
-starting, not at the first model call. A `Mock` provider entry is exempt, because it has no endpoint
-to reach and no credential to present.
+starting, not at the first model call. A `Mock` provider entry is exempt from the endpoint and
+credential requirement, because it has no endpoint to reach and no credential to present, but it
+still counts. A `LocalOnnx` entry is exempt from both the requirement and the count: it names the
+in-process embedding model, so it has no endpoint, no credential, and no way to receive another
+provider's credential. The load validator and the call-time resolver apply the same counting rule.
 
 The provider table is read from the currently loaded configuration rather than from the snapshot a
 running job is pinned to. A job's route - its model, its ceilings, its reasoning preference - stays

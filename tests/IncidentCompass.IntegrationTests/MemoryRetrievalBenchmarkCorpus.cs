@@ -52,7 +52,7 @@ public sealed record MemoryRetrievalBenchmarkCorpus(
             foreach (var fixtureChunk in fixtureItem.Chunks.OrderBy(static chunk => chunk.Position))
             {
                 var embedding = await embeddingClient.CreateEmbeddingAsync(
-                    new EmbeddingRequest(fixtureChunk.Text, EmbeddingModel, "memory-benchmark-seed"),
+                    new EmbeddingRequest(fixtureChunk.Text, EmbeddingModel, "memory-benchmark-seed", EmbeddingInputKind.Passage),
                     cancellationToken);
                 if (embedding.Provider != "mock" || embedding.Vector.Count != EmbeddingDimensions)
                 {
