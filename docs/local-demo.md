@@ -1,7 +1,8 @@
 # Local Demo Walkthrough
 
 The demo runs PostgreSQL, the API, the Worker, a stock OpenTelemetry Collector and the HTTP-only
-Tester from Docker Compose. The default path uses OpenAI-compatible model and embedding providers.
+Tester from Docker Compose. The default path uses an OpenAI-compatible chat provider and embeds
+memory with an in-process model on the Worker, so the host-side model server answers chat only.
 Mock providers are available only through the explicit `-Mock` switch for tests or deterministic
 backend checks.
 
@@ -52,8 +53,9 @@ PostgreSQL initialization and container startup rather than by generation.
   IncidentCompass__ConfigSource__Path=/app/config/incidentcompass.config.json plus the memory seed
   tenant and owner that its memory health endpoints read.
 - worker: builds from src/IncidentCompass.Worker/Dockerfile, runs as the non-root incidentcompass
-  user, copies the same config/ and samples/, enables sample memory seeding, and uses the same
-  explicit config and sample-source paths inside the image.
+  user, copies the same config/ and samples/, enables sample memory seeding, uses the same
+  explicit config and sample-source paths inside the image, and mounts the `embedding-models` named
+  volume at `/app/models` for the local embedding model.
 - otel-collector: runs the pinned stock OpenTelemetry Collector Contrib image under the demo profile,
   receives OTLP/HTTP on the internal `otel-collector:4318` address and forwards uncompressed traces and
   logs through its stock `otlphttp` exporter to the API's native OTLP routes. It does not transform or
@@ -107,20 +109,46 @@ files stay identical while the vector space moves. Synchronization notices and s
 publishing half a corpus: the previous one stays searchable and the memory-sync health status reports
 `memory_embedding_route_changed`. Run `memory rebuild` on the Worker to re-embed everything under
 the new route, and `memory status` on the Worker to see the configured route beside the one that
-built the corpus. The shared Compose environment anchor still passes the `Embeddings__*` settings to
+built the corpus. The local model adds two states of its own, `memory_embedding_model_mismatch` for
+an installed model that is not the route's model and `memory_embedding_model_unavailable` for no usable
+installed model; `docs/single-host-production.md`, "Local embedding model", says what to do about each.
+The shared Compose environment anchor still passes the `Embeddings__*` settings to
 the api service as well; the API composes no embedding client and does not use them beyond
 validating the shape of the embeddings section at startup.
 
 ## Model Configuration
 
-Default Docker Compose values point at a host-side OpenAI-compatible server:
+Default Docker Compose values point chat at a host-side OpenAI-compatible server and memory
+embeddings at the in-process model on the Worker:
 
 - `INCIDENTCOMPASS_LLM_BASE_URL=http://host.docker.internal:1234`
 - `INCIDENTCOMPASS_LLM_MODEL=local-model`
-- `INCIDENTCOMPASS_EMBEDDINGS_BASE_URL=http://host.docker.internal:1234`
-- `INCIDENTCOMPASS_EMBEDDINGS_MODEL=local-embedding-model`
+- `INCIDENTCOMPASS_EMBEDDINGS_PROVIDER=LocalOnnx`
+- `INCIDENTCOMPASS_EMBEDDINGS_PROVIDER_ID=local-embed`
+- `INCIDENTCOMPASS_EMBEDDINGS_MODEL=intfloat/multilingual-e5-small`
 
 Set these in `.env` before starting the stack when your provider uses different model ids or paths.
+
+An LM Studio or other embeddings server is not needed on this path. The Worker's first start downloads
+the embedding model, about 123 MB, from `huggingface.co` into the `embedding-models` volume before its
+memory seed pass, and its start waits for that for up to 900 seconds. The Worker's Compose health check
+only looks for the running process, so on a first run the Tester can start before the corpus is seeded.
+Later starts verify the files already in the volume and download nothing; `down --volumes` removes the
+volume with the database, and the next start downloads the model again.
+
+`.env.example` carries the same three embedding values, so a `.env` copied from it embeds with the local
+model. Changing `INCIDENTCOMPASS_EMBEDDINGS_MODEL` on its own names a model the Worker has not installed:
+the seed pass reports `memory_embedding_model_mismatch`, and every `memory_search` waits as it would
+during a provider outage.
+
+To embed through an OpenAI-compatible server instead, set `INCIDENTCOMPASS_EMBEDDINGS_PROVIDER` to
+`OpenAICompatible`, `INCIDENTCOMPASS_EMBEDDINGS_PROVIDER_ID` to `local-oai`,
+`INCIDENTCOMPASS_EMBEDDINGS_MODEL` to that server's model id, and, where they differ from
+`http://host.docker.internal:1234`, `/v1/embeddings` and `local-dev-key`,
+`INCIDENTCOMPASS_EMBEDDINGS_BASE_URL`, `INCIDENTCOMPASS_EMBEDDINGS_PATH` and
+`INCIDENTCOMPASS_EMBEDDINGS_API_KEY`. `.env.example` carries those three lines for this case; the local
+model ignores them. A corpus seeded under one route is not searchable under the other until
+`memory rebuild` re-embeds it.
 
 The normal demo runs the shipped local-safe profile unchanged.
 [Quickstart](quickstart.md#local-configuration) lists those ceilings, states what each one bounds and
@@ -161,7 +189,10 @@ One run of this contract is published with its per-attempt record:
 [Measured evaluation run](evaluation-evidence.md) pins the revision, the model and the numbers it
 produced, and states what they do not establish.
 
-Run the evaluator against a host-side OpenAI-compatible chat and embedding provider with:
+The evaluation stack embeds through that server, not through the in-process model:
+`compose.evaluation.yml` selects the OpenAI-compatible embedding adapter, because the evaluation
+configuration's memory route names `local-oai`. Run the evaluator against a host-side
+OpenAI-compatible chat and embedding provider with:
 
 ~~~powershell
 pwsh -NoProfile -File scripts/real-local-llm-smoke.ps1 `

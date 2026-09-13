@@ -10,6 +10,8 @@ services:
     ports: !reset []
     environment:
       IncidentCompass__ConfigSource__Path: /app/evaluations/triage/incidentcompass.config.json
+      # Same model default as the tester below, so the corpus status judges the route the Worker embeds under.
+      INCIDENTCOMPASS_EMBEDDINGS_MODEL: ${INCIDENTCOMPASS_EMBEDDINGS_MODEL:-local-embedding-model}
       IncidentCompass__ModelGateway__OpenAiCompatible__TimeoutSeconds: ${INCIDENTCOMPASS_EVALUATION_PROVIDER_TIMEOUT_SECONDS:-420}
       IncidentCompass__Embeddings__OpenAiCompatible__TimeoutSeconds: ${INCIDENTCOMPASS_EVALUATION_PROVIDER_TIMEOUT_SECONDS:-420}
     volumes:
@@ -18,6 +20,13 @@ services:
   worker:
     environment:
       IncidentCompass__ConfigSource__Path: /app/evaluations/triage/incidentcompass.config.json
+      # The evaluation configuration's memory route names the OpenAI-compatible provider, so this
+      # stack keeps that embedding adapter rather than the base file's in-process default.
+      IncidentCompass__Embeddings__Provider: OpenAICompatible
+      # The base file defaults the model to the in-process model's id, which an OpenAI-compatible server
+      # does not serve. The evaluation route's own default is used instead, as the tester below uses it.
+      # The route names local-oai literally, so INCIDENTCOMPASS_EMBEDDINGS_PROVIDER_ID is not read here.
+      INCIDENTCOMPASS_EMBEDDINGS_MODEL: ${INCIDENTCOMPASS_EMBEDDINGS_MODEL:-local-embedding-model}
       IncidentCompass__ModelGateway__OpenAiCompatible__TimeoutSeconds: ${INCIDENTCOMPASS_EVALUATION_PROVIDER_TIMEOUT_SECONDS:-420}
       IncidentCompass__Embeddings__OpenAiCompatible__TimeoutSeconds: ${INCIDENTCOMPASS_EVALUATION_PROVIDER_TIMEOUT_SECONDS:-420}
       IncidentCompass__Telegram__Enabled: "false"

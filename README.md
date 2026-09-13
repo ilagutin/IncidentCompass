@@ -121,13 +121,14 @@ actually proved.
 
 ## Try the local flow
 
-Prerequisites: Docker Compose, the .NET 10 SDK for configuration validation, PowerShell and
-OpenAI-compatible chat and embedding endpoints. On Windows and macOS, Compose uses
-`host.docker.internal:1234` by default.
+Prerequisites: Docker Compose, the .NET 10 SDK for configuration validation, PowerShell and an
+OpenAI-compatible chat endpoint. On Windows and macOS, Compose uses `host.docker.internal:1234` by
+default. Memory embeddings run in-process on the Worker, which downloads its model, about 123 MB, from
+Hugging Face on its first start.
 
 ~~~powershell
 Copy-Item .env.example .env
-# Set exact chat and embedding model ids in .env.
+# Set the exact chat model id in .env.
 dotnet run --project src/IncidentCompass.Api -- config validate
 powershell -ExecutionPolicy Bypass -File scripts/demo.ps1
 ~~~

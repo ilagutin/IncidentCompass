@@ -14,6 +14,9 @@ an HA topology or a disaster-recovery site, and this project does not offer supp
 - Enough local capacity for PostgreSQL, the API, the Worker, container images and at least eight
   database dumps during rotation. As an initial planning assumption, reserve 4 CPU cores, 8 GiB RAM
   and 20 GiB plus database and backup growth. Compose does not claim or enforce sizing for a workload.
+- Outbound HTTPS from the Worker to `huggingface.co` on its first start with an empty model volume,
+  unless the model is installed offline; see "Local embedding model". The in-process embedding model
+  adds roughly its file size plus 100 to 200 MB to the Worker's memory and about 123 MB of disk.
 - Protected host storage for `.env.production`. This deployment uses a host-owned environment file,
   not a managed secret store. Restrict its filesystem permissions and exclude it from backups that do
   not have equivalent protection.
@@ -28,6 +31,17 @@ controls. PostgreSQL is intended only for local operator access and must remain 
 Copy `.env.production.example` to the ignored `.env.production` file and replace every placeholder.
 The Development database identity and password, disabled API-key auth, demo model names and keys,
 missing provider, source or GitHub bindings, and incomplete enabled Telegram bindings are rejected.
+
+Memory embeddings default to the in-process model: `INCIDENTCOMPASS_EMBEDDINGS_PROVIDER=LocalOnnx`,
+`INCIDENTCOMPASS_EMBEDDINGS_PROVIDER_ID=local-embed` and
+`INCIDENTCOMPASS_EMBEDDINGS_MODEL=intfloat/multilingual-e5-small`, with no endpoint or key. To embed
+through an OpenAI-compatible server instead, set the provider to `OpenAICompatible`, the provider id to
+`local-oai`, the model to that server's model id, and `INCIDENTCOMPASS_EMBEDDINGS_BASE_URL`,
+`INCIDENTCOMPASS_EMBEDDINGS_PATH` and `INCIDENTCOMPASS_EMBEDDINGS_API_KEY`. Preflight rejects a
+provider other than those two, a provider id that does not match the provider, and a demo or
+placeholder embedding model name; for `OpenAICompatible` only, it also rejects a missing embedding
+endpoint, path or key, an endpoint that is not HTTPS without the loopback override, a malformed path and
+the demo key.
 
 Generate a new 32 to 128 character base64url API key in a trusted local secret-handling process and
 store only its 64-character SHA-256 digest as `INCIDENTCOMPASS_API_KEY_SHA256`. Keep the raw key in the
@@ -173,8 +187,176 @@ docker @compose run --rm worker memory status
 docker @compose run --rm worker memory rebuild
 ```
 
-`memory status` exits 1 when a rebuild is needed and 0 otherwise. `docs/quickstart.md`, "Changing The
-Embedding Route", describes what a rebuild publishes and what it leaves current when it fails.
+`memory status` exits 1 when a rebuild is needed, and when the installed local embedding model cannot
+serve the configured route, and 0 otherwise. `docs/quickstart.md`, "Changing The Embedding Route",
+describes what a rebuild publishes and what it leaves current when it fails.
+
+## Local embedding model
+
+The Worker embeds memory with the in-process model unless the environment file selects
+`OpenAICompatible`. `docs/model-gateway.md`, "Local Embedding Model", describes the model, its store and
+its identity; this section is what an operator does with them.
+
+**Where it lives.** The `embedding-models` named volume, mounted at `/app/models` in the worker
+container only. It holds `manifest.json`, `manifest.previous.json` once an install has replaced a model,
+and each file at `artifacts/<sha256>/<file name>`. The Worker image creates `/app/models` owned by its
+non-root user, so a fresh volume is writable by the Worker. `scripts/postgres-backup.ps1` does not back
+the volume up, because its contents are reproducible from the pinned source; `down --volumes` deletes it
+and the next start downloads the model again.
+
+**First start.** A Worker starting on an empty volume downloads the two files, about 123 MB, over HTTPS
+from `huggingface.co` and the HTTPS location it redirects to, verifies both digests and writes the
+manifest, all before its memory seed pass. Its start waits for that for up to
+`IncidentCompass__Embeddings__LocalOnnx__InstallTimeoutSeconds`, 900 seconds by default. Later starts
+hash the installed files again and download nothing.
+
+**Offline install.** On a host without that outbound access, place the two files in the volume before
+the first start, each at `artifacts/<sha256>/<file name>` under `/app/models`, where `<sha256>` is the
+file's lowercase SHA-256 and the name is the last segment of its pinned URL:
+
+- `artifacts/dd476dd0c2514e9b9be83aeb3853fac0763e0bdf4a71645407587d77c48a2d88/model_qint8_avx512_vnni.onnx`
+- `artifacts/cfc8146abe2a0488e9e2a0c56de7952f7c11ab059eca145a0a727afce0db2865/sentencepiece.bpe.model`
+
+Download the two files from their pinned URLs on a machine that can, and put them in a host directory,
+for example `D:\EmbeddingModelFiles`. Then copy them into the volume from a one-off worker container
+that mounts that directory read-only. The container runs as the image's non-root `incidentcompass`
+user, so the directories and files it creates are owned by the user the Worker runs as:
+
+```powershell
+$model = "/app/models/artifacts/dd476dd0c2514e9b9be83aeb3853fac0763e0bdf4a71645407587d77c48a2d88"
+$tokenizer = "/app/models/artifacts/cfc8146abe2a0488e9e2a0c56de7952f7c11ab059eca145a0a727afce0db2865"
+docker @compose run --rm --no-deps --entrypoint sh --volume D:\EmbeddingModelFiles:/model-files:ro worker `
+  -c "mkdir -p $model $tokenizer && cp /model-files/model_qint8_avx512_vnni.onnx $model/ && cp /model-files/sentencepiece.bpe.model $tokenizer/"
+```
+
+Copying with `docker cp` instead writes the files as root. The Worker can still read them, but a later
+`memory model install` cannot create its own directories under a root-owned `artifacts` directory, so
+prefer the container above.
+
+The Worker verifies files it finds there instead of downloading them, and writes the manifest itself.
+The files must be readable by the Worker's user and `/app/models` must stay writable by it. A file whose
+digest is wrong is refused and left in place, never replaced, so remove it by hand. Where outbound access
+exists only for a maintenance window, `memory model install` can run in that window instead.
+
+**Commands.** Both run in a one-off worker container before any host starts, and both require the host
+embedding provider to be `LocalOnnx`:
+
+```powershell
+docker @compose run --rm worker memory model status
+docker @compose run --rm worker memory model install
+```
+
+`memory model status` prints the installed model's id, revision, license, encoded identity and both
+digests, the configured memory route, and the model the active corpus was built with. It exits 1 when no
+model is installed, when the installed id is not the model the route names, or when the active corpus
+was not built under the installed model's encoded identity. Because of that last check it also exits 1
+on a host whose corpus has not been seeded yet, and after an install until `memory rebuild` has
+re-embedded the corpus.
+
+`memory model install` installs the model the host settings describe beside the installed one: it
+verifies or downloads both files, then replaces `manifest.json` and keeps the manifest it replaced as
+`manifest.previous.json`. Exactly one previous manifest is kept, so the next install overwrites it, and
+no artifact directory is ever deleted. When the configured model is already active it verifies both
+files and changes nothing. It is bounded by `InstallTimeoutSeconds` like the start-time pass; a run that
+times out prints `embedding_model_install_timed_out` and leaves the active manifest in place. Before it
+places files, an install removes temporary `.partial` downloads older than `InstallTimeoutSeconds`, which
+only a killed install leaves behind.
+
+**Changing the installed model.** `memory model install` installs the model the Worker's
+`IncidentCompass:Embeddings:LocalOnnx` settings describe. Neither compose file passes those settings to
+the worker except `ModelDirectory`, so with the shipped files it installs the pinned default, which is
+what moves an existing volume to a new release's default. To install another model or revision, add
+the settings to the worker in an override file of your own and pass it to every command, including
+the long-running Worker:
+
+```yaml
+# compose.embedding-model.yml
+services:
+  worker:
+    environment:
+      IncidentCompass__Embeddings__LocalOnnx__ModelId: <model id>
+      IncidentCompass__Embeddings__LocalOnnx__Revision: <revision>
+      IncidentCompass__Embeddings__LocalOnnx__ModelFileUrl: https://<host>/<path>/<model file>
+      IncidentCompass__Embeddings__LocalOnnx__ModelFileSha256: <64 lowercase hex>
+      IncidentCompass__Embeddings__LocalOnnx__TokenizerFileUrl: https://<host>/<path>/<tokenizer file>
+      IncidentCompass__Embeddings__LocalOnnx__TokenizerFileSha256: <64 lowercase hex>
+```
+
+```powershell
+$compose += @("-f", "compose.embedding-model.yml")
+```
+
+`ModelId`, `Revision`, `ModelFileUrl`, `ModelFileSha256`, `TokenizerFileUrl` and `TokenizerFileSha256`
+change together, and so does the route model: `INCIDENTCOMPASS_EMBEDDINGS_MODEL` in `.env.production`
+must equal the new `ModelId`. A model that differs in more than its file also needs `Dimensions`,
+`MaxTokens`, `QueryPrefix`, `PassagePrefix` or `License` set the same way. Both URLs must be absolute
+HTTPS URLs ending in a file name, both digests must be lowercase SHA-256 values and must differ, and the
+Worker refuses to start on a value that breaks one of those rules. Preflight does not read the override
+file.
+
+A running Worker keeps the install state it read when it started, so every procedure that changes the
+volume ends by restarting the Worker:
+
+1. `docker @compose run --rm worker memory model install`.
+2. Set `INCIDENTCOMPASS_EMBEDDINGS_MODEL` in `.env.production` to the installed model's id if it changed,
+   and rerun preflight.
+3. `docker @compose run --rm worker memory rebuild`, which re-embeds every reviewed file under the new
+   model's encoded identity and publishes one new generation.
+4. `docker @compose up --detach --force-recreate worker`.
+
+The restart in step 4 is also what updates the reported state: a `memory rebuild` run as a command does
+not update the synchronization status the API reads, so the API keeps reporting the old state until the
+restarted Worker's start pass records the new one.
+
+**Rolling back an install.** The previous model's files are still in the volume. Stop the Worker, restore
+the previous manifest and start the Worker again:
+
+```powershell
+docker @compose stop worker
+docker @compose run --rm --entrypoint cp worker /app/models/manifest.previous.json /app/models/manifest.json
+docker @compose start worker
+```
+
+If no `memory rebuild` ran since the install, the previous corpus generation is still current and matches
+the restored model again. If one ran, the current corpus was built with the newer model, and the Worker
+reports `memory_embedding_route_changed` until `memory rebuild` re-embeds it with the restored one;
+restart the Worker after that rebuild, as above. If the install came with a changed
+`INCIDENTCOMPASS_EMBEDDINGS_MODEL`, set it back as well.
+
+**When the model cannot serve the route.** Two states are reported instead of a corpus change. Neither
+stops the Worker and neither touches the corpus: the seed pass publishes nothing, the previous generation
+stays current, and the Worker logs the state with its model code.
+
+- `memory_embedding_model_mismatch`: a model is installed, but its id is not the model the memory route
+  names. It follows a changed `INCIDENTCOMPASS_EMBEDDINGS_MODEL`, or a release whose route names a new
+  model while the volume keeps the old one. Install the named model or set the route back to the
+  installed id, then restart the Worker.
+- `memory_embedding_model_unavailable`: no usable model is installed, because none has been installed yet
+  or the start-time install failed or timed out. The Worker log names the cause, for example
+  `embedding_model_fetch_failed` or `embedding_model_digest_mismatch`. Fix it, or install offline, then
+  restart the Worker.
+
+For both, `RebuildRequired` is false on `GET /api/v1/health/memory-corpus` and `memory status` exits 1. A
+rebuild cannot repair either state, because it would embed under a route the installed model cannot
+serve, so `memory rebuild` refuses and exits 1. Once the configured model is installed and the Worker
+restarted, a corpus built with another model reports `memory_embedding_route_changed`, and a rebuild then
+applies.
+
+The places that report these states are not equally current. The Worker log and `memory status` read
+the volume directly. The `memory_seed_sync` health check reports degraded with its generic sentence,
+"Memory seed synchronization failed; the previous corpus remains active.", while its `lastErrorCode`
+names the state. `GET /api/v1/health/memory-corpus` compares only the model id and takes the two model
+states from the code the Worker last persisted, so it shows what the Worker recorded at its last
+synchronization pass rather than the volume as it is now.
+
+Resolve either state promptly. While it lasts, every triage job that reaches `memory_search` has its
+embedding call refused as unavailable and waits and retries as it would during a provider outage.
+
+**Memory and CPU.** The Worker loads the model on its first embedding call and keeps it loaded. Plan for
+its memory to grow by roughly the model file's size, about 118 MB, plus 100 to 200 MB; that is a planning
+figure, not a measurement recorded in this repository. One embedding call uses one core by default,
+`IncidentCompass__Embeddings__LocalOnnx__IntraOpThreads` from 1 to 16, and calls run one at a time. The
+int8 file targets processors with AVX-512 VNNI and runs more slowly on processors without it.
 
 ## Payload retention
 
@@ -542,6 +724,10 @@ This single-host runbook does not claim an automatic second site.
    migration catalog under the PostgreSQL migration lock.
 7. Perform authenticated report, ledger and approval reads before returning the service to users.
 
+An upgrade does not change the installed embedding model, even when the release ships a new default:
+the Worker keeps the manifest in the `embedding-models` volume. "Local embedding model" describes how to
+move to a new model, and what a release whose route names a different model id reports until you do.
+
 Never edit released SQL or migration ledger rows to force an upgrade.
 
 ## Restore and recovery smoke
@@ -616,6 +802,11 @@ pre-upgrade backup into another fresh project/volume, validate its health and bo
 move the reverse proxy or local client to the reviewed recovery API port. Inspect durable pending work
 and explicitly start the recovery Worker only after deciding that project is authoritative. Preserve
 both database volumes until the operator has decided which state is authoritative.
+
+The embedding model volume is rolled back on its own, not with the application or the database. A new
+recovery project starts with an empty `embedding-models` volume, so its Worker downloads or needs an
+offline install of the model on first start. An installed model is rolled back as described in "Local
+embedding model".
 
 This process has no automatic failover, HA PostgreSQL, Azure integration, enterprise RBAC, managed
 secret store or protection from a hostile co-tenant on the same machine.

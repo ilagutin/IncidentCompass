@@ -101,6 +101,39 @@ and its embedding counterpart are the default provider profile's credential, and
 configuration keeps using them. See `docs/model-gateway.md`, "Providers", for exactly when that
 default applies and when a configuration must supply per-provider credentials instead.
 
+## Local Embedding Model Artifacts
+
+The in-process embedding model is a pair of third-party files the Worker loads into its own process,
+so their origin is pinned rather than trusted. The shipped defaults name one Hugging Face revision of
+`intfloat/multilingual-e5-small` and the SHA-256 of each of its two files, and the Worker's model store
+enforces them:
+
+- A file is accepted only when its SHA-256 is the pinned one. A download is hashed while it streams
+  into a temporary file beside its destination and renamed into place only on a match; a mismatch
+  discards it with `embedding_model_digest_mismatch`. A file already at its artifact path, placed by an
+  operator or by an earlier install, is verified the same way, and a wrong one is refused with the same
+  code and left in place: the store never repairs or replaces a file.
+- An installed manifest's files are hashed again on every Worker start and by `memory model status`. A
+  manifest whose file path would leave the model directory is refused with
+  `embedding_model_manifest_invalid`.
+- Every download is bounded by `IncidentCompass:Embeddings:LocalOnnx:MaxDownloadBytes`, 1 GiB by
+  default and at most 16 GiB. A response that declares a larger length is refused before anything is
+  written, and a body that runs past the bound is cut off and discarded, with
+  `embedding_model_download_too_large`. The model volume shares the host's disk with PostgreSQL, and
+  the bound keeps a misbehaving origin from filling it before the digest check is reached.
+- Redirects are followed by hand, at most five, and only to `https` locations; a plaintext hop is
+  refused. Integrity comes from the digest, not from the host that served the file, and refusing
+  plaintext hops keeps the download private and unmodified in transit. The download client has its
+  request logging removed, and a fetch failure names the host only, because a content delivery
+  location carries a signed query string.
+
+One window remains. The files are verified when the Worker starts, and the ONNX session and the
+tokenizer are loaded from the same paths later, on the first embedding call, without hashing them
+again. A file swapped between those two moments is loaded unverified. Exploiting that needs write
+access to the model volume on the host itself: nothing reachable through the API, a triage
+configuration or the network writes to that volume, and the Worker writes to it only files the store
+has verified.
+
 ## Incident Data Tenant Scope
 
 `IIncidentTenantContext` is separate from `IUserContext`. With API-key authentication enabled it
@@ -132,12 +165,17 @@ The repository ships four compose files, and only the first carries demo credent
 - `compose.mock.yml` is a deterministic-provider overlay for that demo stack. It replaces the model
   and embedding providers and nothing else.
 - `compose.evaluation.yml` is a local evaluation overlay for that demo stack. It closes the published
-  ports, mounts the evaluation triage configuration read-only and clears the Telegram and GitHub
-  credentials for the run.
+  ports, mounts the evaluation triage configuration read-only, keeps the OpenAI-compatible embedding
+  adapter that configuration's memory route names, and clears the Telegram and GitHub credentials for
+  the run.
 - `compose.production.yml` is the bounded single-host overlay described in
   `docs/single-host-production.md`. It carries no demo credentials of its own: the database,
-  provider, API-key and source values it sets are required variables, so Compose refuses to start
-  when one is missing and the base file's demo defaults cannot take effect. It re-declares the three
+  chat provider, API-key and source values it sets are required variables, so Compose refuses to
+  start when one is missing and the base file's demo defaults cannot take effect. The
+  OpenAI-compatible embedding endpoint, path and key are the exception: the overlay sets them empty
+  unless provided, which still displaces the base file's demo values, because the default in-process
+  embedding model reads none of them, and `scripts/production-preflight.ps1` requires them when an
+  operator selects that provider. It re-declares the three
   database credential variables on its own `postgres` service rather than inheriting them, so the
   database server it starts cannot fall back to the demo name, user or password no matter what the
   rest of the file requires. Demo auth is forced off, and the API and PostgreSQL ports bind to

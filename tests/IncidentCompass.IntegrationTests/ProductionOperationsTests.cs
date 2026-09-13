@@ -16,16 +16,41 @@ public sealed class ProductionOperationsTests
         { "INCIDENTCOMPASS_API_KEY_AUTH_ENABLED", "false" },
         { "INCIDENTCOMPASS_API_KEY_SHA256", null },
         { "INCIDENTCOMPASS_LLM_MODEL", "local-model" },
-        { "INCIDENTCOMPASS_EMBEDDINGS_API_KEY", "local-dev-key" },
+        { "INCIDENTCOMPASS_EMBEDDINGS_MODEL", null },
+        { "INCIDENTCOMPASS_EMBEDDINGS_MODEL", "local-embedding-model" },
+        { "INCIDENTCOMPASS_EMBEDDINGS_MODEL", "change-me-to-a-real-embedding-model" },
+        { "INCIDENTCOMPASS_EMBEDDINGS_PROVIDER", "Mock" },
+        { "INCIDENTCOMPASS_EMBEDDINGS_PROVIDER", "localonnx" },
+        { "INCIDENTCOMPASS_EMBEDDINGS_PROVIDER_ID", "local-oai" },
         { "INCIDENTCOMPASS_SOURCE_ROOT", "relative/source" },
         { "INCIDENTCOMPASS_GITHUB_TOKEN", null },
         { "INCIDENTCOMPASS_TELEGRAM_ENABLED", "true" }
+    };
+
+    /// <summary>
+    /// Invalid only once the embedding provider is OpenAICompatible: with the LocalOnnx default none of
+    /// these values is read, so each of them is checked on a fixture that switched provider.
+    /// </summary>
+    public static TheoryData<string, string?> InvalidOpenAiCompatibleEmbeddingSettings => new()
+    {
+        { "INCIDENTCOMPASS_EMBEDDINGS_BASE_URL", null },
+        { "INCIDENTCOMPASS_EMBEDDINGS_BASE_URL", "http://provider.test" },
+        { "INCIDENTCOMPASS_EMBEDDINGS_PATH", null },
+        { "INCIDENTCOMPASS_EMBEDDINGS_PATH", "v1/embeddings" },
+        { "INCIDENTCOMPASS_EMBEDDINGS_API_KEY", null },
+        { "INCIDENTCOMPASS_EMBEDDINGS_API_KEY", "local-dev-key" },
+        { "INCIDENTCOMPASS_EMBEDDINGS_PROVIDER_ID", null },
+        { "INCIDENTCOMPASS_EMBEDDINGS_PROVIDER_ID", "local-embed" },
+        { "INCIDENTCOMPASS_EMBEDDINGS_MODEL", "local-embedding-model" }
     };
 
     [Fact]
     public async Task ProductionPreflight_ValidConfigurationPassesWithoutPrintingSecrets()
     {
         await using var fixture = await ProductionFixture.CreateAsync();
+        Assert.False(fixture.Settings.ContainsKey("INCIDENTCOMPASS_EMBEDDINGS_PROVIDER"));
+        Assert.False(fixture.Settings.ContainsKey("INCIDENTCOMPASS_EMBEDDINGS_BASE_URL"));
+        Assert.False(fixture.Settings.ContainsKey("INCIDENTCOMPASS_EMBEDDINGS_API_KEY"));
 
         var result = await RunPowerShellAsync(
             "-File", fixture.Script("production-preflight.ps1"),
@@ -41,6 +66,38 @@ public sealed class ProductionOperationsTests
     public async Task ProductionPreflight_RejectsUnsafeOrMissingBindings(string name, string? value)
     {
         await using var fixture = await ProductionFixture.CreateAsync();
+        fixture.Set(name, value);
+        await fixture.WriteEnvironmentAsync();
+
+        var result = await RunPowerShellAsync(
+            "-File", fixture.Script("production-preflight.ps1"),
+            "-EnvironmentFile", fixture.EnvironmentFile);
+
+        Assert.NotEqual(0, result.ExitCode);
+        fixture.AssertSecretsAbsent(result);
+    }
+
+    [Fact]
+    public async Task ProductionPreflight_OpenAiCompatibleEmbeddingsPassWithTheirEndpointAndKey()
+    {
+        await using var fixture = await ProductionFixture.CreateAsync();
+        fixture.UseOpenAiCompatibleEmbeddings();
+        await fixture.WriteEnvironmentAsync();
+
+        var result = await RunPowerShellAsync(
+            "-File", fixture.Script("production-preflight.ps1"),
+            "-EnvironmentFile", fixture.EnvironmentFile);
+
+        Assert.Equal(0, result.ExitCode);
+        fixture.AssertSecretsAbsent(result);
+    }
+
+    [Theory]
+    [MemberData(nameof(InvalidOpenAiCompatibleEmbeddingSettings))]
+    public async Task ProductionPreflight_OpenAiCompatibleEmbeddingsRejectMissingOrUnsafeBindings(string name, string? value)
+    {
+        await using var fixture = await ProductionFixture.CreateAsync();
+        fixture.UseOpenAiCompatibleEmbeddings();
         fixture.Set(name, value);
         await fixture.WriteEnvironmentAsync();
 
@@ -94,6 +151,7 @@ public sealed class ProductionOperationsTests
         Assert.Equal("unless-stopped", services.GetProperty("worker").GetProperty("restart").GetString());
         Assert.Equal("json-file", services.GetProperty("postgres").GetProperty("logging").GetProperty("driver").GetString());
         Assert.False(services.TryGetProperty("postgres-restore", out _));
+        AssertLocalEmbeddingModelDefaults(document.RootElement, fixture.Settings["INCIDENTCOMPASS_COMPOSE_PROJECT"]);
 
         var recoveryRendered = await RunProcessAsync(
             "docker", fixture.Settings, fixture.ComposeArguments("--profile", "recovery", "config", "--format", "json"));
@@ -111,6 +169,8 @@ public sealed class ProductionOperationsTests
         var workerDockerfile = await File.ReadAllTextAsync(Path.Combine(fixture.RepositoryRoot, "src", "IncidentCompass.Worker", "Dockerfile"));
         Assert.Contains("USER incidentcompass", apiDockerfile, StringComparison.Ordinal);
         Assert.Contains("USER incidentcompass", workerDockerfile, StringComparison.Ordinal);
+        var modelDirectoryCreated = workerDockerfile.IndexOf("mkdir -p /app/models", StringComparison.Ordinal);
+        Assert.InRange(modelDirectoryCreated, 0, workerDockerfile.IndexOf("USER incidentcompass", StringComparison.Ordinal));
 
         var gitIgnore = await File.ReadAllLinesAsync(Path.Combine(fixture.RepositoryRoot, ".gitignore"));
         var dockerIgnore = await File.ReadAllLinesAsync(Path.Combine(fixture.RepositoryRoot, ".dockerignore"));
@@ -251,6 +311,40 @@ public sealed class ProductionOperationsTests
         Assert.DoesNotContain(secretArgument, result.StandardOutput + result.StandardError, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// The rendered production stack with no embedding provider set: the Worker embeds with the local
+    /// model from the named volume at <c>/app/models</c>, the route provider id is the local entry, the
+    /// OpenAI-compatible embedding values render empty rather than being required, and the Api mounts
+    /// no model volume.
+    /// </summary>
+    private static void AssertLocalEmbeddingModelDefaults(JsonElement root, string projectName)
+    {
+        var services = root.GetProperty("services");
+        var workerEnvironment = services.GetProperty("worker").GetProperty("environment");
+        Assert.Equal("LocalOnnx", workerEnvironment.GetProperty("IncidentCompass__Embeddings__Provider").GetString());
+        Assert.Equal("/app/models", workerEnvironment.GetProperty("IncidentCompass__Embeddings__LocalOnnx__ModelDirectory").GetString());
+        Assert.Equal("local-embed", workerEnvironment.GetProperty("INCIDENTCOMPASS_EMBEDDINGS_PROVIDER_ID").GetString());
+        Assert.Equal("intfloat/multilingual-e5-small", workerEnvironment.GetProperty("INCIDENTCOMPASS_EMBEDDINGS_MODEL").GetString());
+        Assert.Equal(string.Empty, workerEnvironment.GetProperty("IncidentCompass__Embeddings__OpenAiCompatible__BaseUrl").GetString());
+        Assert.Equal(string.Empty, workerEnvironment.GetProperty("IncidentCompass__Embeddings__OpenAiCompatible__ApiKey").GetString());
+
+        var modelMount = Assert.Single(
+            services.GetProperty("worker").GetProperty("volumes").EnumerateArray(),
+            mount => mount.GetProperty("target").GetString() == "/app/models");
+        Assert.Equal("volume", modelMount.GetProperty("type").GetString());
+        Assert.Equal("embedding-models", modelMount.GetProperty("source").GetString());
+        Assert.False(modelMount.TryGetProperty("read_only", out var readOnly) && readOnly.GetBoolean());
+
+        var api = services.GetProperty("api");
+        Assert.True(
+            !api.TryGetProperty("volumes", out var apiVolumes) ||
+            apiVolumes.EnumerateArray().All(mount => mount.GetProperty("target").GetString() != "/app/models"));
+
+        Assert.Equal(
+            projectName + "_embedding-models",
+            root.GetProperty("volumes").GetProperty("embedding-models").GetProperty("name").GetString());
+    }
+
     private static Task<ProcessResult> RunPowerShellAsync(params string[] arguments) =>
         RunProcessAsync("pwsh", null, ["-NoProfile", .. arguments]);
 
@@ -335,10 +429,8 @@ public sealed class ProductionOperationsTests
                 ["INCIDENTCOMPASS_LLM_CHAT_COMPLETIONS_PATH"] = "/v1/chat/completions",
                 ["INCIDENTCOMPASS_LLM_MODEL"] = "production-chat-model",
                 ["INCIDENTCOMPASS_LLM_API_KEY"] = "model-secret-value-12345",
-                ["INCIDENTCOMPASS_EMBEDDINGS_BASE_URL"] = "https://provider.test",
-                ["INCIDENTCOMPASS_EMBEDDINGS_PATH"] = "/v1/embeddings",
-                ["INCIDENTCOMPASS_EMBEDDINGS_MODEL"] = "production-embedding-model",
-                ["INCIDENTCOMPASS_EMBEDDINGS_API_KEY"] = "embedding-secret-value-12345",
+                // No embedding provider, endpoint or key: the LocalOnnx default reads none of them.
+                ["INCIDENTCOMPASS_EMBEDDINGS_MODEL"] = "intfloat/multilingual-e5-small",
                 ["INCIDENTCOMPASS_ALLOW_INSECURE_LOOPBACK_PROVIDER"] = "false",
                 ["INCIDENTCOMPASS_SOURCE_ROOT"] = source,
                 ["INCIDENTCOMPASS_SOURCE_SERVICE"] = "orders",
@@ -355,6 +447,16 @@ public sealed class ProductionOperationsTests
         }
 
         public string Script(string name) => Path.Combine(RepositoryRoot, "scripts", name);
+
+        public void UseOpenAiCompatibleEmbeddings()
+        {
+            Settings["INCIDENTCOMPASS_EMBEDDINGS_PROVIDER"] = "OpenAICompatible";
+            Settings["INCIDENTCOMPASS_EMBEDDINGS_PROVIDER_ID"] = "local-oai";
+            Settings["INCIDENTCOMPASS_EMBEDDINGS_BASE_URL"] = "https://provider.test";
+            Settings["INCIDENTCOMPASS_EMBEDDINGS_PATH"] = "/v1/embeddings";
+            Settings["INCIDENTCOMPASS_EMBEDDINGS_MODEL"] = "production-embedding-model";
+            Settings["INCIDENTCOMPASS_EMBEDDINGS_API_KEY"] = "embedding-secret-value-12345";
+        }
 
         public string[] ComposeArguments(params string[] tail) =>
         [

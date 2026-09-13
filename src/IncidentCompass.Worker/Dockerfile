@@ -24,8 +24,11 @@ RUN dotnet publish src/IncidentCompass.Worker/IncidentCompass.Worker.csproj \
 FROM mcr.microsoft.com/dotnet/runtime:10.0 AS final
 WORKDIR /app
 
+# /app/models is the local embedding model volume's mount point. Creating it here, owned by the
+# runtime user, is what gives a fresh named volume that ownership; nothing is copied into it.
 RUN groupadd --system incidentcompass && \
     useradd --system --gid incidentcompass --home-dir /app incidentcompass && \
+    mkdir -p /app/models && \
     chown -R incidentcompass:incidentcompass /app
 
 COPY --chown=incidentcompass:incidentcompass --from=build /app/publish ./

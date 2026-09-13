@@ -17,8 +17,7 @@ try {
         "INCIDENTCOMPASS_TENANT_ID", "INCIDENTCOMPASS_API_KEY_SHA256",
         "INCIDENTCOMPASS_LLM_BASE_URL", "INCIDENTCOMPASS_LLM_CHAT_COMPLETIONS_PATH",
         "INCIDENTCOMPASS_LLM_MODEL", "INCIDENTCOMPASS_LLM_API_KEY",
-        "INCIDENTCOMPASS_EMBEDDINGS_BASE_URL", "INCIDENTCOMPASS_EMBEDDINGS_PATH",
-        "INCIDENTCOMPASS_EMBEDDINGS_MODEL", "INCIDENTCOMPASS_EMBEDDINGS_API_KEY",
+        "INCIDENTCOMPASS_EMBEDDINGS_MODEL",
         "INCIDENTCOMPASS_SOURCE_ROOT", "INCIDENTCOMPASS_SOURCE_SERVICE",
         "INCIDENTCOMPASS_SOURCE_RELEASE", "INCIDENTCOMPASS_GITHUB_OWNER",
         "INCIDENTCOMPASS_GITHUB_REPOSITORY", "INCIDENTCOMPASS_GITHUB_TOKEN"
@@ -67,16 +66,46 @@ try {
         }
     }
 
+    # The embedding provider decides which embedding settings are read. LocalOnnx, the default in both
+    # compose files, embeds on the Worker and reads no endpoint, path or key. OpenAICompatible reads
+    # all three, and Compose cannot require them conditionally, so they are required here. The route
+    # provider id must name the shipped provider entry of the same kind, or the Worker's adapter
+    # refuses the route.
+    $embeddingProvider = if ($values.ContainsKey("INCIDENTCOMPASS_EMBEDDINGS_PROVIDER") -and
+        -not [string]::IsNullOrWhiteSpace([string] $values["INCIDENTCOMPASS_EMBEDDINGS_PROVIDER"])) {
+        [string] $values["INCIDENTCOMPASS_EMBEDDINGS_PROVIDER"]
+    } else { "LocalOnnx" }
+    if ($embeddingProvider -cnotin @("LocalOnnx", "OpenAICompatible")) {
+        throw "INCIDENTCOMPASS_EMBEDDINGS_PROVIDER must be LocalOnnx or OpenAICompatible."
+    }
+    $embeddingProviderIds = @{ LocalOnnx = "local-embed"; OpenAICompatible = "local-oai" }
+    $embeddingProviderId = if ($values.ContainsKey("INCIDENTCOMPASS_EMBEDDINGS_PROVIDER_ID") -and
+        -not [string]::IsNullOrWhiteSpace([string] $values["INCIDENTCOMPASS_EMBEDDINGS_PROVIDER_ID"])) {
+        [string] $values["INCIDENTCOMPASS_EMBEDDINGS_PROVIDER_ID"]
+    } else { "local-embed" }
+    $expectedEmbeddingProviderId = $embeddingProviderIds[$embeddingProvider]
+    if ($embeddingProviderId -cne $expectedEmbeddingProviderId) {
+        throw "INCIDENTCOMPASS_EMBEDDINGS_PROVIDER_ID must be '$expectedEmbeddingProviderId' when the embedding provider is $embeddingProvider."
+    }
+    $openAiCompatibleEmbeddings = $embeddingProvider -ceq "OpenAICompatible"
+    if ($openAiCompatibleEmbeddings) {
+        foreach ($name in @("INCIDENTCOMPASS_EMBEDDINGS_BASE_URL", "INCIDENTCOMPASS_EMBEDDINGS_PATH", "INCIDENTCOMPASS_EMBEDDINGS_API_KEY")) {
+            $null = Get-RequiredProductionValue -Values $values -Name $name
+        }
+    }
+
     $realBindings = @{
         INCIDENTCOMPASS_LLM_MODEL = @("local-model", "mock-chat")
         INCIDENTCOMPASS_LLM_API_KEY = @("local-dev-key")
         INCIDENTCOMPASS_EMBEDDINGS_MODEL = @("local-embedding-model", "mock-embedding", "mock-memory-embedding-v1")
-        INCIDENTCOMPASS_EMBEDDINGS_API_KEY = @("local-dev-key")
         INCIDENTCOMPASS_GITHUB_OWNER = @()
         INCIDENTCOMPASS_GITHUB_REPOSITORY = @()
         INCIDENTCOMPASS_GITHUB_TOKEN = @()
         INCIDENTCOMPASS_SOURCE_SERVICE = @()
         INCIDENTCOMPASS_SOURCE_RELEASE = @()
+    }
+    if ($openAiCompatibleEmbeddings) {
+        $realBindings["INCIDENTCOMPASS_EMBEDDINGS_API_KEY"] = @("local-dev-key")
     }
     foreach ($entry in $realBindings.GetEnumerator()) {
         Assert-ProductionValueIsConfigured $entry.Key ([string] $values[$entry.Key]) $entry.Value
@@ -88,7 +117,13 @@ try {
     if (-not (Test-ProductionBoolean $allowInsecure)) {
         throw "INCIDENTCOMPASS_ALLOW_INSECURE_LOOPBACK_PROVIDER must be true or false."
     }
-    foreach ($urlName in @("INCIDENTCOMPASS_LLM_BASE_URL", "INCIDENTCOMPASS_EMBEDDINGS_BASE_URL")) {
+    $providerUrlNames = @("INCIDENTCOMPASS_LLM_BASE_URL")
+    $providerPathNames = @("INCIDENTCOMPASS_LLM_CHAT_COMPLETIONS_PATH")
+    if ($openAiCompatibleEmbeddings) {
+        $providerUrlNames += "INCIDENTCOMPASS_EMBEDDINGS_BASE_URL"
+        $providerPathNames += "INCIDENTCOMPASS_EMBEDDINGS_PATH"
+    }
+    foreach ($urlName in $providerUrlNames) {
         $url = Get-RequiredProductionValue $values $urlName
         $uri = $null
         if (-not [Uri]::TryCreate($url, [UriKind]::Absolute, [ref] $uri)) {
@@ -102,7 +137,7 @@ try {
         Assert-ProductionValueIsConfigured $urlName $url
     }
 
-    foreach ($pathName in @("INCIDENTCOMPASS_LLM_CHAT_COMPLETIONS_PATH", "INCIDENTCOMPASS_EMBEDDINGS_PATH")) {
+    foreach ($pathName in $providerPathNames) {
         if ([string] $values[$pathName] -notmatch '^/[^/].*') {
             throw "Production provider endpoint path '$pathName' is invalid."
         }

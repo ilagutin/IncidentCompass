@@ -12,7 +12,7 @@ flowchart LR
     Application --> Domain["IncidentCompass.Domain"]
     Infrastructure["IncidentCompass.Infrastructure"] --> Application
     Infrastructure --> Postgres["PostgreSQL"]
-    Infrastructure --> Providers["Mock or OpenAI-compatible providers"]
+    Infrastructure --> Providers["Mock, OpenAI-compatible or in-process ONNX providers"]
 ```
 
 Application contracts carry a provider *identity* only. `AiModelRequest.ProviderId` and
@@ -180,7 +180,10 @@ incident, operational note, release note and postmortem with optional service/co
 metadata; the repository ships runbook and known-incident corpora only.
 
 The Worker is the only host composed with an embedding client, and the corpus commands
-`memory status` and `memory rebuild` run there; the API serves the corpus status and health reads.
+`memory status` and `memory rebuild` and the model commands `memory model status` and
+`memory model install` run there; the API serves the corpus status and health reads. By default the
+Worker embeds with the in-process `LocalOnnx` model, which it installs into its `embedding-models`
+volume at start; see `docs/model-gateway.md`, "Local Embedding Model".
 
 Within a configured seed owner, source path is the stable identity: changed files update and
 re-embed one active item, while removed files are deactivated and excluded from search. Each
@@ -209,6 +212,14 @@ nothing, leaves the previous corpus current and retrievable, and reports
 `memory_embedding_route_changed`. Re-embedding the whole corpus is an operator action, run as
 `memory rebuild` on the Worker; `memory status` and `GET /api/v1/health/memory-corpus` report the
 same bounded route identity and counts.
+
+For a route served by the local model, the recorded model is the encoded identity
+`<model id>@sha256:<16 hex>`, so a model file replaced under the same id is a route change as well.
+The Worker judges such a route against the installed model before any embedding call: another model's
+id publishes nothing and reports `memory_embedding_model_mismatch`, and no usable installed model
+publishes nothing and reports `memory_embedding_model_unavailable`. The previous corpus stays current
+in both states. The API, which has no model, compares only the id part and takes the two model states
+from the code the Worker last persisted.
 
 The manual `CurrentReleases` map is the single per-service release marker: memory retrieval labels
 matching evidence as current, stale, unversioned or service-mismatched before it reaches the model.

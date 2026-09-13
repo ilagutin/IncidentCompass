@@ -93,6 +93,24 @@ expiry; a GitHub App installation token minted with `actions/create-github-app-t
 alternative when a non-expiring credential is preferred. Without the secret the workflow still works
 and warns in the job summary, it just costs that one approval click per pull request.
 
+## Embedding Model
+
+The local embedding model is versioned by its manifest, not by the release that installed it. A model
+directory's `manifest.json` names the model id, the Hugging Face revision, the license, the settings
+the adapter runs it with and the SHA-256 of both files, and a corpus built with it records the encoded
+identity `<model id>@sha256:<16 hex>` taken from that manifest.
+
+The pinned model a release ships is a host default under `IncidentCompass:Embeddings:LocalOnnx`. Unless
+those settings are overridden, it is what a Worker fills an empty model directory with at start and what
+`memory model install` installs. A release that changes that default never changes an installed
+manifest on its own: the Worker verifies and keeps whatever is installed. Moving an existing
+host to a new default is an operator action, `memory model install` followed by `memory rebuild`. The
+install keeps the manifest it replaced as `manifest.previous.json` and deletes no model file, so it can
+be rolled back; `docs/single-host-production.md`, "Local embedding model", gives the procedure. A
+release that changes the model id the shipped route names, while the installed manifest keeps the old
+id, leaves the Worker reporting `memory_embedding_model_mismatch` until the operator installs the new
+model or sets the route's model back.
+
 ## API
 
 - Use `/api/v1/...` from the start.
