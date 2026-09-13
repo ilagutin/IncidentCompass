@@ -163,6 +163,19 @@ docker @compose start
 
 Do not use `down --volumes` for routine shutdown. The named PostgreSQL volume is the durable database.
 
+## Memory corpus commands
+
+The Worker is the only service composed with an embedding client, so the memory seed pass and the
+`memory status` and `memory rebuild` corpus commands run in the worker container, never in the API:
+
+```powershell
+docker @compose run --rm worker memory status
+docker @compose run --rm worker memory rebuild
+```
+
+`memory status` exits 1 when a rebuild is needed and 0 otherwise. `docs/quickstart.md`, "Changing The
+Embedding Route", describes what a rebuild publishes and what it leaves current when it fails.
+
 ## Payload retention
 
 The Worker runs payload retention on a timer of its own. Every 15 minutes it makes one pass: one

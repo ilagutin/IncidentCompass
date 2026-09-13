@@ -227,8 +227,9 @@ volume is first created. If you are reusing an older local Docker volume, recrea
 ### Optional Memory Seed
 
 Sample memory lives under `samples/runbooks` and `samples/incidents`. To seed it into local
-PostgreSQL, start either host once with memory seeding enabled; the seed path uses the configured
-`memory_search` embedding route and therefore the configured embedding provider/model.
+PostgreSQL, start the Worker once with memory seeding enabled; it is the only host that seeds, and
+the seed path uses the configured `memory_search` embedding route and therefore the configured
+embedding provider/model.
 
 ~~~powershell
 $env:IncidentCompass__Memory__Seed__Enabled = "true"
@@ -236,7 +237,7 @@ $env:IncidentCompass__Memory__Seed__TenantId = "local"
 $env:IncidentCompass__Memory__Seed__Owner = "default"
 $env:IncidentCompass__Memory__Seed__SourceDirectory = "../../samples"
 $env:ConnectionStrings__IncidentCompass = "Host=localhost;Port=5432;Database=incidentcompass;Username=incidentcompass;Password=incidentcompass_dev_password"
-dotnet run --project src/IncidentCompass.Api --launch-profile http
+dotnet run --project src/IncidentCompass.Worker
 ~~~
 
 To assess documentation freshness, set the reviewed `CurrentReleases` map in the triage config, for example
@@ -261,7 +262,7 @@ that built it, and reports `memory_embedding_route_changed` on `GET /api/v1/heal
 a degraded `memory_seed_sync` health check. `GET /api/v1/health/memory-corpus` shows the configured
 route beside the route the active corpus was built under, with item and chunk counts.
 
-Re-embedding is an explicit operator action on either host, and takes the same memory seed settings
+Re-embedding is an explicit operator action on the Worker, and takes the same memory seed settings
 as seeding does:
 
 ~~~powershell

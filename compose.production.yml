@@ -53,7 +53,6 @@ services:
       IncidentCompass__ApiKeyAuth__Credentials__0__Sha256Digest: ${INCIDENTCOMPASS_API_KEY_SHA256:?set INCIDENTCOMPASS_API_KEY_SHA256}
       IncidentCompass__DemoAuth__Enabled: "false"
       IncidentCompass__DemoAuth__AllowInNonDevelopment: "false"
-      IncidentCompass__Memory__Seed__Enabled: "false"
     ports: !override
       - "127.0.0.1:${IC_API_PORT:-5198}:8080"
     restart: unless-stopped

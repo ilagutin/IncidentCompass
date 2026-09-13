@@ -67,12 +67,16 @@ Before making non-trivial changes, read the relevant public docs:
 - `Api` maps HTTP input/output, OpenAPI metadata and foreground user context only.
 - `Worker` runs the database-backed claim loop, governed investigation processing and the periodic
   data-retention pass, composing only `Application` and `Infrastructure`. It owns when a scheduled
-  pass happens; `Application` owns what the pass does.
+  pass happens; `Application` owns what the pass does. It is also the only process that composes an
+  embedding client, runs the memory seed and resync pass and runs the `memory status` and
+  `memory rebuild` corpus commands. The Api keeps the corpus status and health readers, which need
+  no model.
 - `Tester` is an HTTP-only demo and evaluation driver with no project references. It speaks to the API
   as a black box, so it deliberately declares its own copies of Domain and Application concepts, such
   as `EvaluationJobStatus` and `EvaluationModelCallMetadata`, instead of sharing types.
 - Hosts compose four registrations: `AddApplication` + `AddInfrastructure` + `AddPostgresMigrations`
-  (+ `AddApi`/`AddWorker`) rather than per-feature registration.
+  (+ `AddApi`/`AddWorker`) rather than per-feature registration. `AddWorker` brings in the embedding
+  host through the Worker-only `AddEmbeddingHost` seam.
 - Provider-specific DTOs, HTTP details, SQL details and SDK concepts must not leak into Application or Domain contracts.
 
 ## Current Design Decisions

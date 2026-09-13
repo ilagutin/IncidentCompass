@@ -49,8 +49,8 @@ PostgreSQL initialization and container startup rather than by generation.
 - postgres: pgvector/pgvector:pg16, initialized from infra/postgres/init.
 - api: builds from src/IncidentCompass.Api/Dockerfile, exposes the configured host mapping (default http://localhost:5198), runs as the
   non-root incidentcompass user, copies config/ and samples/, and sets
-  IncidentCompass__ConfigSource__Path=/app/config/incidentcompass.config.json plus
-  IncidentCompass__Memory__Seed__SourceDirectory=/app/samples.
+  IncidentCompass__ConfigSource__Path=/app/config/incidentcompass.config.json plus the memory seed
+  tenant and owner that its memory health endpoints read.
 - worker: builds from src/IncidentCompass.Worker/Dockerfile, runs as the non-root incidentcompass
   user, copies the same config/ and samples/, enables sample memory seeding, and uses the same
   explicit config and sample-source paths inside the image.
@@ -95,17 +95,21 @@ corpora, `samples/runbooks` and `samples/incidents`. The loader also reads `oper
 supported kinds, not shipped content. Optional frontmatter supports `kind`, `service`, `component`,
 `release` and `tags`. The body below the frontmatter is the content embedded and cited by reports.
 
-API and Worker may start together and sync the same corpus safely. A changed file updates one stable
-source record and re-embeds its body. A removed file is deactivated, so its old chunks stay available
-for audit history but no longer participate in `memory_search`. Git history remains the provenance and
-review path; there is no memory write API. Runtime resync is disabled by default; enable it only with a
-bounded interval when a long-running local corpus should follow reviewed file changes.
+The Worker is the only host that synchronizes the corpus; the API reads its status. A changed file
+updates one stable source record and re-embeds its body. A removed file is deactivated, so its old
+chunks stay available for audit history but no longer participate in `memory_search`. Git history
+remains the provenance and review path; there is no memory write API. Runtime resync is disabled by
+default; enable it only with a bounded interval when a long-running local corpus should follow
+reviewed file changes.
 
 Changing the embedding model or provider is the one case a file change cannot cover, because the
 files stay identical while the vector space moves. Synchronization notices and stops rather than
 publishing half a corpus: the previous one stays searchable and the memory-sync health status reports
-`memory_embedding_route_changed`. Run `memory rebuild` on either host to re-embed everything under
-the new route, and `memory status` to see the configured route beside the one that built the corpus.
+`memory_embedding_route_changed`. Run `memory rebuild` on the Worker to re-embed everything under
+the new route, and `memory status` on the Worker to see the configured route beside the one that
+built the corpus. The shared Compose environment anchor still passes the `Embeddings__*` settings to
+the api service as well; the API composes no embedding client and does not use them beyond
+validating the shape of the embeddings section at startup.
 
 ## Model Configuration
 

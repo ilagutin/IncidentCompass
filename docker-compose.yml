@@ -51,7 +51,6 @@ services:
       IncidentCompass__ConfigSource__Path: /app/config/incidentcompass.config.json
       IncidentCompass__Memory__Seed__TenantId: ${INCIDENTCOMPASS_MEMORY_SEED_TENANT_ID:-local}
       IncidentCompass__Memory__Seed__Owner: ${INCIDENTCOMPASS_MEMORY_SEED_OWNER:-default}
-      IncidentCompass__Memory__Seed__SourceDirectory: /app/samples
     ports:
       - "${IC_API_PORT:-5198}:8080"
     depends_on:
