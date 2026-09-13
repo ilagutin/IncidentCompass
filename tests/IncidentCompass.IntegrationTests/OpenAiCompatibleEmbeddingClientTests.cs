@@ -29,7 +29,7 @@ public sealed class OpenAiCompatibleEmbeddingClientTests
         var embeddingClient = provider.GetRequiredService<IEmbeddingClient>();
 
         var response = await embeddingClient.CreateEmbeddingAsync(
-            new EmbeddingRequest("hello", "embedding-model", "embedding-retry-test"),
+            new EmbeddingRequest("hello", "embedding-model", "embedding-retry-test", EmbeddingInputKind.Query),
             TestContext.Current.CancellationToken);
 
         Assert.Equal("embedding-model", response.Model);
@@ -71,7 +71,7 @@ public sealed class OpenAiCompatibleEmbeddingClientTests
         var embeddingClient = provider.GetRequiredService<IEmbeddingClient>();
 
         var response = await embeddingClient.CreateEmbeddingAsync(
-            new EmbeddingRequest("hello", "embedding-model", "embedding-status-retry-test"),
+            new EmbeddingRequest("hello", "embedding-model", "embedding-status-retry-test", EmbeddingInputKind.Query),
             TestContext.Current.CancellationToken);
 
         Assert.Equal(FakeEmbeddingVector, response.Vector);
@@ -101,7 +101,7 @@ public sealed class OpenAiCompatibleEmbeddingClientTests
 
         var exception = await Assert.ThrowsAsync<EmbeddingClientException>(() =>
             embeddingClient.CreateEmbeddingAsync(
-                new EmbeddingRequest("hello", "embedding-model", "embedding-rejected-status-test"),
+                new EmbeddingRequest("hello", "embedding-model", "embedding-rejected-status-test", EmbeddingInputKind.Query),
                 TestContext.Current.CancellationToken));
 
         Assert.Equal("provider_request_rejected", exception.ErrorCode);
@@ -144,7 +144,7 @@ public sealed class OpenAiCompatibleEmbeddingClientTests
 
         var exception = await Assert.ThrowsAsync<EmbeddingClientException>(() =>
             embeddingClient.CreateEmbeddingAsync(
-                new EmbeddingRequest("hello", "embedding-model", "embedding-error-test"),
+                new EmbeddingRequest("hello", "embedding-model", "embedding-error-test", EmbeddingInputKind.Query),
                 TestContext.Current.CancellationToken));
 
         Assert.Equal("openai-compatible", exception.Provider);
@@ -167,7 +167,7 @@ public sealed class OpenAiCompatibleEmbeddingClientTests
 
         var exception = await Assert.ThrowsAsync<EmbeddingClientException>(() =>
             embeddingClient.CreateEmbeddingAsync(
-                new EmbeddingRequest("hello", "embedding-model", "embedding-config-test"),
+                new EmbeddingRequest("hello", "embedding-model", "embedding-config-test", EmbeddingInputKind.Query),
                 TestContext.Current.CancellationToken));
 
         Assert.Equal("configuration_error", exception.ErrorCode);
@@ -187,7 +187,7 @@ public sealed class OpenAiCompatibleEmbeddingClientTests
 
         var exception = await Assert.ThrowsAsync<EmbeddingClientException>(() =>
             embeddingClient.CreateEmbeddingAsync(
-                new EmbeddingRequest("hello", "embedding-model", "embedding-http-test"),
+                new EmbeddingRequest("hello", "embedding-model", "embedding-http-test", EmbeddingInputKind.Query),
                 TestContext.Current.CancellationToken));
 
         Assert.Equal("configuration_error", exception.ErrorCode);
@@ -208,7 +208,7 @@ public sealed class OpenAiCompatibleEmbeddingClientTests
 
         var exception = await Assert.ThrowsAsync<EmbeddingClientException>(() =>
             embeddingClient.CreateEmbeddingAsync(
-                new EmbeddingRequest("hello", "embedding-model", "embedding-json-test"),
+                new EmbeddingRequest("hello", "embedding-model", "embedding-json-test", EmbeddingInputKind.Query),
                 TestContext.Current.CancellationToken));
 
         Assert.Equal("invalid_json", exception.ErrorCode);
@@ -243,7 +243,7 @@ public sealed class OpenAiCompatibleEmbeddingClientTests
 
         var exception = await Assert.ThrowsAsync<EmbeddingClientException>(() =>
             embeddingClient.CreateEmbeddingAsync(
-                new EmbeddingRequest("hello", "embedding-model", "embedding-empty-test"),
+                new EmbeddingRequest("hello", "embedding-model", "embedding-empty-test", EmbeddingInputKind.Query),
                 TestContext.Current.CancellationToken));
 
         Assert.Equal("empty_embedding", exception.ErrorCode);
@@ -270,7 +270,7 @@ public sealed class OpenAiCompatibleEmbeddingClientTests
         var embeddingClient = provider.GetRequiredService<IEmbeddingClient>();
         using var cancellation = new CancellationTokenSource();
         var call = embeddingClient.CreateEmbeddingAsync(
-            new EmbeddingRequest("hello", "embedding-model", "embedding-cancellation-test"),
+            new EmbeddingRequest("hello", "embedding-model", "embedding-cancellation-test", EmbeddingInputKind.Query),
             cancellation.Token);
         var attempts = app.Services.GetRequiredService<AttemptCounter>();
         await attempts.Started.Task.WaitAsync(TestContext.Current.CancellationToken);
@@ -299,7 +299,7 @@ public sealed class OpenAiCompatibleEmbeddingClientTests
 
         var exception = await Assert.ThrowsAsync<EmbeddingClientException>(() =>
             embeddingClient.CreateEmbeddingAsync(
-                new EmbeddingRequest("hello", "embedding-model", "embedding-timeout-test"),
+                new EmbeddingRequest("hello", "embedding-model", "embedding-timeout-test", EmbeddingInputKind.Query),
                 TestContext.Current.CancellationToken));
 
         Assert.Equal("timeout", exception.ErrorCode);

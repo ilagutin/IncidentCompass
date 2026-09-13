@@ -11,18 +11,25 @@ namespace IncidentCompass.Infrastructure.Intake;
 /// The rule that shapes this file is the single-provider default. The host-wide
 /// <c>IncidentCompass:ModelGateway:OpenAiCompatible</c> and
 /// <c>IncidentCompass:Embeddings:OpenAiCompatible</c> sections are the default provider profile, and
-/// a configuration that declares exactly one provider keeps using them; that provider's
+/// a configuration that declares exactly one counted provider keeps using them; that provider's
 /// <c>Endpoint</c> and <c>ApiKeySecretRef</c> override the default where they resolve and the
 /// default fills whatever they leave. That is what keeps every configuration shipped today working
 /// with no environment change.
 /// </para>
 /// <para>
-/// A configuration that declares more than one provider gets no default at all: every
+/// A configuration that declares more than one counted provider gets no default at all: every
 /// <c>OpenAICompatible</c> entry must name its own <c>Endpoint</c> and its own
 /// <c>ApiKeySecretRef</c>, and each named variable must be set. The line is drawn here rather than
 /// per-entry because the failure a default would cause in a multi-provider configuration is not a
 /// missing call, it is the first provider's credential arriving at the second provider's endpoint.
 /// Refusing to start is the only safe answer to that.
+/// </para>
+/// <para>
+/// Which entries count is <see cref="ProviderKindHostDefaultRule" />, the same rule
+/// <c>OpenAiCompatibleProviderProfileResolver</c> applies at call time: <c>OpenAICompatible</c> and
+/// <c>Mock</c> entries count, <c>LocalOnnx</c> entries do not. <c>Mock</c> and <c>LocalOnnx</c>
+/// entries need no <c>Endpoint</c> and no <c>ApiKeySecretRef</c> in any configuration, because
+/// neither reaches an endpoint or presents a credential.
 /// </para>
 /// </summary>
 internal static class TriageProviderSettingsLoadValidator
@@ -30,13 +37,13 @@ internal static class TriageProviderSettingsLoadValidator
     private const string OpenAiCompatibleKind = "OpenAICompatible";
 
     private static readonly HashSet<string> ProviderKinds =
-        new(["Mock", OpenAiCompatibleKind], StringComparer.Ordinal);
+        new(["Mock", OpenAiCompatibleKind, ProviderKindHostDefaultRule.LocalOnnxKind], StringComparer.Ordinal);
 
     public static void Validate(
         IReadOnlyDictionary<string, TriageProviderSettings> providers,
         IModelProviderSecretReader secretReader)
     {
-        var hostDefaultApplies = providers.Count <= 1;
+        var hostDefaultApplies = ProviderKindHostDefaultRule.HostDefaultApplies(providers);
 
         foreach (var (providerId, provider) in providers)
         {

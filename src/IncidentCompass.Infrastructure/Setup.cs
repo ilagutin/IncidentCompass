@@ -17,6 +17,7 @@ using IncidentCompass.Application.Investigation.Reports.List;
 using IncidentCompass.Application.Investigation.Reports.Redaction;
 using IncidentCompass.Application.Investigation.Retention;
 using IncidentCompass.Infrastructure.Configuration;
+using IncidentCompass.Infrastructure.Embeddings.LocalOnnx;
 using IncidentCompass.Infrastructure.Embeddings.Mock;
 using IncidentCompass.Infrastructure.Embeddings.OpenAi;
 using IncidentCompass.Infrastructure.Governance;
@@ -204,10 +205,15 @@ public static class Setup
             });
         services.TryAddScoped<MockAiModelClient>();
 
+        // There is no local chat adapter. ModelGatewayProviderOptionsValidator refuses LocalOnnx
+        // while the host starts, so this arm is unreachable on a started host; it throws rather than
+        // resolving some other client if a container is ever resolved without start-up validation.
         return services.AddProviderSelectedClient<
             IAiModelClient, ModelGatewayOptions, MockAiModelClient, OpenAiCompatibleModelClient>(
             static options => options.Provider,
-            static provider => $"Unsupported model gateway provider '{provider}'.");
+            static provider => $"Unsupported model gateway provider '{provider}'.",
+            static _ => throw new InvalidOperationException(
+                "Model gateway provider 'LocalOnnx' is an embedding-only provider with no chat adapter."));
     }
 
     private static IServiceCollection AddEmbeddingAdapters(this IServiceCollection services)
@@ -217,11 +223,13 @@ public static class Setup
         services.AddHttpClient<OpenAiCompatibleEmbeddingClient>(client =>
             client.Timeout = Timeout.InfiniteTimeSpan);
         services.TryAddScoped<MockEmbeddingClient>();
+        services.TryAddScoped<LocalOnnxEmbeddingClient>();
 
         return services.AddProviderSelectedClient<
             IEmbeddingClient, EmbeddingOptions, MockEmbeddingClient, OpenAiCompatibleEmbeddingClient>(
             static options => options.Provider,
-            static provider => $"Unsupported embedding provider '{provider}'.");
+            static provider => $"Unsupported embedding provider '{provider}'.",
+            static serviceProvider => serviceProvider.GetRequiredService<LocalOnnxEmbeddingClient>());
     }
 
     /// <summary>
@@ -229,17 +237,24 @@ public static class Setup
     /// The switch deliberately has no discard arm. CS8524 (the "unnamed enum value" half of switch
     /// exhaustiveness) is suppressed for it, while CS8509 (a declared <see cref="ProviderKind"/>
     /// member is not handled) stays on and is an error under TreatWarningsAsErrors, so adding a
-    /// third provider kind breaks the build here instead of falling through at runtime.
+    /// fourth provider kind breaks the build here instead of falling through at runtime.
     /// The suppressed case cannot arise: the only value reaching the switch comes from
     /// <c>ProviderKindParser.TryParse</c>, which returns <see langword="true"/> only for a declared
     /// member, and an unparsed provider string has already thrown above. A discard arm would trade
     /// that build-time failure for an <see cref="InvalidOperationException"/> raised while the
     /// container resolves the client, which is a 500 in the Api and a failing Worker claim loop.
+    /// <para>
+    /// <see cref="ProviderKind.LocalOnnx"/> is the one kind the two gateways do not share, so its arm
+    /// is a per-gateway factory rather than a third client type: the embedding gateway resolves its
+    /// local adapter, and the model gateway passes a factory that throws, which start-up validation
+    /// keeps unreachable because <c>ModelGatewayProviderOptionsValidator</c> refuses that kind.
+    /// </para>
     /// </summary>
     private static IServiceCollection AddProviderSelectedClient<TClient, TOptions, TMock, TOpenAiCompatible>(
         this IServiceCollection services,
         Func<TOptions, string?> providerAccessor,
-        Func<string?, string> unsupportedProviderMessage)
+        Func<string?, string> unsupportedProviderMessage,
+        Func<IServiceProvider, TClient> resolveLocalOnnxClient)
         where TClient : class
         where TOptions : class
         where TMock : class, TClient
@@ -259,7 +274,8 @@ public static class Setup
             return providerKind switch
             {
                 ProviderKind.Mock => serviceProvider.GetRequiredService<TMock>(),
-                ProviderKind.OpenAiCompatible => serviceProvider.GetRequiredService<TOpenAiCompatible>()
+                ProviderKind.OpenAiCompatible => serviceProvider.GetRequiredService<TOpenAiCompatible>(),
+                ProviderKind.LocalOnnx => resolveLocalOnnxClient(serviceProvider)
             };
 #pragma warning restore CS8524
         });

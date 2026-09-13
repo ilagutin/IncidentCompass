@@ -61,7 +61,7 @@
       "additionalProperties": false,
       "required": ["Kind"],
       "properties": {
-        "Kind": { "enum": ["Mock", "OpenAICompatible"] },
+        "Kind": { "enum": ["Mock", "OpenAICompatible", "LocalOnnx"] },
         "Endpoint": { "type": ["string", "null"] },
         "ApiKeySecretRef": { "type": ["string", "null"] }
       }

@@ -161,7 +161,7 @@ public sealed class OpenAiCompatibleEmbeddingFailureTests
 
         var exception = await Assert.ThrowsAsync<EmbeddingClientException>(() =>
             client.CreateEmbeddingAsync(
-                new EmbeddingRequest("hello", "embedding-model", "embedding-transport-test"),
+                new EmbeddingRequest("hello", "embedding-model", "embedding-transport-test", EmbeddingInputKind.Query),
                 TestContext.Current.CancellationToken));
 
         Assert.Equal(3, attempts);

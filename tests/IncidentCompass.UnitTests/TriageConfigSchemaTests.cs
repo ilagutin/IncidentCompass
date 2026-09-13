@@ -67,6 +67,32 @@ public sealed class TriageConfigSchemaTests
         Assert.False(result.IsValid);
     }
 
+    /// <summary>
+    /// The in-process embedding provider names no endpoint and no credential variable, and the
+    /// published schema has to accept it in that shape.
+    /// </summary>
+    [Fact]
+    public void LocalOnnxProviderWithoutEndpointOrSecretRef_MatchesPublishedSchema()
+    {
+        var configuration = LoadConfiguration();
+        configuration["Providers"]!["local-embed"] = new JsonObject { ["Kind"] = "LocalOnnx" };
+
+        var result = Evaluate(configuration);
+
+        Assert.True(result.IsValid);
+    }
+
+    [Fact]
+    public void UnknownProviderKind_IsRejected()
+    {
+        var configuration = LoadConfiguration();
+        configuration["Providers"]!["local-embed"] = new JsonObject { ["Kind"] = "LocalOnyx" };
+
+        var result = Evaluate(configuration);
+
+        Assert.False(result.IsValid);
+    }
+
     [Fact]
     public void PublicTriageConfigurationHasNoTicketCredentialOrRepositorySurface()
     {

@@ -91,7 +91,12 @@ public sealed class MultiProviderModelGatewayTests
             TwoProviders(LoopbackTestServer.GetAddress(first), LoopbackTestServer.GetAddress(second)));
 
         await embeddingClient.CreateEmbeddingAsync(
-            new EmbeddingRequest("hello", "embedding-model", "embedding-routing-test", "remote-oai"),
+            new EmbeddingRequest(
+                "hello",
+                "embedding-model",
+                "embedding-routing-test",
+                EmbeddingInputKind.Query,
+                "remote-oai"),
             TestContext.Current.CancellationToken);
 
         Assert.Equal(0, RequestLogOf(first).Count);

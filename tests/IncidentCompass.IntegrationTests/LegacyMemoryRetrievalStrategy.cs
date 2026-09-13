@@ -27,7 +27,7 @@ internal sealed class LegacyMemoryRetrievalStrategy(
         foreach (var query in corpus.Queries)
         {
             var embedding = await embeddingClient.CreateEmbeddingAsync(
-                new EmbeddingRequest(query.Text, corpus.EmbeddingModel, "memory-benchmark-legacy"),
+                new EmbeddingRequest(query.Text, corpus.EmbeddingModel, "memory-benchmark-legacy", EmbeddingInputKind.Query),
                 cancellationToken);
             EnsureMockEmbedding(corpus, embedding);
             var vectorMatches = await repository.SearchAsync(

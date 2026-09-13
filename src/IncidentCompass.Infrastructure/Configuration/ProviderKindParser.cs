@@ -12,6 +12,9 @@ internal static class ProviderKindParser
             case "OPENAICOMPATIBLE":
                 kind = ProviderKind.OpenAiCompatible;
                 return true;
+            case "LOCALONNX":
+                kind = ProviderKind.LocalOnnx;
+                return true;
             default:
                 kind = default;
                 return false;
