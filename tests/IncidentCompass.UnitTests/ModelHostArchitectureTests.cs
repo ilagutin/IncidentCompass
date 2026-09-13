@@ -14,6 +14,7 @@ public sealed class ModelHostArchitectureTests
     private static readonly string[] ForbiddenApiTokens =
     [
         "IncidentCompass.Infrastructure.Embeddings",
+        "IncidentCompass.Infrastructure.EmbeddingModels",
         "IEmbeddingClient",
         "AddEmbeddingHost",
         "MemoryCorpusCommand"

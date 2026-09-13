@@ -1,8 +1,11 @@
 using IncidentCompass.Application.Core.Embeddings;
 using IncidentCompass.Application.Core.Errors;
 using IncidentCompass.Application.Core.ModelGateway;
+using IncidentCompass.Application.Intake.Configuration;
 using IncidentCompass.Infrastructure.Configuration;
+using IncidentCompass.Infrastructure.EmbeddingModels;
 using IncidentCompass.Infrastructure.Embeddings.LocalOnnx;
+using Microsoft.Extensions.Options;
 
 namespace IncidentCompass.UnitTests;
 
@@ -22,6 +25,7 @@ public sealed class LocalOnnxProviderKindTests
     {
         Assert.True(ProviderKindParser.TryParse(provider, out var kind));
         Assert.Equal(ProviderKind.LocalOnnx, kind);
+        Assert.True(ProviderKindParser.IsLocalOnnx(provider));
         Assert.False(ProviderKindParser.IsOpenAiCompatible(provider));
     }
 
@@ -62,9 +66,13 @@ public sealed class LocalOnnxProviderKindTests
     }
 
     [Fact]
-    public async Task LocalOnnxEmbeddingClient_RefusesEveryCallAsNotInstalled()
+    public async Task LocalOnnxEmbeddingClient_RefusesACallWhileNoModelIsInstalled()
     {
-        var client = new LocalOnnxEmbeddingClient();
+        using var runtime = new LocalOnnxModelRuntime(Options.Create(new LocalOnnxEmbeddingOptions()));
+        var client = new LocalOnnxEmbeddingClient(
+            new LocalOnnxModelInstallState(),
+            runtime,
+            new UnreadConfigurationRepository());
 
         var exception = await Assert.ThrowsAsync<EmbeddingClientException>(() =>
             client.CreateEmbeddingAsync(
@@ -72,13 +80,21 @@ public sealed class LocalOnnxProviderKindTests
                     "checkout timeout while calling the payment service",
                     "intfloat/multilingual-e5-small",
                     "local-onnx-test",
-                    EmbeddingInputKind.Query,
-                    "local-embed"),
+                    EmbeddingInputKind.Query),
                 TestContext.Current.CancellationToken));
 
         Assert.Equal("embedding_model_not_installed", exception.ErrorCode);
         Assert.Equal("local-onnx", exception.Provider);
         Assert.Equal(ProviderFailureKind.Unavailable, exception.FailureKind);
         Assert.DoesNotContain("checkout timeout", exception.ToString(), StringComparison.Ordinal);
+    }
+
+    private sealed class UnreadConfigurationRepository : ITriageConfigurationRepository
+    {
+        public Task<TriageConfiguration> GetCurrentAsync(CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("A call without a route provider reads no configuration.");
+
+        public Task<TriageConfiguration> GetByHashAsync(string configHash, CancellationToken cancellationToken) =>
+            GetCurrentAsync(cancellationToken);
     }
 }

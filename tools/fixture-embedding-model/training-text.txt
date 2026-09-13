@@ -1,0 +1,25 @@
+checkout timeout while calling the payment service
+the payment service responded slowly and the checkout request timed out
+retry the payment call after the gateway recovers
+inventory latency increased during the release
+the order service returned an error to the checkout page
+database connection pool exhausted under load
+raise the client timeout and check the gateway latency
+rollback the release when the error rate stays high
+przekroczono limit czasu podczas finalizacji zamówienia
+usługa płatności odpowiada wolno i zamówienie nie zostało złożone
+ponów płatność po przywróceniu bramki
+opóźnienie magazynu wzrosło podczas wdrożenia
+błąd połączenia z bazą danych pod dużym obciążeniem
+zwiększ limit czasu klienta i sprawdź opóźnienie bramki
+wycofaj wdrożenie gdy liczba błędów pozostaje wysoka
+превышено время ожидания при оформлении заказа
+платёжный сервис отвечает медленно и заказ не оформлен
+повторите платёж после восстановления шлюза
+задержка склада выросла во время выпуска
+ошибка подключения к базе данных под нагрузкой
+увеличьте таймаут клиента и проверьте задержку шлюза
+откатите выпуск если доля ошибок остаётся высокой
+съешь же ещё этих мягких французских булок да выпей чаю
+zażółć gęślą jaźń
+the quick brown fox jumps over the lazy dog

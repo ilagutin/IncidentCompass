@@ -17,6 +17,7 @@ using IncidentCompass.Application.Investigation.Reports.List;
 using IncidentCompass.Application.Investigation.Reports.Redaction;
 using IncidentCompass.Application.Investigation.Retention;
 using IncidentCompass.Infrastructure.Configuration;
+using IncidentCompass.Infrastructure.EmbeddingModels;
 using IncidentCompass.Infrastructure.Embeddings.LocalOnnx;
 using IncidentCompass.Infrastructure.Embeddings.Mock;
 using IncidentCompass.Infrastructure.Embeddings.OpenAi;
@@ -83,17 +84,24 @@ public static class Setup
 
     /// <summary>
     /// The embedding model host: the provider-selected <see cref="IEmbeddingClient" /> and its options,
-    /// the memory seed and resync pass, the synchronizer the <c>memory rebuild</c> command runs, and the
-    /// <c>memory_search</c> tool. It is not part of <see cref="AddInfrastructure" /> because one process
-    /// owns the embedding model, and that is the Worker, whose <c>AddWorker</c> calls it. The Api keeps
-    /// the corpus status and health readers, none of which embeds anything. The client, the
-    /// synchronizer, the hosted service and the tool are TryAdd registrations, so a client bound
-    /// before this call wins and a second call adds no second hosted service or tool.
+    /// the local model store and its install pass, the memory seed and resync pass, the synchronizer
+    /// the <c>memory rebuild</c> command runs, and the <c>memory_search</c> tool. It is not part of
+    /// <see cref="AddInfrastructure" /> because one process owns the embedding model, and that is the
+    /// Worker, whose <c>AddWorker</c> calls it. The Api keeps the corpus status and health readers,
+    /// none of which embeds anything. The client, the synchronizer, the hosted services and the tool
+    /// are TryAdd registrations, so a client bound before this call wins and a second call adds no
+    /// second hosted service or tool.
+    /// <para>
+    /// The local model install hosted service is registered before the memory seed hosted service.
+    /// The generic host starts hosted services in registration order, so the first seed pass finds the
+    /// local model installed or finds its named failure.
+    /// </para>
     /// </summary>
     public static IServiceCollection AddEmbeddingHost(this IServiceCollection services, IConfiguration configuration)
     {
         services.AddEmbeddingOptions(configuration);
         services.AddEmbeddingAdapters();
+        services.AddLocalOnnxModelStore(configuration);
         services.TryAddScoped<MemorySeedSynchronizer>();
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, MemorySeedHostedService>());
         services.AddMemorySearchTool();
@@ -224,6 +232,7 @@ public static class Setup
             client.Timeout = Timeout.InfiniteTimeSpan);
         services.TryAddScoped<MockEmbeddingClient>();
         services.TryAddScoped<LocalOnnxEmbeddingClient>();
+        services.TryAddSingleton<LocalOnnxModelRuntime>();
 
         return services.AddProviderSelectedClient<
             IEmbeddingClient, EmbeddingOptions, MockEmbeddingClient, OpenAiCompatibleEmbeddingClient>(

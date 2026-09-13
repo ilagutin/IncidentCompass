@@ -3,6 +3,7 @@ using IncidentCompass.Application.Core.ModelClients;
 using IncidentCompass.Application.Remediation;
 using IncidentCompass.Application.Tickets;
 using IncidentCompass.Infrastructure;
+using IncidentCompass.Infrastructure.EmbeddingModels;
 using IncidentCompass.Infrastructure.Embeddings.LocalOnnx;
 using IncidentCompass.Infrastructure.Tickets;
 using IncidentCompass.TestSupport;
@@ -328,32 +329,65 @@ public sealed class HostOptionsValidationTests
     }
 
     /// <summary>
-    /// The embedding gateway's selector arm for <c>LocalOnnx</c> resolves the local adapter, and with
-    /// no model installed its first call fails with the named code rather than answering.
+    /// The embedding gateway's selector arm for <c>LocalOnnx</c> resolves the local adapter. The model
+    /// install runs while the host starts; here its downloads point at a closed loopback port, so the
+    /// install fails, the host still starts, and the first call is refused with the install's code
+    /// rather than answered.
     /// </summary>
     [Fact]
-    public async Task EmbeddingHost_SelectsTheLocalOnnxAdapter_WhichRefusesACallAsNotInstalled()
+    public async Task EmbeddingHost_SelectsTheLocalOnnxAdapter_WhichRefusesACallWithTheInstallFailure()
+    {
+        var modelDirectory = Path.Combine(Path.GetTempPath(), "incidentcompass-host-local-onnx-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            using var host = CreateEmbeddingHostWithConfiguration(new Dictionary<string, string?>
+            {
+                ["IncidentCompass:Embeddings:Provider"] = "LocalOnnx",
+                ["IncidentCompass:Embeddings:LocalOnnx:ModelDirectory"] = modelDirectory,
+                ["IncidentCompass:Embeddings:LocalOnnx:ModelFileUrl"] = "https://127.0.0.1:1/model.onnx",
+                ["IncidentCompass:Embeddings:LocalOnnx:TokenizerFileUrl"] = "https://127.0.0.1:1/sentencepiece.bpe.model"
+            });
+            await host.StartAsync();
+
+            using var scope = host.Services.CreateScope();
+            var embeddingClient = scope.ServiceProvider.GetRequiredService<IEmbeddingClient>();
+            var exception = await Assert.ThrowsAsync<EmbeddingClientException>(() =>
+                embeddingClient.CreateEmbeddingAsync(
+                    new EmbeddingRequest(
+                        "checkout timeout",
+                        "intfloat/multilingual-e5-small",
+                        "local-onnx-selector-test",
+                        EmbeddingInputKind.Query),
+                    TestContext.Current.CancellationToken));
+
+            Assert.IsType<LocalOnnxEmbeddingClient>(embeddingClient);
+            Assert.Equal(LocalOnnxModelErrorCodes.FetchFailed, exception.ErrorCode);
+            Assert.Equal(LocalOnnxEmbeddingProvider.Name, exception.Provider);
+            await host.StopAsync();
+        }
+        finally
+        {
+            if (Directory.Exists(modelDirectory))
+            {
+                Directory.Delete(modelDirectory, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task HostServices_RejectLocalOnnxWithoutAModelDirectoryOnStart()
     {
         using var host = CreateEmbeddingHostWithConfiguration(new Dictionary<string, string?>
         {
             ["IncidentCompass:Embeddings:Provider"] = "LocalOnnx"
         });
-        await host.StartAsync();
 
-        using var scope = host.Services.CreateScope();
-        var embeddingClient = scope.ServiceProvider.GetRequiredService<IEmbeddingClient>();
-        var exception = await Assert.ThrowsAsync<EmbeddingClientException>(() =>
-            embeddingClient.CreateEmbeddingAsync(
-                new EmbeddingRequest(
-                    "checkout timeout",
-                    "intfloat/multilingual-e5-small",
-                    "local-onnx-selector-test",
-                    EmbeddingInputKind.Query),
-                TestContext.Current.CancellationToken));
+        var exception = await Record.ExceptionAsync(() => host.StartAsync());
 
-        Assert.IsType<LocalOnnxEmbeddingClient>(embeddingClient);
-        Assert.Equal(LocalOnnxEmbeddingProvider.ModelNotInstalledErrorCode, exception.ErrorCode);
-        Assert.Equal(LocalOnnxEmbeddingProvider.Name, exception.Provider);
+        Assert.NotNull(exception);
+        Assert.Contains(
+            GetOptionsValidationFailures(exception),
+            failure => failure.Contains("IncidentCompass:Embeddings:LocalOnnx:ModelDirectory", StringComparison.Ordinal));
     }
 
     [Fact]
