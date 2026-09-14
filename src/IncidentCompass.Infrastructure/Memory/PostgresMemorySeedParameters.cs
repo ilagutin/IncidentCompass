@@ -35,6 +35,7 @@ internal static class PostgresMemorySeedParameters
         command.AddParameter("memory_item_id", memoryItemId);
         command.AddParameter("tenant_id", tenantId);
         command.AddParameter("chunk_position", chunk.Position);
+        command.AddParameter("heading_path", chunk.HeadingPath);
         command.AddParameter("text", chunk.Text);
         command.AddParameter("text_hash", chunk.TextHash);
         command.AddParameter("embedding_provider", chunk.EmbeddingProvider);

@@ -16,7 +16,8 @@ internal static class MemoryCorpusStateEvaluator
     public static MemoryCorpusState Evaluate(
         string configuredProviderId,
         string configuredModel,
-        MemoryCorpusInventory inventory)
+        MemoryCorpusInventory inventory,
+        string? configuredChunkPolicy = null)
     {
         ArgumentNullException.ThrowIfNull(inventory);
         if (inventory.ActiveItemCount == 0 || inventory.ActiveIdentities.Count == 0)
@@ -40,6 +41,12 @@ internal static class MemoryCorpusStateEvaluator
             !string.Equals(configuredProviderId, providerId, StringComparison.Ordinal))
         {
             return MemoryCorpusState.EmbeddingRouteChanged;
+        }
+
+        if (recorded is not null && inventory.Current?.ChunkPolicy is { } policy &&
+            configuredChunkPolicy is not null && !string.Equals(policy, configuredChunkPolicy, StringComparison.Ordinal))
+        {
+            return MemoryCorpusState.ChunkPolicyChanged;
         }
 
         return recorded is null ? MemoryCorpusState.Unrecorded : MemoryCorpusState.Current;

@@ -130,6 +130,7 @@ internal sealed class MemorySearchTool(IEmbeddingClient embeddingClient, IMemory
             ["source"] = match.Source,
             ["title"] = match.Title,
             ["chunkPosition"] = match.ChunkPosition,
+            ["headingPath"] = match.HeadingPath,
             ["quote"] = CreateQuote(match.Text),
             ["score"] = Math.Round(match.Score, 6),
             ["retrievalConfidence"] = MemoryRetrievalConfidence.Band(match.Score),
@@ -155,6 +156,8 @@ internal sealed class MemorySearchTool(IEmbeddingClient embeddingClient, IMemory
             {
                 ["artifactId"] = drafts[i].Id.ToString(),
                 ["memoryItemId"] = match.MemoryItemId.ToString(),
+                ["chunkPosition"] = match.ChunkPosition,
+                ["headingPath"] = match.HeadingPath,
                 ["title"] = match.Title,
                 ["kind"] = match.Kind,
                 ["source"] = match.Source,

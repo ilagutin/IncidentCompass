@@ -34,6 +34,8 @@ internal sealed class LocalOnnxLoadedModel : IDisposable
 
     public LocalOnnxInstalledModel Installed { get; }
 
+    internal LocalOnnxInputEncoder Encoder => encoder;
+
     public static LocalOnnxLoadedModel Load(LocalOnnxInstalledModel installed, int intraOpThreads)
     {
         ArgumentNullException.ThrowIfNull(installed);

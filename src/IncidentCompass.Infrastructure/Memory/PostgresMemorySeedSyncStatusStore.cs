@@ -22,12 +22,20 @@ internal sealed class PostgresMemorySeedSyncStatusStore(
     {
         await using var connection = await dataSourceProvider.OpenConnectionAsync(cancellationToken);
         await using var command = new NpgsqlCommand("""
-            SELECT enabled, runtime_resync_enabled, last_attempt_at_utc, last_success_at_utc,
-                   active_generation, last_error_code
-            FROM incidentcompass.memory_seed_sync_status
-            WHERE tenant_id = @tenant_id AND seed_owner = @seed_owner;
+            SELECT status.enabled, status.runtime_resync_enabled, status.last_attempt_at_utc, status.last_success_at_utc,
+                   status.active_generation,
+                   CASE WHEN status.last_error_code = @chunk_policy_changed
+                         AND generation.generation IS DISTINCT FROM status.active_generation
+                        THEN NULL ELSE status.last_error_code END
+            FROM incidentcompass.memory_seed_sync_status status
+            LEFT JOIN incidentcompass.memory_corpus_generations generation
+              ON generation.tenant_id = status.tenant_id AND generation.seed_owner = status.seed_owner AND generation.is_current
+            WHERE status.tenant_id = @tenant_id AND status.seed_owner = @seed_owner;
             """, connection);
         AddScopeParameters(command);
+        // A pass that observed the previous generation may persist its block after a concurrent
+        // rebuild committed. That observation cannot block the replacement generation's health.
+        command.AddParameter("chunk_policy_changed", MemoryCorpusErrorCodes.ChunkPolicyChanged);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken))
         {

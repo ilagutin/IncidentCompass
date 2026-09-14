@@ -29,6 +29,7 @@ internal static class PostgresMemorySeedCorpusReconciler
         try
         {
             await LockCorpusAsync(connection, transaction, corpus, cancellationToken);
+            await EnsureRetainedChunkPolicyAsync(connection, transaction, corpus, cancellationToken);
             await EnsureCompleteScanAsync(connection, transaction, corpus, cancellationToken);
             foreach (var entry in corpus.Entries)
             {
@@ -82,6 +83,31 @@ internal static class PostgresMemorySeedCorpusReconciler
             throw new InvalidOperationException(
                 "Memory seed scan is missing directories required by the current corpus: " +
                 string.Join(", ", missingPrefixes) + ".");
+        }
+    }
+
+    private static async Task EnsureRetainedChunkPolicyAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        MemorySeedCorpus corpus,
+        CancellationToken cancellationToken)
+    {
+        if (corpus.Entries.All(static entry => entry.Chunks.Count > 0))
+        {
+            return;
+        }
+
+        await using var command = new NpgsqlCommand("""
+            SELECT chunk_policy FROM incidentcompass.memory_corpus_generations
+            WHERE tenant_id = @tenant_id AND seed_owner = @seed_owner AND is_current;
+            """, connection, transaction);
+        command.AddParameter("tenant_id", corpus.TenantId);
+        command.AddParameter("seed_owner", corpus.Owner);
+        var currentPolicy = await command.ExecuteScalarAsync(cancellationToken) as string;
+        if (!string.Equals(currentPolicy, corpus.ChunkPolicy, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Memory chunk policy changed during reconciliation. Retry the pass against the current generation.");
         }
     }
 

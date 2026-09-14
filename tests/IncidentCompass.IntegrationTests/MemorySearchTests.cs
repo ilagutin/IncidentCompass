@@ -6,9 +6,11 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using IncidentCompass.Application.Core.Embeddings;
 using IncidentCompass.Application.Core.ModelClients;
+using IncidentCompass.Application.Governance.Tools;
 using IncidentCompass.Application.Intake.Configuration;
 using IncidentCompass.Application.Investigation.Jobs;
 using IncidentCompass.Application.Memory;
+using IncidentCompass.Domain.Incidents;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
@@ -22,6 +24,51 @@ namespace IncidentCompass.IntegrationTests;
 public sealed class MemorySearchTests(PostgresRepositoryFixture postgres)
 {
     private const string MemoryModel = "mock-memory-embedding-v1";
+
+    [DockerAvailableFact]
+    public async Task MemorySearch_ReturnsTwoSectionsOfOneItemWithTheirHeadingPaths()
+    {
+        using var scope = await CreateScopeAsync();
+        using var services = scope.Factory.Services.CreateScope();
+        var repository = services.ServiceProvider.GetRequiredService<IMemoryRepository>();
+        var embeddingClient = services.ServiceProvider.GetRequiredService<IEmbeddingClient>();
+        var configuration = await services.ServiceProvider.GetRequiredService<ITriageConfigurationRepository>()
+            .GetCurrentAsync(TestContext.Current.CancellationToken);
+        var route = configuration.Routes[configuration.Tools["memory_search"].EmbeddingRouteId!];
+        var embedding = await embeddingClient.CreateEmbeddingAsync(
+            new EmbeddingRequest("checkout timeout inventory", route.Model, "section-search", EmbeddingInputKind.Query, route.ProviderId),
+            TestContext.Current.CancellationToken);
+        var itemId = await InsertMemoryItemAsync(scope.ConnectionString, "local", "sections.md");
+        foreach (var position in Enumerable.Range(0, 2))
+        {
+            await InsertMemoryChunkAsync(scope.ConnectionString, itemId, "local", embedding.Provider,
+                embedding.Model, embedding.Vector.Count, embedding.Vector.ToArray(), TestContext.Current.CancellationToken,
+                chunkPosition: position, headingPath: position == 0 ? "Runbook > Diagnose" : "Runbook > Repair");
+        }
+
+        var job = new TriageJob(Guid.NewGuid(), Guid.NewGuid(), TriageJobStatus.Processing, 1,
+            null, null, null, null, null, configuration.ConfigHash, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
+        var context = new AgentToolExecutionContext(job, configuration, "memory", "memory_search", "local", "checkout");
+        var result = await new MemorySearchTool(embeddingClient, repository).ExecuteAsync(
+            context, JsonSerializer.SerializeToElement(new { query = "checkout timeout inventory" }),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, result.Artifacts!.Count);
+        var output = result.Output.GetProperty("items").EnumerateArray().ToArray();
+        Assert.Equal(2, output.Length);
+        foreach (var artifact in result.Artifacts)
+        {
+            var position = artifact.Payload["chunkPosition"]!.GetValue<int>();
+            var path = position == 0 ? "Runbook > Diagnose" : "Runbook > Repair";
+            Assert.Equal(itemId.ToString(), artifact.Payload["memoryItemId"]!.GetValue<string>());
+            Assert.Equal(path, artifact.Payload["headingPath"]!.GetValue<string>());
+            Assert.StartsWith(path, artifact.Payload["quote"]!.GetValue<string>());
+            var item = Assert.Single(output, item => item.GetProperty("artifactId").GetString() == artifact.Id.ToString());
+            Assert.Equal(path, item.GetProperty("headingPath").GetString());
+            Assert.Equal(position, item.GetProperty("chunkPosition").GetInt32());
+            Assert.StartsWith(path, item.GetProperty("quote").GetString());
+        }
+    }
 
     [DockerAvailableFact]
     public async Task MemoryChunks_RejectEmbeddingDimensionMismatch()
@@ -395,17 +442,18 @@ public sealed class MemorySearchTests(PostgresRepositoryFixture postgres)
         float[] values,
         CancellationToken cancellationToken,
         Guid? chunkId = null,
-        int chunkPosition = 0)
+        int chunkPosition = 0,
+        string? headingPath = null)
     {
         await using var connection = new NpgsqlConnection(connectionString);
         await connection.OpenAsync(cancellationToken);
         await using var command = new NpgsqlCommand("""
             INSERT INTO incidentcompass.memory_chunks (
-                id, memory_item_id, tenant_id, chunk_position, text, text_hash,
+                id, memory_item_id, tenant_id, chunk_position, heading_path, text, text_hash,
                 embedding_provider, embedding_model, embedding_dimensions,
                 embedding_values, embedding_vector, created_at_utc)
             VALUES (
-                @id, @memory_item_id, @tenant_id, @chunk_position, 'checkout timeout inventory', @text_hash,
+                @id, @memory_item_id, @tenant_id, @chunk_position, @heading_path, @text, @text_hash,
                 @embedding_provider, @embedding_model, @embedding_dimensions,
                 @embedding_values, @embedding_vector::vector, @created_at_utc);
             """, connection);
@@ -413,6 +461,8 @@ public sealed class MemorySearchTests(PostgresRepositoryFixture postgres)
         command.Parameters.AddWithValue("memory_item_id", itemId);
         command.Parameters.AddWithValue("tenant_id", tenantId);
         command.Parameters.AddWithValue("chunk_position", chunkPosition);
+        command.Parameters.Add("heading_path", NpgsqlDbType.Text).Value = (object?)headingPath ?? DBNull.Value;
+        command.Parameters.AddWithValue("text", headingPath is null ? "checkout timeout inventory" : headingPath + "\n\ncheckout timeout inventory");
         command.Parameters.AddWithValue("text_hash", Hash(model + embeddingDimensions));
         command.Parameters.AddWithValue("embedding_provider", provider);
         command.Parameters.AddWithValue("embedding_model", model);

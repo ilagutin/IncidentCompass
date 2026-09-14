@@ -142,6 +142,14 @@ public static class MemoryCorpusCommand
             return 0;
         }
 
+        if (snapshot.State == nameof(MemoryCorpusState.ChunkPolicyChanged))
+        {
+            Console.Error.WriteLine(
+                "memory_chunk_policy_changed: the active corpus retains its previous chunking policy and remains retrievable." +
+                " Run 'memory rebuild' to publish every reviewed file under the configured chunking policy.");
+            return 1;
+        }
+
         Console.Error.WriteLine(
             "The active corpus was not built under the configured embedding route, so memory_search" +
             " finds nothing in it. It is intact and still retrievable under the route that built it." +

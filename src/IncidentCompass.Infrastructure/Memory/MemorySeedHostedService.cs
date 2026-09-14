@@ -22,13 +22,19 @@ internal sealed partial class MemorySeedHostedService(
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         var settings = options.Value;
+        MemorySeedOptionsValidator.Validate(settings);
+        using (var scope = scopeFactory.CreateScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<IMemoryChunkTokenCounter>()
+                .InitializeAsync(settings.Chunking, cancellationToken);
+        }
+
         syncStatus.Configure(settings.Enabled, settings.RuntimeResyncEnabled);
         if (!settings.Enabled)
         {
             return;
         }
 
-        MemorySeedOptionsValidator.Validate(settings);
         await statusPersistence.SaveAsync(syncStatus.Snapshot, cancellationToken);
         await SynchronizeAsync(cancellationToken);
         if (!settings.RuntimeResyncEnabled)

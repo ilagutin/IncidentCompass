@@ -9,4 +9,5 @@ internal sealed record MemoryCorpusGeneration(
     MemoryCorpusIdentity Identity,
     int ItemCount,
     int ChunkCount,
-    DateTimeOffset PublishedAtUtc);
+    DateTimeOffset PublishedAtUtc,
+    string? ChunkPolicy = null);

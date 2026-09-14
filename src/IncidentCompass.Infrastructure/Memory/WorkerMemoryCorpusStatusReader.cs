@@ -15,7 +15,8 @@ internal sealed class WorkerMemoryCorpusStatusReader(
     IOptions<MemorySeedOptions> options,
     ITriageConfigurationRepository configurationRepository,
     IMemoryRepository memoryRepository,
-    WorkerMemoryEmbeddingRouteResolver routeResolver) : IMemoryCorpusStatusReader
+    WorkerMemoryEmbeddingRouteResolver routeResolver,
+    IMemoryChunkTokenCounter tokenCounter) : IMemoryCorpusStatusReader
 {
     public async Task<MemoryCorpusSnapshot> GetAsync(CancellationToken cancellationToken)
     {
@@ -26,6 +27,6 @@ internal sealed class WorkerMemoryCorpusStatusReader(
             settings.TenantId, settings.Owner, cancellationToken);
         return resolution.BlockedState is { } blocked
             ? MemoryCorpusStatusReader.Compose(settings, resolution.Route, inventory, blocked)
-            : MemoryCorpusStatusReader.Compose(settings, resolution.Route, inventory);
+            : MemoryCorpusStatusReader.Compose(settings, resolution.Route, inventory, tokenCounter.Kind);
     }
 }

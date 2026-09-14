@@ -27,6 +27,31 @@ internal static class PostgresMemoryCorpusGenerationWriter
         var counts = await ReadCountsAsync(connection, transaction, corpus, cancellationToken);
         await ClearPreviousCurrentAsync(connection, transaction, corpus, cancellationToken);
         await InsertAsync(connection, transaction, timestamp, corpus, counts, cancellationToken);
+        await ClearResolvedChunkPolicyBlockAsync(connection, transaction, timestamp, corpus, cancellationToken);
+    }
+
+    private static async Task ClearResolvedChunkPolicyBlockAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        DateTimeOffset timestamp,
+        MemorySeedCorpus corpus,
+        CancellationToken cancellationToken)
+    {
+        // Publication and resolution of this policy block are one durable fact. A failed status
+        // update rolls back the new generation too, rather than reporting a successful rebuild
+        // whose health still tells the operator to rebuild it.
+        await using var command = new NpgsqlCommand("""
+            UPDATE incidentcompass.memory_seed_sync_status
+            SET last_error_code = NULL, active_generation = @generation,
+                last_success_at_utc = @timestamp, updated_at_utc = @timestamp
+            WHERE tenant_id = @tenant_id AND seed_owner = @seed_owner
+              AND last_error_code = @chunk_policy_changed;
+            """, connection, transaction);
+        AddScope(command, corpus);
+        command.AddParameter("generation", corpus.Generation);
+        command.AddParameter("timestamp", timestamp);
+        command.AddParameter("chunk_policy_changed", MemoryCorpusErrorCodes.ChunkPolicyChanged);
+        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private static async Task VerifySingleIdentityAsync(
@@ -122,11 +147,11 @@ internal static class PostgresMemoryCorpusGenerationWriter
             INSERT INTO incidentcompass.memory_corpus_generations (
                 generation, tenant_id, seed_owner, route_id, provider_id,
                 embedding_provider, embedding_model, embedding_dimensions,
-                item_count, chunk_count, is_current, published_at_utc)
+                item_count, chunk_count, is_current, published_at_utc, chunk_policy)
             VALUES (
                 @generation, @tenant_id, @seed_owner, @route_id, @provider_id,
                 @embedding_provider, @embedding_model, @embedding_dimensions,
-                @item_count, @chunk_count, true, @published_at_utc)
+                @item_count, @chunk_count, true, @published_at_utc, @chunk_policy)
             ON CONFLICT (generation) DO UPDATE SET
                 route_id = EXCLUDED.route_id,
                 provider_id = EXCLUDED.provider_id,
@@ -135,6 +160,7 @@ internal static class PostgresMemoryCorpusGenerationWriter
                 embedding_dimensions = EXCLUDED.embedding_dimensions,
                 item_count = EXCLUDED.item_count,
                 chunk_count = EXCLUDED.chunk_count,
+                chunk_policy = EXCLUDED.chunk_policy,
                 is_current = true,
                 published_at_utc = EXCLUDED.published_at_utc;
             """, connection, transaction);
@@ -147,6 +173,7 @@ internal static class PostgresMemoryCorpusGenerationWriter
         command.AddParameter("embedding_dimensions", corpus.Identity.EmbeddingDimensions);
         command.AddParameter("item_count", counts.Items);
         command.AddParameter("chunk_count", counts.Chunks);
+        command.AddParameter("chunk_policy", corpus.ChunkPolicy);
         command.AddParameter("published_at_utc", timestamp);
         await command.ExecuteNonQueryAsync(cancellationToken);
     }

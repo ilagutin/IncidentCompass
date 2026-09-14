@@ -111,4 +111,19 @@ public sealed class MemoryCorpusStateEvaluatorTests
             [active],
             2,
             2);
+
+    [Theory]
+    [InlineData(null, MemoryCorpusState.Current)]
+    [InlineData("v1;max=448;overlap=48;min=32;estimate", MemoryCorpusState.Current)]
+    [InlineData("v1;max=400;overlap=48;min=32;estimate", MemoryCorpusState.ChunkPolicyChanged)]
+    [InlineData("v1;max=448;overlap=48;min=32;exact", MemoryCorpusState.ChunkPolicyChanged)]
+    public void Evaluate_RecordedPolicyChangesRequireRebuildButMissingPolicyIsNotDifferent(string? policy, object expected)
+    {
+        var identity = new MemoryCorpusIdentity("memory-embed", "local-oai", "mock", "model", 4);
+        var inventory = Inventory(identity, identity);
+        inventory = inventory with { Current = inventory.Current! with { ChunkPolicy = policy } };
+
+        Assert.Equal(expected, MemoryCorpusStateEvaluator.Evaluate(
+            "local-oai", "model", inventory, "v1;max=448;overlap=48;min=32;estimate"));
+    }
 }

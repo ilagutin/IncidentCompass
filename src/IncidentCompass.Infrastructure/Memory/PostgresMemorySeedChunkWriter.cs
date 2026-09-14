@@ -41,11 +41,11 @@ internal static class PostgresMemorySeedChunkWriter
     {
         await using var command = new NpgsqlCommand("""
             INSERT INTO incidentcompass.memory_chunks (
-                id, memory_item_id, tenant_id, chunk_position, text, text_hash,
+                id, memory_item_id, tenant_id, chunk_position, heading_path, text, text_hash,
                 embedding_provider, embedding_model, embedding_dimensions,
                 embedding_values, embedding_vector, created_at_utc)
             VALUES (
-                @id, @memory_item_id, @tenant_id, @chunk_position, @text, @text_hash,
+                @id, @memory_item_id, @tenant_id, @chunk_position, @heading_path, @text, @text_hash,
                 @embedding_provider, @embedding_model, @embedding_dimensions,
                 @embedding_values, @embedding_vector, @timestamp);
             """, connection, transaction);

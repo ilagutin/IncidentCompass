@@ -30,20 +30,36 @@ internal sealed class MemoryCorpusStatusReader(
         var route = MemoryEmbeddingRouteResolver.Resolve(configuration);
         var inventory = await memoryRepository.GetCorpusInventoryAsync(
             settings.TenantId, settings.Owner, cancellationToken);
-        if (!MemoryEmbeddingRouteResolver.IsLocalOnnxRoute(configuration, route))
+        var workerStatus = await syncStatusReader.GetAsync(cancellationToken);
+        // Chunking belongs to the Worker. The Api has no counter and may have different host
+        // defaults, so it reads the Worker's decision for the current generation. A completed
+        // rebuild supersedes a blocked status even before the next background synchronization.
+        var errorCode = workerStatus.LastErrorCode;
+        if (errorCode == MemoryCorpusErrorCodes.ChunkPolicyChanged &&
+            workerStatus.ActiveGeneration != inventory.Current?.Generation)
         {
-            return Compose(settings, route, inventory);
+            errorCode = null;
         }
 
-        var workerStatus = await syncStatusReader.GetAsync(cancellationToken);
-        return ComposeForLocalModelRoute(settings, route, inventory, workerStatus.LastErrorCode);
+        if (!MemoryEmbeddingRouteResolver.IsLocalOnnxRoute(configuration, route))
+        {
+            var state = MemoryCorpusStateEvaluator.Evaluate(route.ProviderId, route.Model, inventory);
+            return Compose(settings, route, inventory,
+                errorCode == MemoryCorpusErrorCodes.ChunkPolicyChanged && state == MemoryCorpusState.Current
+                    ? MemoryCorpusState.ChunkPolicyChanged
+                    : state);
+        }
+
+        return ComposeForLocalModelRoute(settings, route, inventory, errorCode);
     }
 
     internal static MemoryCorpusSnapshot Compose(
         MemorySeedOptions settings,
         MemoryEmbeddingRoute route,
-        MemoryCorpusInventory inventory) =>
-        Compose(settings, route, inventory, MemoryCorpusStateEvaluator.Evaluate(route.ProviderId, route.Model, inventory));
+        MemoryCorpusInventory inventory,
+        string counterKind = "estimate") =>
+        Compose(settings, route, inventory, MemoryCorpusStateEvaluator.Evaluate(
+            route.ProviderId, route.Model, inventory, settings.Chunking.Describe(counterKind)));
 
     internal static MemoryCorpusSnapshot ComposeForLocalModelRoute(
         MemorySeedOptions settings,
@@ -51,7 +67,8 @@ internal sealed class MemoryCorpusStatusReader(
         MemoryCorpusInventory inventory,
         string? workerErrorCode)
     {
-        var idPartState = MemoryCorpusStateEvaluator.Evaluate(route.ProviderId, route.Model, WithModelIdParts(inventory));
+        var idPartState = MemoryCorpusStateEvaluator.Evaluate(
+            route.ProviderId, route.Model, WithModelIdParts(inventory));
         return Compose(settings, route, inventory, FoldWorkerErrorCode(idPartState, workerErrorCode));
     }
 
@@ -73,7 +90,7 @@ internal sealed class MemoryCorpusStatusReader(
             settings.TenantId,
             settings.Owner,
             state.ToString(),
-            state is MemoryCorpusState.EmbeddingRouteChanged or MemoryCorpusState.MixedEmbeddingRoutes,
+            state is MemoryCorpusState.EmbeddingRouteChanged or MemoryCorpusState.MixedEmbeddingRoutes or MemoryCorpusState.ChunkPolicyChanged,
             route.RouteId,
             route.ProviderId,
             route.Model,
@@ -96,6 +113,8 @@ internal sealed class MemoryCorpusStatusReader(
             MemoryCorpusErrorCodes.EmbeddingModelUnavailable => MemoryCorpusState.EmbeddingModelUnavailable,
             MemoryCorpusErrorCodes.EmbeddingRouteChanged when idPartState == MemoryCorpusState.Current =>
                 MemoryCorpusState.EmbeddingRouteChanged,
+            MemoryCorpusErrorCodes.ChunkPolicyChanged when idPartState == MemoryCorpusState.Current =>
+                MemoryCorpusState.ChunkPolicyChanged,
             _ => idPartState
         };
 

@@ -8,4 +8,5 @@ internal sealed record MemorySeedChunk(
     string EmbeddingProvider,
     string EmbeddingModel,
     int EmbeddingDimensions,
-    IReadOnlyList<float> EmbeddingValues);
+    IReadOnlyList<float> EmbeddingValues,
+    string? HeadingPath = null);

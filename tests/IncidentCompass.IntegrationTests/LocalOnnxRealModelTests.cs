@@ -2,6 +2,7 @@ using IncidentCompass.Application.Core.Embeddings;
 using IncidentCompass.Application.Intake.Configuration;
 using IncidentCompass.Infrastructure.EmbeddingModels;
 using IncidentCompass.Infrastructure.Embeddings.LocalOnnx;
+using IncidentCompass.Infrastructure.Memory;
 using Microsoft.Extensions.Options;
 
 namespace IncidentCompass.IntegrationTests;
@@ -56,6 +57,24 @@ public sealed class LocalOnnxRealModelTests
             installState,
             store);
         var client = new LocalOnnxEmbeddingClient(reader, runtime, new UnreadConfigurationRepository());
+
+        var chunking = new MemoryChunkingOptions();
+        var counter = new LocalOnnxChunkTokenCounter(reader, runtime);
+        await counter.InitializeAsync(chunking, TestContext.Current.CancellationToken);
+        var longPassage = "# Runbook\n## Remediation\n" + string.Join('\n', Enumerable.Repeat(
+            "Checkout requests time out. Check payment latency and the connection pool before retrying.", 150));
+        var chunks = new MemoryDocumentChunker(counter, chunking).Chunk("Runbook", longPassage);
+        Assert.True(chunks.Count > 1);
+        foreach (var chunk in chunks)
+        {
+            var counted = counter.CountTokens(chunk.Text);
+            var response = await client.CreateEmbeddingAsync(
+                new EmbeddingRequest(chunk.Text, options.ModelId, "chunk-window-test", EmbeddingInputKind.Passage),
+                TestContext.Current.CancellationToken);
+            Assert.Equal(counted, response.InputTokens);
+            Assert.InRange(counted, 1, chunking.MaxTokens);
+            Assert.True(counted < installed.Manifest.MaxTokens);
+        }
 
         foreach (var (language, query, relevant, unrelated) in Cases)
         {

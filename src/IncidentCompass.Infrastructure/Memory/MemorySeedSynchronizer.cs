@@ -39,7 +39,8 @@ internal sealed class MemorySeedSynchronizer(
     ITriageConfigurationRepository configurationRepository,
     WorkerMemoryEmbeddingRouteResolver routeResolver,
     IEmbeddingClient embeddingClient,
-    IMemoryRepository memoryRepository)
+    IMemoryRepository memoryRepository,
+    IMemoryChunkTokenCounter tokenCounter)
 {
     public async Task<MemorySeedSyncOutcome> SynchronizeAsync(
         MemorySeedSyncMode mode,
@@ -56,7 +57,8 @@ internal sealed class MemorySeedSynchronizer(
             return Blocked(modelState, inventory, route, resolution.ModelErrorCode);
         }
 
-        var state = MemoryCorpusStateEvaluator.Evaluate(route.ProviderId, route.Model, inventory);
+        var policy = settings.Chunking.Describe(tokenCounter.Kind);
+        var state = MemoryCorpusStateEvaluator.Evaluate(route.ProviderId, route.Model, inventory, policy);
         if (mode == MemorySeedSyncMode.Incremental && RequiresRebuild(state))
         {
             return Blocked(state, inventory, route);
@@ -70,7 +72,9 @@ internal sealed class MemorySeedSynchronizer(
             throw new InvalidOperationException("Memory seed scan did not find any files.");
         }
 
-        var builder = new MemorySeedEntryBuilder(embeddingClient, memoryRepository);
+        await tokenCounter.InitializeAsync(settings.Chunking, cancellationToken);
+        var builder = new MemorySeedEntryBuilder(
+            embeddingClient, memoryRepository, new MemoryDocumentChunker(tokenCounter, settings.Chunking));
         var entries = new List<MemorySeedEntry>(scan.Files.Count);
         foreach (var file in scan.Files)
         {
@@ -84,15 +88,20 @@ internal sealed class MemorySeedSynchronizer(
             return Blocked(MemoryCorpusState.EmbeddingRouteChanged, inventory, route);
         }
 
+        // Legacy rows never claim a policy for chunks this pass did not produce. A rebuild records
+        // it; an incremental pass that retains any legacy chunk keeps the policy unrecorded.
+        var publishedPolicy = inventory.Current?.ChunkPolicy is null && entries.Any(static entry => entry.Chunks.Count == 0)
+            ? null
+            : policy;
         var corpus = new MemorySeedCorpus(
-            settings.TenantId, settings.Owner, Guid.NewGuid(), identity, scan.PresentDirectories, entries);
+            settings.TenantId, settings.Owner, Guid.NewGuid(), identity, scan.PresentDirectories, entries, publishedPolicy);
         await memoryRepository.ReconcileSeedCorpusAsync(corpus, cancellationToken);
         return new MemorySeedSyncOutcome(
             Published: true, MemoryCorpusState.Current, corpus.Generation, route, entries.Count);
     }
 
     private static bool RequiresRebuild(MemoryCorpusState state) =>
-        state is MemoryCorpusState.EmbeddingRouteChanged or MemoryCorpusState.MixedEmbeddingRoutes;
+        state is MemoryCorpusState.EmbeddingRouteChanged or MemoryCorpusState.MixedEmbeddingRoutes or MemoryCorpusState.ChunkPolicyChanged;
 
     private static MemorySeedSyncOutcome Blocked(
         MemoryCorpusState state,

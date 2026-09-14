@@ -46,6 +46,21 @@ internal sealed class LocalOnnxModelRuntime(IOptions<LocalOnnxEmbeddingOptions> 
         gate.Dispose();
     }
 
+    internal int CountPassageTokens(LocalOnnxInstalledModel installed, string text, CancellationToken cancellationToken)
+    {
+        gate.Wait(cancellationToken);
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var encoder = GetOrLoad(installed).Encoder;
+            return LocalOnnxChunkTokenCounter.CountTokens(encoder, text);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
     private LocalOnnxLoadedModel GetOrLoad(LocalOnnxInstalledModel installed)
     {
         if (loadedModel is not null && loadedModel.Installed == installed)

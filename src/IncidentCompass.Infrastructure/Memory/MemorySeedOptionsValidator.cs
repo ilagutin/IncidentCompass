@@ -5,6 +5,7 @@ internal static class MemorySeedOptionsValidator
     public static void Validate(MemorySeedOptions settings)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(settings.Owner);
+        settings.Chunking.Validate();
         if (settings.RuntimeResyncEnabled &&
             (settings.RuntimeResyncIntervalSeconds < 1 || settings.RuntimeResyncIntervalSeconds > 86400))
         {

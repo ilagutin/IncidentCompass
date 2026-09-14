@@ -14,4 +14,5 @@ internal sealed record MemorySeedCorpus(
     Guid Generation,
     MemoryCorpusIdentity Identity,
     IReadOnlySet<string> ObservedSourcePrefixes,
-    IReadOnlyList<MemorySeedEntry> Entries);
+    IReadOnlyList<MemorySeedEntry> Entries,
+    string? ChunkPolicy = null);
