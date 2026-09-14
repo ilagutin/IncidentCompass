@@ -31,6 +31,10 @@ internal sealed class LocalOnnxInputEncoder
     private readonly string passagePrefix;
     private readonly int maxContentTokens;
 
+    internal SentencePieceTokenizer Tokenizer => tokenizer;
+
+    internal string PassagePrefix => passagePrefix;
+
     private LocalOnnxInputEncoder(SentencePieceTokenizer tokenizer, LocalOnnxModelManifest manifest)
     {
         this.tokenizer = tokenizer;

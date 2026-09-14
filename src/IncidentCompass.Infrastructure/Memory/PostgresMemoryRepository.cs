@@ -58,7 +58,8 @@ internal sealed class PostgresMemoryRepository(
                        mc.embedding_vector,
                        mi.service_name,
                        mi.component,
-                       mi.release_name
+                       mi.release_name,
+                       mc.heading_path
                 FROM incidentcompass.memory_chunks mc
                 JOIN incidentcompass.memory_items mi
                   ON mi.id = mc.memory_item_id
@@ -76,7 +77,7 @@ internal sealed class PostgresMemoryRepository(
                 FROM candidate_chunks
             )
             SELECT memory_item_id, chunk_id, kind, source, title, chunk_position, text, score,
-                   service_name, component, release_name
+                   service_name, component, release_name, heading_path
             FROM scored_chunks
             WHERE score >= @min_score
             ORDER BY score DESC, chunk_id
@@ -104,7 +105,8 @@ internal sealed class PostgresMemoryRepository(
                 reader.GetDouble(7),
                 reader.IsDBNull(8) ? null : reader.GetString(8),
                 reader.IsDBNull(9) ? null : reader.GetString(9),
-                reader.IsDBNull(10) ? null : reader.GetString(10)));
+                reader.IsDBNull(10) ? null : reader.GetString(10),
+                reader.IsDBNull(11) ? null : reader.GetString(11)));
         }
 
         return results;

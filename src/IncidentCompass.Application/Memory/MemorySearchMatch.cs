@@ -11,4 +11,5 @@ internal sealed record MemorySearchMatch(
     double Score,
     string? ServiceName,
     string? Component,
-    string? ReleaseName);
+    string? ReleaseName,
+    string? HeadingPath = null);

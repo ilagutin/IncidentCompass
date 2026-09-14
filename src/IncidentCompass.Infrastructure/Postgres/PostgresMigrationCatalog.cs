@@ -40,7 +40,8 @@ internal static class PostgresMigrationCatalog
             ["032-action-approval-fault-correlation.sql"]),
         new(24, "v0.4-remediation-diffs", ["033-remediation-diffs.sql"]),
         new(25, "v0.4-branch-push-audit-projection", ["034-branch-push-audit-projection.sql"]),
-        new(26, "v0.4-pull-request-audit-projection", ["035-pull-request-audit-projection.sql"])
+        new(26, "v0.4-pull-request-audit-projection", ["035-pull-request-audit-projection.sql"]),
+        new(27, "v0.5-memory-chunk-structure", ["036-memory-chunk-structure.sql"])
     ];
 
     private static PostgresSchemaMigration Released(

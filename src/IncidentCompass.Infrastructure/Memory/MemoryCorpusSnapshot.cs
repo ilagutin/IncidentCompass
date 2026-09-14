@@ -11,7 +11,7 @@ namespace IncidentCompass.Infrastructure.Memory;
 /// <para>
 /// <c>State</c> is one of <c>NotBuilt</c>, <c>Current</c>, <c>EmbeddingRouteChanged</c>,
 /// <c>MixedEmbeddingRoutes</c>, <c>Unrecorded</c>, <c>EmbeddingModelMismatch</c> or
-/// <c>EmbeddingModelUnavailable</c>. <c>RebuildRequired</c> is true when retrieval under the
+/// <c>EmbeddingModelUnavailable</c> or <c>ChunkPolicyChanged</c>. <c>RebuildRequired</c> is true when retrieval under the
 /// configured route cannot reach this corpus until a rebuild runs; it is false for the two model
 /// states, which a rebuild cannot repair.
 /// </para>

@@ -15,4 +15,6 @@ internal sealed class MemorySeedOptions
     public bool RuntimeResyncEnabled { get; init; }
 
     public int RuntimeResyncIntervalSeconds { get; init; } = 300;
+
+    public MemoryChunkingOptions Chunking { get; init; } = new();
 }

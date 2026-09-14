@@ -16,7 +16,8 @@ namespace IncidentCompass.Infrastructure.Memory;
 /// </remarks>
 internal sealed class MemorySeedEntryBuilder(
     IEmbeddingClient embeddingClient,
-    IMemoryRepository memoryRepository)
+    IMemoryRepository memoryRepository,
+    MemoryDocumentChunker chunker)
 {
     public async Task<MemorySeedEntry> BuildAsync(
         MemorySeedFile file,
@@ -35,25 +36,28 @@ internal sealed class MemorySeedEntryBuilder(
             return new MemorySeedEntry(item, []);
         }
 
-        var embedding = await embeddingClient.CreateEmbeddingAsync(
-            new EmbeddingRequest(
-                file.Content,
-                route.Model,
-                "memory-seed:" + file.Source,
-                EmbeddingInputKind.Passage,
-                route.ProviderId),
-            cancellationToken);
-        var chunk = new MemorySeedChunk(
-            MemorySeedFileLoader.DeterministicId(
-                item.Id + ":0:" + embedding.Provider + ":" + embedding.Model + ":" + embedding.Vector.Count),
-            Position: 0,
-            file.Content,
-            ComputeSha256Hex(file.Content),
-            embedding.Provider,
-            embedding.Model,
-            embedding.Vector.Count,
-            embedding.Vector);
-        return new MemorySeedEntry(item, [chunk]);
+        var chunks = new List<MemorySeedChunk>();
+        foreach (var part in chunker.Chunk(file.Title, file.Content))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var embedding = await embeddingClient.CreateEmbeddingAsync(
+                new EmbeddingRequest(
+                    part.Text, route.Model, "memory-seed:" + file.Source, EmbeddingInputKind.Passage, route.ProviderId),
+                cancellationToken);
+            chunks.Add(new MemorySeedChunk(
+                MemorySeedFileLoader.DeterministicId(
+                    item.Id + ":" + part.Position + ":" + embedding.Provider + ":" + embedding.Model + ":" + embedding.Vector.Count),
+                part.Position,
+                part.Text,
+                ComputeSha256Hex(part.Text),
+                embedding.Provider,
+                embedding.Model,
+                embedding.Vector.Count,
+                embedding.Vector,
+                part.HeadingPath));
+        }
+
+        return new MemorySeedEntry(item, chunks);
     }
 
     private static MemorySeedItem CreateItem(MemorySeedFile file, MemorySeedOptions settings, string contentHash) =>

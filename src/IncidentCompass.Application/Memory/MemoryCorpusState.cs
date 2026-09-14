@@ -46,5 +46,8 @@ internal enum MemoryCorpusState
     /// the install failed, has not run, or its files no longer verify. Nothing is embedded; the
     /// previous corpus stays current.
     /// </summary>
-    EmbeddingModelUnavailable = 6
+    EmbeddingModelUnavailable = 6,
+
+    /// <summary>The published chunk boundaries use a different policy. A rebuild applies the new policy.</summary>
+    ChunkPolicyChanged = 7
 }

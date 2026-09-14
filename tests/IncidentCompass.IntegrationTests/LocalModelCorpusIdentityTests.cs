@@ -160,6 +160,9 @@ public sealed class LocalModelCorpusIdentityTests(PostgresRepositoryFixture post
             },
             configureServices: services =>
             {
+                // This fixture supplies synthetic model paths and a deterministic embedding client;
+                // identity behavior is independent of tokenization, which has its own fixture tests.
+                services.AddScoped<IMemoryChunkTokenCounter, CharacterEstimateChunkTokenCounter>();
                 services.RemoveAll<LocalOnnxModelInstallState>();
                 services.AddSingleton(installState);
                 foreach (var install in services

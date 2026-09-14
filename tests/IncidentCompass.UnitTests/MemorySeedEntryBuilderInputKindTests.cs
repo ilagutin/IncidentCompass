@@ -14,7 +14,9 @@ public sealed class MemorySeedEntryBuilderInputKindTests
     public async Task BuildAsync_EmbedsTheSeedFileAsAPassageOnTheRouteProvider()
     {
         var embeddingClient = new RecordingEmbeddingClient();
-        var builder = new MemorySeedEntryBuilder(embeddingClient, new UnreadMemoryRepository());
+        var builder = new MemorySeedEntryBuilder(
+            embeddingClient, new UnreadMemoryRepository(),
+            new MemoryDocumentChunker(new CharacterEstimateChunkTokenCounter(), new MemoryChunkingOptions()));
 
         await builder.BuildAsync(
             new MemorySeedFile(

@@ -148,7 +148,8 @@ public sealed class MemorySeedSynchronizerLocalModelTests : IDisposable
                 Options.Create(new EmbeddingOptions { Provider = hostProvider }),
                 LocalModelTestSupport.Reader(state, provider: hostProvider)),
             embedding,
-            memory);
+            memory,
+            new CharacterEstimateChunkTokenCounter());
 
     private async Task WriteSeedFileAsync()
     {

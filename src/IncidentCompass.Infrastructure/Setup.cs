@@ -102,6 +102,12 @@ public static class Setup
         services.AddEmbeddingOptions(configuration);
         services.AddEmbeddingAdapters();
         services.AddLocalOnnxModelStore(configuration);
+        services.TryAddScoped<IMemoryChunkTokenCounter>(provider =>
+            ProviderKindParser.IsLocalOnnx(provider.GetRequiredService<IOptions<EmbeddingOptions>>().Value.Provider)
+                ? new LocalOnnxChunkTokenCounter(
+                    provider.GetRequiredService<LocalOnnxInstalledModelReader>(),
+                    provider.GetRequiredService<LocalOnnxModelRuntime>())
+                : new CharacterEstimateChunkTokenCounter());
 
         // The Worker judges the corpus against the installed local model; the Api cannot, so the
         // Worker's status reader replaces the one AddInfrastructure binds for both hosts.

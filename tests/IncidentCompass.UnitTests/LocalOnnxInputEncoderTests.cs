@@ -38,6 +38,21 @@ public sealed class LocalOnnxInputEncoderTests
     }
 
     [Fact]
+    public async Task PassageCounter_IncludesPrefixAndMarkersAndMatchesTheUncappedEncoder()
+    {
+        var encoder = await LoadFixtureEncoderAsync();
+        foreach (var text in new[] { "", "checkout timeout", "  payment latency  ", "таймаут", "awaria" })
+        {
+            Assert.Equal(encoder.Encode(text, EmbeddingInputKind.Passage).Length,
+                LocalOnnxChunkTokenCounter.CountTokens(encoder, text));
+        }
+
+        var longText = string.Concat(Enumerable.Repeat("checkout timeout ", 200));
+        Assert.True(LocalOnnxChunkTokenCounter.CountTokens(encoder, longText) >
+            encoder.Encode(longText, EmbeddingInputKind.Passage).Length);
+    }
+
+    [Fact]
     public async Task Encode_QueryAndPassagePrefixesProduceDifferentIdsForTheSameInput()
     {
         var encoder = await LoadFixtureEncoderAsync();

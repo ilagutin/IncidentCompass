@@ -16,12 +16,15 @@ internal static class MemoryCorpusErrorCodes
 
     public const string EmbeddingModelUnavailable = "memory_embedding_model_unavailable";
 
+    public const string ChunkPolicyChanged = "memory_chunk_policy_changed";
+
     public static string From(MemoryCorpusState state) => state switch
     {
         MemoryCorpusState.MixedEmbeddingRoutes => EmbeddingRoutesMixed,
         MemoryCorpusState.EmbeddingRouteChanged => EmbeddingRouteChanged,
         MemoryCorpusState.EmbeddingModelMismatch => EmbeddingModelMismatch,
         MemoryCorpusState.EmbeddingModelUnavailable => EmbeddingModelUnavailable,
+        MemoryCorpusState.ChunkPolicyChanged => ChunkPolicyChanged,
         _ => throw new ArgumentOutOfRangeException(
             nameof(state), state, "Only a corpus a pass declined to publish under has an error code."),
     };

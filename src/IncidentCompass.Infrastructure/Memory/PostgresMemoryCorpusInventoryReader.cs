@@ -31,7 +31,7 @@ internal static class PostgresMemoryCorpusInventoryReader
     {
         await using var command = new NpgsqlCommand("""
             SELECT generation, route_id, provider_id, embedding_provider, embedding_model,
-                   embedding_dimensions, item_count, chunk_count, published_at_utc
+                   embedding_dimensions, item_count, chunk_count, published_at_utc, chunk_policy
             FROM incidentcompass.memory_corpus_generations
             WHERE tenant_id = @tenant_id AND seed_owner = @seed_owner AND is_current;
             """, connection);
@@ -52,7 +52,8 @@ internal static class PostgresMemoryCorpusInventoryReader
                 reader.GetInt32(5)),
             reader.GetInt32(6),
             reader.GetInt32(7),
-            reader.GetDateTimeOffset(8));
+            reader.GetDateTimeOffset(8),
+            reader.IsDBNull(9) ? null : reader.GetString(9));
     }
 
     private static async Task<IReadOnlyList<MemoryCorpusIdentity>> ReadActiveIdentitiesAsync(
