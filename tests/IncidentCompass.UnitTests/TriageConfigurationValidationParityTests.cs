@@ -36,6 +36,9 @@ public sealed class TriageConfigurationValidationParityTests
         { "grouping", false, false, "FaultGrouping.LookbackMinutes" },
         { "recurrence", false, false, "FaultGrouping.Recurrence.EscalateAfterCount" },
         { "redaction", false, false, "Redaction.Patterns[0].Name" },
+        // The published schema cannot see into a referenced role schema, so only the load and the
+        // command refuse a configured attribute key that redacts a boolean the analysis schema declares.
+        { "attribute-key-redacts-typed-schema-property", true, false, "Roles.analysis.OutputSchema" },
         { "dangling-role-route", true, false, "Roles.analysis.RouteId" },
         { "valid-route-fallback", true, true, null },
         { "unknown-route-fallback", true, false, "Routes.report-chat.FallbackRouteId" },
@@ -191,6 +194,9 @@ public sealed class TriageConfigurationValidationParityTests
                     ["Name"] = string.Empty,
                     ["Pattern"] = "secret"
                 });
+                return;
+            case "attribute-key-redacts-typed-schema-property":
+                root["Redaction"]!["AttributeKeys"] = new JsonArray("needsDeeperContext");
                 return;
             case "dangling-role-route":
                 root["Roles"]!["analysis"]!["RouteId"] = "missing-route";

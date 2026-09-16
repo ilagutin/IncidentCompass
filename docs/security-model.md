@@ -1217,7 +1217,11 @@ which payload it is applied to. A tool payload's keys are backend-authored (`exc
 `quote`, `url` and so on), so the denylist contributes little there and the pattern rules do the
 work. A `WorkerOutput` payload's keys come from model-authored JSON instead, bounded by the role's
 configured output schema, which is what makes the type-flattening above reachable on a name the
-backend did not choose. And source excerpts get no exemption: `source_lookup` returns application
+backend did not choose. A role output schema therefore may not declare a property that redaction treats
+as secret, by the denylist or by `Redaction.AttributeKeys`, with any type other than `string`: the
+configuration load and `config validate` refuse it, and a mismatch the load walk cannot see, such as
+one behind a `$ref`, fails the attempt as non-retryable `worker_output_invalid` instead of being
+retried. And source excerpts get no exemption: `source_lookup` returns application
 code, the same rules run over it, and a line containing `password =` or `pwd =` loses its right-hand
 side while the rest of the excerpt survives. That cost, the analysis behind it and the bound that
 keeps it to a single line are recorded in `docs/trade-offs.md`.
