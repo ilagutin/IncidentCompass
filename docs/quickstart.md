@@ -271,7 +271,7 @@ dotnet run --project src/IncidentCompass.Worker
 The first run downloads the embedding model, about 123 MB, into that directory before it seeds.
 
 The seed pass splits each file into chunks by its markdown headings and then by tokens, and prefixes
-every chunk with its heading path, for example `Checkout Timeout Runbook > Immediate checks`. Three
+every chunk with its heading path, for example `Payment Runbook > Rollback`. Three
 settings under `IncidentCompass:Memory:Seed:Chunking` bound it: `MaxTokens` (448 by default) caps a
 chunk, `OverlapTokens` (48) is how much of the end of one chunk the next one repeats, and `MinTokens`
 (32) keeps a trailing fragment from standing alone. A Worker that seeds refuses to start unless

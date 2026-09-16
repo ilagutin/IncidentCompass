@@ -122,6 +122,7 @@ file edit cannot cover: after changing them, synchronization publishes nothing, 
 stays searchable and the memory-sync health status reports `memory_chunk_policy_changed` until
 `memory rebuild` runs. A file with a line too long to fit a chunk is refused by name rather than
 truncated.
+
 The shared Compose environment anchor still passes the `Embeddings__*` settings to
 the api service as well; the API composes no embedding client and does not use them beyond
 validating the shape of the embeddings section at startup.
