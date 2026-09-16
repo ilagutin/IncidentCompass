@@ -1,4 +1,6 @@
-namespace IncidentCompass.UnitTests;
+namespace IncidentCompass.TestSupport;
+
+// Shared by both test projects via a <Compile Include> file link (see each project's .csproj).
 
 /// <summary>
 /// A clock that moves only when a test calls <see cref="Advance"/>, with timers that fire during

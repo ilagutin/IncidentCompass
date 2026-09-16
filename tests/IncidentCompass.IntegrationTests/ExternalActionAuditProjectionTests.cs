@@ -82,7 +82,7 @@ public sealed class ExternalActionAuditProjectionTests(PostgresRepositoryFixture
                 "atomic-projection"),
             TestContext.Current.CancellationToken)).Action;
         var claim = await services.GetRequiredService<IActionDispatchRepository>().TryClaimAsync(
-            action.Id, "audit-projection-worker", TimeSpan.FromMinutes(2),
+            action.Id, "audit-projection-worker", _ => TimeSpan.FromMinutes(2),
             TestContext.Current.CancellationToken);
         Assert.NotNull(claim);
         var terminal = new ActionTerminalRequest(
@@ -166,7 +166,7 @@ public sealed class ExternalActionAuditProjectionTests(PostgresRepositoryFixture
                 Proposal(origin, item.ToolId, item.Category, item.LogicalTargetId, item.ProposalKey),
                 TestContext.Current.CancellationToken)).Action;
             var claim = await services.GetRequiredService<IActionDispatchRepository>().TryClaimAsync(
-                action.Id, "projection-case-worker", TimeSpan.FromMinutes(2),
+                action.Id, "projection-case-worker", _ => TimeSpan.FromMinutes(2),
                 TestContext.Current.CancellationToken);
             Assert.NotNull(claim);
             Assert.True(await services.GetRequiredService<IActionDispatchRepository>().CompleteAsync(
@@ -188,7 +188,7 @@ public sealed class ExternalActionAuditProjectionTests(PostgresRepositoryFixture
             Proposal(origin, "ticket_failure", ActionCategory.TicketCreate, "github:audit", "failure-null"),
             TestContext.Current.CancellationToken)).Action;
         var failedClaim = await services.GetRequiredService<IActionDispatchRepository>().TryClaimAsync(
-            failed.Id, "projection-failure-worker", TimeSpan.FromMinutes(2),
+            failed.Id, "projection-failure-worker", _ => TimeSpan.FromMinutes(2),
             TestContext.Current.CancellationToken);
         Assert.NotNull(failedClaim);
         Assert.True(await services.GetRequiredService<IActionDispatchRepository>().CompleteAsync(
@@ -244,7 +244,7 @@ public sealed class ExternalActionAuditProjectionTests(PostgresRepositoryFixture
             var claim = await services.GetRequiredService<IActionDispatchRepository>().TryClaimAsync(
                 action.Id,
                 "invalid-projection-worker",
-                TimeSpan.FromMinutes(2),
+                _ => TimeSpan.FromMinutes(2),
                 TestContext.Current.CancellationToken);
             Assert.NotNull(claim);
 
@@ -317,7 +317,7 @@ public sealed class ExternalActionAuditProjectionTests(PostgresRepositoryFixture
             var claim = await services.GetRequiredService<IActionDispatchRepository>().TryClaimAsync(
                 action.Id,
                 "invalid-sql-projection-worker",
-                TimeSpan.FromMinutes(2),
+                _ => TimeSpan.FromMinutes(2),
                 TestContext.Current.CancellationToken);
             Assert.NotNull(claim);
 

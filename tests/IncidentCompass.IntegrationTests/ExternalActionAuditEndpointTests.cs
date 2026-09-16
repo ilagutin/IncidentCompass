@@ -216,7 +216,7 @@ public sealed class ExternalActionAuditEndpointTests(PostgresRepositoryFixture p
             ActionApprovalTestSupport.Proposal(origin, proposalKey, automaticallyApproved: true),
             TestContext.Current.CancellationToken)).Action;
         var claim = await services.GetRequiredService<IActionDispatchRepository>().TryClaimAsync(
-            action.Id, "endpoint-unknown-worker", TimeSpan.FromMinutes(1),
+            action.Id, "endpoint-unknown-worker", _ => TimeSpan.FromMinutes(1),
             TestContext.Current.CancellationToken);
         Assert.NotNull(claim);
         Assert.True(await services.GetRequiredService<IActionDispatchRepository>().CompleteAsync(

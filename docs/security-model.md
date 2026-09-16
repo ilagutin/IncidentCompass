@@ -1431,8 +1431,19 @@ uses a tenant-leading partial index and always applies the authenticated server-
 foreign resource identity therefore returns the same empty list shape as an absent identity.
 
 The durable claim is the at-most-once boundary. Once it records an owner, random fence and database
-deadline, no automatic path may call that adapter again. Exceptions, timeout, cancellation and crash
-recovery become `dispatch_outcome_unknown`; deadline recovery fences a late completion. This prefers a
+deadline, no automatic path may call that adapter again. The deadline is the tool's own
+`Tools.<id>.TimeoutSeconds`, or the Worker's `ActionDispatch:AdapterTimeoutSeconds` when the tool sets
+none, plus a 30-second recovery grace, and the adapter is cancelled at that same limit. A failed row
+says how far dispatch got:
+
+- `dispatch_not_invoked`: dispatch stopped after the claim and before the adapter was invoked, for
+  example because the Worker was shutting down. Nothing was sent. The more specific pre-invocation
+  codes (`action_tool_unavailable`, `action_configuration_unavailable`, the policy codes and
+  `adapter_binding_changed`) keep their meaning.
+- `dispatch_outcome_unknown`: an exception, timeout or cancellation after the adapter was invoked, and
+  crash recovery of an expired claim. The side effect may have happened.
+
+Neither is retried automatically; deadline recovery fences a late completion. This prefers a
 visible uncertain result over a duplicate external side effect. Adapters own credentials and endpoint
 authority, must observe cancellation and must normalize provider exceptions before returning across
 the Application port.

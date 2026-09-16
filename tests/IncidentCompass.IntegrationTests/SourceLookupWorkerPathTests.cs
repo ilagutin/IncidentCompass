@@ -47,6 +47,7 @@ public sealed class SourceLookupWorkerPathTests(PostgresRepositoryFixture postgr
                 investigation,
                 "source",
                 new AiToolCall("source-call", "source_lookup", "v1", Json("{}")),
+                DateTimeOffset.UtcNow,
                 TestContext.Current.CancellationToken);
             using var output = JsonDocument.Parse(toolOutput);
             var item = Assert.Single(output.RootElement.GetProperty("items").EnumerateArray());

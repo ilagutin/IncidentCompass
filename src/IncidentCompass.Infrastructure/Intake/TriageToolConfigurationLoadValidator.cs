@@ -52,6 +52,8 @@ internal sealed class TriageToolConfigurationLoadValidator(IAgentToolRegistry to
             throw Invalid("Tools." + toolName + ".Kind", tool.Kind, "the registered backend capability");
         }
 
+        ValidateTimeout(toolName, tool);
+
         if (expectedCapability == AgentToolCapability.ExternalAction)
         {
             ValidateExternalTool(toolName, tool, descriptor);
@@ -59,6 +61,22 @@ internal sealed class TriageToolConfigurationLoadValidator(IAgentToolRegistry to
         }
 
         ValidateImmediateTool(routes, toolName, tool);
+    }
+
+    /// <summary>
+    /// The per-tool execution limit is valid for both kinds, so it is checked once here rather than
+    /// in either kind's own rules, which each reject the other kind's fields.
+    /// </summary>
+    private static void ValidateTimeout(string toolName, TriageToolSettings tool)
+    {
+        if (tool.TimeoutSeconds is { } seconds &&
+            seconds is < TriageToolSettings.MinimumTimeoutSeconds or > TriageToolSettings.MaximumTimeoutSeconds)
+        {
+            throw Invalid(
+                "Tools." + toolName + ".TimeoutSeconds",
+                seconds.ToString(CultureInfo.InvariantCulture),
+                "an integer from 1 through 3600 when set");
+        }
     }
 
     private static void ValidateImmediateTool(

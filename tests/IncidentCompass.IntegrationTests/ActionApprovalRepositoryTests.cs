@@ -219,9 +219,9 @@ public sealed class ActionApprovalRepositoryTests(PostgresRepositoryFixture post
         using var secondScope = services.CreateScope();
         var claims = await Task.WhenAll(
             firstScope.ServiceProvider.GetRequiredService<IActionDispatchRepository>().TryClaimAsync(
-                action.Id, "worker-a", TimeSpan.FromMinutes(2), TestContext.Current.CancellationToken),
+                action.Id, "worker-a", _ => TimeSpan.FromMinutes(2), TestContext.Current.CancellationToken),
             secondScope.ServiceProvider.GetRequiredService<IActionDispatchRepository>().TryClaimAsync(
-                action.Id, "worker-b", TimeSpan.FromMinutes(2), TestContext.Current.CancellationToken));
+                action.Id, "worker-b", _ => TimeSpan.FromMinutes(2), TestContext.Current.CancellationToken));
         var claim = Assert.Single(claims, static item => item is not null)!;
         Assert.Equal(1, await LedgerCountAsync(connectionString, action.Id, "ActionDispatchStarted"));
 
@@ -373,7 +373,7 @@ public sealed class ActionApprovalRepositoryTests(PostgresRepositoryFixture post
                 TestContext.Current.CancellationToken));
         var claimTask = StartAfterAsync(start.Task, () =>
             services.GetRequiredService<IActionDispatchRepository>().TryClaimAsync(
-                approved.Id, "race-dispatcher", TimeSpan.FromMinutes(2),
+                approved.Id, "race-dispatcher", _ => TimeSpan.FromMinutes(2),
                 TestContext.Current.CancellationToken));
 
         start.SetResult();

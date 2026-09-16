@@ -384,6 +384,32 @@ figure, not a measurement recorded in this repository. One embedding call uses o
 `IncidentCompass__Embeddings__LocalOnnx__IntraOpThreads` from 1 to 16, and calls run one at a time. The
 int8 file targets processors with AVX-512 VNNI and runs more slowly on processors without it.
 
+## Tool execution limits
+
+Every tool in the triage configuration may set its own execution limit, `TimeoutSeconds`, an integer
+from 1 through 3600. The shipped `config/incidentcompass.config.json` sets none, so its configuration
+hash is unchanged; adding the key is a configuration change like any other and produces a new hash.
+
+| Tool kind | Limit when `TimeoutSeconds` is unset | What happens when it fires |
+| --- | --- | --- |
+| `internal` (immediate read, for example `source_lookup`) | 120 seconds | The call is cancelled and recorded as a `Failed` `ToolResult` with `tool_execution_timeout`; the worker continues with that limitation. |
+| `external_action` | The Worker's `IncidentCompass:ActionDispatch:AdapterTimeoutSeconds`, 30 by default, 1 through 300 | The adapter is cancelled. The action closes as `dispatch_outcome_unknown` unless the adapter first reports its own failure code, and it is never re-sent. |
+
+To give one slow connector more room, set it on that tool only:
+
+```json
+"source_lookup": { "Kind": "internal", "TimeoutSeconds": 300 }
+```
+
+An immediate tool's limit is read from the job's frozen configuration snapshot, so it applies to jobs
+started after the change. An action's limit is read from the current configuration when the Worker
+claims the action, and its claim deadline is that limit plus 30 seconds, so a longer limit also delays
+recovery of an action whose Worker died mid-dispatch. The host value
+`IncidentCompass__ActionDispatch__AdapterTimeoutSeconds` stays the default for actions that set no
+limit; it does not cap a per-tool value. An immediate tool call is also bounded by the attempt
+duration ceiling, and both kinds stop on Worker shutdown. An action stopped before its adapter was invoked, for example by shutdown,
+closes as `dispatch_not_invoked`.
+
 ## Payload retention
 
 The Worker runs payload retention on a timer of its own. Every 15 minutes it makes one pass: one

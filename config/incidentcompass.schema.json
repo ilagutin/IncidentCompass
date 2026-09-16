@@ -164,7 +164,13 @@
         "MinScore": { "type": ["number", "null"], "minimum": -1, "maximum": 1 },
         "Category": { "enum": ["notification", "ticket_create", "ticket_update", "code_write", "branch_push", "pr_create", null] },
         "LogicalTargetId": { "type": ["string", "null"], "minLength": 1, "maxLength": 128 },
-        "Mode": { "enum": ["live", "dry_run", "disabled", null] }
+        "Mode": { "enum": ["live", "dry_run", "disabled", null] },
+        "TimeoutSeconds": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "maximum": 3600,
+          "description": "Optional per-tool execution limit in seconds. Absent: 120 for an internal tool, the Worker ActionDispatch:AdapterTimeoutSeconds for an external action."
+        }
       },
       "allOf": [
         {

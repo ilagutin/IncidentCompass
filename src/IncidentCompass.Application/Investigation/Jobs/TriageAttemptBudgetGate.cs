@@ -134,12 +134,14 @@ internal sealed partial class TriageAttemptBudgetGate(
         CancellationToken cancellationToken)
     {
         var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        if (context.Configuration.Orchestrator.Budget.ResolveAttemptDurationLimit() is not { } attemptLimit)
+        if (ResolveRemainingAttemptDuration(
+                context.Configuration.Orchestrator.Budget,
+                context.AttemptStartedAtUtc,
+                timeProvider) is not { } remaining)
         {
             return linked;
         }
 
-        var remaining = attemptLimit - (timeProvider.GetUtcNow() - context.AttemptStartedAtUtc);
         if (remaining > TimeSpan.Zero)
         {
             linked.CancelAfter(remaining);
@@ -151,6 +153,19 @@ internal sealed partial class TriageAttemptBudgetGate(
 
         return linked;
     }
+
+    /// <summary>
+    /// The time left before the attempt duration ceiling, or <see langword="null"/> when the ceiling
+    /// is disabled. Zero or negative means the ceiling was already reached. This is the one place the
+    /// remainder is computed; a model call and an immediate worker tool are both bounded by it.
+    /// </summary>
+    public static TimeSpan? ResolveRemainingAttemptDuration(
+        OrchestratorBudgetSettings budget,
+        DateTimeOffset attemptStartedAtUtc,
+        TimeProvider timeProvider) =>
+        budget.ResolveAttemptDurationLimit() is { } attemptLimit
+            ? attemptLimit - (timeProvider.GetUtcNow() - attemptStartedAtUtc)
+            : null;
 
     public async Task ChargeTokensAsync(
         TriageJobCallContext context,

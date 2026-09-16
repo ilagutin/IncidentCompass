@@ -65,7 +65,7 @@ public sealed class TicketCreateActionWorkflowTests(PostgresRepositoryFixture po
                 TestContext.Current.CancellationToken);
             Assert.NotNull(claim);
             await dispatcher.DispatchAsync(
-                claim!, TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+                claim!, TestContext.Current.CancellationToken);
         }
 
         Assert.Equal(1, handler.PostCount);

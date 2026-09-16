@@ -37,7 +37,7 @@ public sealed class ApprovedActionDispatchTests(PostgresRepositoryFixture postgr
         var claim = Assert.Single(claims, static item => item is not null)!;
 
         await firstScope.ServiceProvider.GetRequiredService<IApprovedActionDispatcher>().DispatchAsync(
-            claim, TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+            claim, TestContext.Current.CancellationToken);
 
         Assert.Equal(1, tool.ExecutionCalls);
         Assert.Equal(action.Id, tool.LastActionId);
@@ -146,7 +146,7 @@ public sealed class ApprovedActionDispatchTests(PostgresRepositoryFixture postgr
             TestContext.Current.CancellationToken);
 
         await inFlightDispatcher.DispatchAsync(
-            claim!, TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+            claim!, TestContext.Current.CancellationToken);
 
         Assert.Equal(ActionApprovalState.Executed, (await ReadAsync(services, inFlightAction)).State);
         Assert.Equal(1, tool.ExecutionCalls);
@@ -233,7 +233,6 @@ public sealed class ApprovedActionDispatchTests(PostgresRepositoryFixture postgr
         {
             await claimScope.ServiceProvider.GetRequiredService<IApprovedActionDispatcher>().DispatchAsync(
                 claimTask.Result,
-                TimeSpan.FromSeconds(5),
                 TestContext.Current.CancellationToken);
         }
 
@@ -383,13 +382,13 @@ public sealed class ApprovedActionDispatchTests(PostgresRepositoryFixture postgr
         var claim = await repository.TryClaimAsync(
             action.Id,
             "crashing-worker",
-            TimeSpan.FromMilliseconds(100),
+            _ => TimeSpan.FromMilliseconds(100),
             TestContext.Current.CancellationToken);
         Assert.NotNull(claim);
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
             scope.ServiceProvider.GetRequiredService<IApprovedActionDispatcher>().DispatchAsync(
-                claim!, TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken));
+                claim! with { AdapterTimeout = TimeSpan.FromSeconds(5) }, TestContext.Current.CancellationToken));
         Assert.Equal(1, tool.ExecutionCalls);
         Assert.Equal(ActionApprovalState.Approved, (await ReadAsync(failingServices, action)).State);
         Assert.Equal(0, await LedgerCountAsync(database.ConnectionString, action.Id, "ActionCompleted"));
@@ -558,7 +557,7 @@ public sealed class ApprovedActionDispatchTests(PostgresRepositoryFixture postgr
             TestContext.Current.CancellationToken);
         Assert.NotNull(claim);
         await dispatcher.DispatchAsync(
-            claim!, TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+            claim!, TestContext.Current.CancellationToken);
     }
 
     private static async Task<ActionApprovalRecord> ReadAsync(

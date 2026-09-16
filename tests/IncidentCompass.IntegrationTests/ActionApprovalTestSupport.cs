@@ -272,7 +272,7 @@ internal static class ActionApprovalTestSupport
             TestContext.Current.CancellationToken)).Action;
         var dispatch = services.GetRequiredService<IActionDispatchRepository>();
         var claim = await dispatch.TryClaimAsync(
-            action.Id, dispatchOwner, TimeSpan.FromMinutes(1), TestContext.Current.CancellationToken)
+            action.Id, dispatchOwner, _ => TimeSpan.FromMinutes(1), TestContext.Current.CancellationToken)
             ?? throw new InvalidOperationException("The approved action could not be claimed.");
         var completed = await dispatch.CompleteAsync(
             new ActionTerminalRequest(

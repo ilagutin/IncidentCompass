@@ -2,15 +2,38 @@ using System.Security.Cryptography;
 using System.Text;
 using IncidentCompass.Application.Governance.Tools;
 using IncidentCompass.Application.Intake.Configuration;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace IncidentCompass.Application.Governance.ActionApprovals;
 
-internal sealed class ApprovedActionDispatcher(
+/// <summary>
+/// Claims and dispatches approved external actions. Each action runs under its tool's own limit,
+/// <c>Tools.&lt;id&gt;.TimeoutSeconds</c>, or the Worker host's <c>AdapterTimeoutSeconds</c> when the tool
+/// sets none. The limit is resolved from the current configuration before the claim, so the adapter
+/// deadline and the claim's <c>dispatch_deadline_at</c> (limit plus the recovery grace) agree.
+/// </summary>
+/// <remarks>
+/// A failed row says how far dispatch got. Anything that stops dispatch before the adapter is invoked,
+/// cancellation included, is <c>dispatch_not_invoked</c> unless a more specific pre-invocation code
+/// applies: nothing was sent, and the action is not re-dispatched. Once the adapter is invoked, a
+/// timeout, a cancellation or a fault is <c>dispatch_outcome_unknown</c>, because the side effect may
+/// have happened.
+/// </remarks>
+internal sealed partial class ApprovedActionDispatcher(
     IActionDispatchRepository repository,
     IExternalActionToolRegistry externalTools,
     IAgentToolRegistry toolRegistry,
-    ITriageConfigurationRepository configurationRepository) : IApprovedActionDispatcher
+    ITriageConfigurationRepository configurationRepository,
+    TimeProvider timeProvider,
+    ILogger<ApprovedActionDispatcher>? logger = null) : IApprovedActionDispatcher
 {
+    private readonly ILogger logger = logger ?? NullLogger<ApprovedActionDispatcher>.Instance;
+
+    public const string NotInvokedCode = "dispatch_not_invoked";
+
+    public const string OutcomeUnknownCode = "dispatch_outcome_unknown";
+
     private static readonly TimeSpan RecoveryGrace = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan TerminalCommitBudget = TimeSpan.FromSeconds(5);
 
@@ -37,75 +60,69 @@ internal sealed class ApprovedActionDispatcher(
         CancellationToken cancellationToken) =>
         repository.FindCandidatesAsync(limit, cancellationToken);
 
-    public Task<ActionDispatchClaim?> TryClaimAsync(
+    public async Task<ActionDispatchClaim?> TryClaimAsync(
         Guid actionId,
         string dispatchOwner,
         TimeSpan adapterTimeout,
-        CancellationToken cancellationToken) =>
-        repository.TryClaimAsync(
-            actionId,
-            dispatchOwner,
-            adapterTimeout + RecoveryGrace,
-            cancellationToken);
-
-    public async Task DispatchAsync(
-        ActionDispatchClaim claim,
-        TimeSpan adapterTimeout,
         CancellationToken cancellationToken)
     {
-        if (!externalTools.TryGet(claim.Action.ToolId, out var tool) ||
-            !toolRegistry.TryGet(claim.Action.ToolId, out var descriptor))
-        {
-            await CompleteAsync(ActionDispatchTerminalFactory.Failure(
-                claim, "action_tool_unavailable", "External action tool is unavailable."));
-            return;
-        }
-
-        TriageConfiguration configuration;
+        // Read before the claim transaction opens, so choosing the per-tool deadline adds no I/O to
+        // it. When the configuration cannot be read the claim is taken with the host value, and
+        // dispatch reads the configuration again under that same limit.
+        TriageConfiguration? configuration = null;
         try
         {
             configuration = await configurationRepository.GetCurrentAsync(cancellationToken);
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        catch (Exception exception) when (!cancellationToken.IsCancellationRequested)
         {
-            await CompleteAsync(ActionDispatchTerminalFactory.Failure(
-                claim, "dispatch_outcome_unknown", "Dispatch was cancelled before the adapter outcome was known."));
-            return;
-        }
-        catch (Exception)
-        {
-            await CompleteAsync(ActionDispatchTerminalFactory.Failure(
-                claim, "action_configuration_unavailable", "Current action policy is unavailable."));
-            return;
+            LogClaimConfigurationUnavailable(
+                logger, actionId, (long)adapterTimeout.TotalSeconds, exception.GetType().Name);
         }
 
-        var guard = ActionDispatchGuard.Evaluate(claim.Action, descriptor, configuration);
-        if (guard.FailureCode is not null)
+        var claim = await repository.TryClaimAsync(
+            actionId,
+            dispatchOwner,
+            toolId => ResolveAdapterTimeout(configuration, toolId, adapterTimeout) + RecoveryGrace,
+            cancellationToken);
+        return claim is null
+            ? null
+            : claim with { AdapterTimeout = ResolveAdapterTimeout(configuration, claim.Action.ToolId, adapterTimeout) };
+    }
+
+    public async Task DispatchAsync(
+        ActionDispatchClaim claim,
+        CancellationToken cancellationToken)
+    {
+        if (claim.AdapterTimeout is not { } limit)
         {
-            await CompleteAsync(ActionDispatchTerminalFactory.Failure(
-                claim, guard.FailureCode, "Current action policy rejected dispatch."));
-            return;
+            throw new ArgumentException(
+                "The claim carries no adapter limit; claim it through TryClaimAsync.", nameof(claim));
         }
 
-        if (guard.Simulate)
+        (ActionTerminalRequest? Terminal, IExternalActionTool? Tool) prepared;
+        try
         {
-            await CompleteAsync(ActionDispatchTerminalFactory.DryRun(claim));
-            return;
+            prepared = await PrepareAsync(claim, cancellationToken);
+        }
+        catch (Exception exception) when (exception is not StackOverflowException and not OutOfMemoryException)
+        {
+            prepared = (ActionDispatchTerminalFactory.Failure(
+                claim, NotInvokedCode, "Dispatch stopped before the adapter was invoked."), null);
         }
 
-        if (!BindingMatches(claim.Action.AdapterBindingFingerprint, tool.AdapterBindingFingerprint))
+        if (prepared.Terminal is not null)
         {
-            await CompleteAsync(ActionDispatchTerminalFactory.Failure(
-                claim, "adapter_binding_changed", "External action adapter binding changed."));
+            await CompleteAsync(prepared.Terminal);
             return;
         }
 
         ActionTerminalRequest terminal;
         try
         {
-            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            deadline.CancelAfter(adapterTimeout);
-            var result = await tool.ExecuteAsync(
+            using var adapterTimer = new CancellationTokenSource(limit, timeProvider);
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, adapterTimer.Token);
+            var result = await prepared.Tool!.ExecuteAsync(
                 claim.Action.Id,
                 claim.Action.CanonicalPayload,
                 deadline.Token);
@@ -115,12 +132,69 @@ internal sealed class ApprovedActionDispatcher(
         {
             terminal = ActionDispatchTerminalFactory.Failure(
                 claim,
-                "dispatch_outcome_unknown",
+                OutcomeUnknownCode,
                 "The external action outcome is unknown.");
         }
 
         await CompleteAsync(terminal);
     }
+
+    /// <summary>
+    /// Everything that must hold before the adapter is invoked. It either returns the terminal the
+    /// action closes with, or the adapter to invoke. An exception, cancellation included, leaves
+    /// through the caller as <see cref="NotInvokedCode"/>.
+    /// </summary>
+    private async Task<(ActionTerminalRequest? Terminal, IExternalActionTool? Tool)> PrepareAsync(
+        ActionDispatchClaim claim,
+        CancellationToken cancellationToken)
+    {
+        if (!externalTools.TryGet(claim.Action.ToolId, out var tool) ||
+            !toolRegistry.TryGet(claim.Action.ToolId, out var descriptor))
+        {
+            return (ActionDispatchTerminalFactory.Failure(
+                claim, "action_tool_unavailable", "External action tool is unavailable."), null);
+        }
+
+        TriageConfiguration configuration;
+        try
+        {
+            configuration = await configurationRepository.GetCurrentAsync(cancellationToken);
+        }
+        catch (Exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            return (ActionDispatchTerminalFactory.Failure(
+                claim, "action_configuration_unavailable", "Current action policy is unavailable."), null);
+        }
+
+        var guard = ActionDispatchGuard.Evaluate(claim.Action, descriptor, configuration);
+        if (guard.FailureCode is not null)
+        {
+            return (ActionDispatchTerminalFactory.Failure(
+                claim, guard.FailureCode, "Current action policy rejected dispatch."), null);
+        }
+
+        if (guard.Simulate)
+        {
+            return (ActionDispatchTerminalFactory.DryRun(claim), null);
+        }
+
+        if (!BindingMatches(claim.Action.AdapterBindingFingerprint, tool.AdapterBindingFingerprint))
+        {
+            return (ActionDispatchTerminalFactory.Failure(
+                claim, "adapter_binding_changed", "External action adapter binding changed."), null);
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        return (null, tool);
+    }
+
+    private static TimeSpan ResolveAdapterTimeout(
+        TriageConfiguration? configuration,
+        string toolId,
+        TimeSpan hostDefault) =>
+        configuration is not null && configuration.Tools.TryGetValue(toolId, out var settings)
+            ? settings.ResolveActionTimeout(hostDefault)
+            : hostDefault;
 
     private async Task CompleteAsync(ActionTerminalRequest terminal)
     {
@@ -140,4 +214,14 @@ internal sealed class ApprovedActionDispatcher(
             Encoding.ASCII.GetBytes(frozen),
             Encoding.ASCII.GetBytes(current));
     }
+
+    [LoggerMessage(
+        EventId = 3521,
+        Level = LogLevel.Warning,
+        Message = "Current triage configuration could not be read before claiming action {ActionId} ({ExceptionType}); the claim uses the host adapter limit of {AdapterTimeoutSeconds} seconds.")]
+    private static partial void LogClaimConfigurationUnavailable(
+        ILogger logger,
+        Guid actionId,
+        long adapterTimeoutSeconds,
+        string exceptionType);
 }

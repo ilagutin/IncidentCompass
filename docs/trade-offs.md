@@ -661,6 +661,34 @@ This protects the durable ownership boundary, but it cannot forcibly interrupt a
 ignores its cancellation token. The shipped model and tool paths propagate cancellation; custom adapters
 must do the same to avoid work that can no longer publish a result.
 
+## A Timed-Out Read Degrades The Report, A Timed-Out Action Stays Unknown
+
+Every tool has an execution limit, `Tools.<id>.TimeoutSeconds` (1 through 3600). Unset, an immediate
+read tool gets 120 seconds and an external action gets the Worker's
+`ActionDispatch:AdapterTimeoutSeconds`. The two kinds deliberately end differently when the limit
+fires.
+
+An immediate read that times out is recorded as a `Failed` `ToolResult` with
+`tool_execution_timeout`, and the worker continues with that failure as a limitation instead of the
+attempt failing. A read changes nothing outside the process, so the only cost is a less complete
+report, and one slow connector no longer holds the whole job while its lease renews: the executor stops
+waiting when the limit fires even if the tool ignores cancellation. Such a tool is abandoned and may
+keep running in the background until it returns; that is tolerable only because it is read-only. The
+limit applies per call, so a tool that is slow on every call can still spend its limit several times within
+the attempt ceiling. A tool that throws still fails the attempt as before; the difference is that the
+ledger now names it.
+
+An external action that times out after its adapter was invoked stays `dispatch_outcome_unknown`,
+because the side effect may have happened. Only a dispatch that stopped before invocation is
+`dispatch_not_invoked`. The per-tool limit makes that window shorter or longer per tool; it does not
+make the outcome knowable.
+
+Some cases are left as they were. A `ticket_search` or `source_lookup` connector that answers
+`unavailable` is a successful tool call whose payload says so, because grounded limitations are built
+from that payload. Remediation apply rollback on cancellation still records
+`dispatch_outcome_unknown`. Post-report workflow evaluation is not a tool and has no deadline of its
+own.
+
 ## One Live Tool Policy Path
 
 `ToolRuleEngine` is the single tool-policy mechanism. Immediate Worker reads feed it role grants;

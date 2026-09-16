@@ -11,6 +11,7 @@ using IncidentCompass.Application.Investigation.Reports.Fallback;
 using IncidentCompass.Application.Investigation.Reports.Redaction;
 using IncidentCompass.Domain.Incidents;
 using IncidentCompass.Domain.Incidents.Statuses;
+using IncidentCompass.TestSupport;
 
 namespace IncidentCompass.UnitTests;
 

@@ -393,6 +393,7 @@ public sealed class ArtifactDomainRefTests
             InvestigationContext(job),
             "analysis",
             new AiToolCall("call-1", SecretReferenceTool.ToolName, "v1", EmptyObject()),
+            DateTimeOffset.UtcNow,
             TestContext.Current.CancellationToken);
 
         var request = Assert.Single(committer.Requests);
