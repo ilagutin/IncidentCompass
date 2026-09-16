@@ -270,6 +270,25 @@ dotnet run --project src/IncidentCompass.Worker
 
 The first run downloads the embedding model, about 123 MB, into that directory before it seeds.
 
+The seed pass splits each file into chunks by its markdown headings and then by tokens, and prefixes
+every chunk with its heading path, for example `Checkout Timeout Runbook > Immediate checks`. Three
+settings under `IncidentCompass:Memory:Seed:Chunking` bound it: `MaxTokens` (448 by default) caps a
+chunk, `OverlapTokens` (48) is how much of the end of one chunk the next one repeats, and `MinTokens`
+(32) keeps a trailing fragment from standing alone. A Worker that seeds refuses to start unless
+`MinTokens` is at least 1, `OverlapTokens` is at least 0 and `MaxTokens` is greater than
+`OverlapTokens` plus `MinTokens`; with the local model, `MaxTokens` plus the passage prefix and the two
+sequence markers must also fit the installed model's window, 512 tokens for the shipped model. The
+local model counts with its own tokenizer, and the OpenAI-compatible and mock adapters count with a
+character estimate. Chunks are never cut inside a line: a file whose heading path, or one line
+together with its heading path, exceeds `MaxTokens` fails the pass with a message that names the
+file, and the previous corpus stays current.
+
+Each corpus generation records the chunking policy it was built with. After changing any of the three
+settings, an incremental pass publishes nothing, keeps the previous corpus current and retrievable,
+and reports `memory_chunk_policy_changed` on `GET /api/v1/health/memory-sync` and
+`GET /api/v1/health/memory-corpus`; `memory status` exits 1 with that state. Run `memory rebuild`, below,
+to publish every file under the new settings.
+
 To assess documentation freshness, set the reviewed `CurrentReleases` map in the triage config, for example
 `"CurrentReleases": { "checkout-api": "0.2.0" }`. The marker is captured in the triage config snapshot;
 it is not a deployment webhook or source lookup integration.

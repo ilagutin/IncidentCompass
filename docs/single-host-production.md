@@ -191,6 +191,12 @@ docker @compose run --rm worker memory rebuild
 serve the configured route, and 0 otherwise. `docs/quickstart.md`, "Changing The Embedding Route",
 describes what a rebuild publishes and what it leaves current when it fails.
 
+A change to any `IncidentCompass__Memory__Seed__Chunking__*` setting is followed by `memory rebuild`:
+until then the Worker reports `memory_chunk_policy_changed` and keeps the previous corpus current. A
+corpus published before an upgrade to a release that records chunking policies has no recorded policy,
+so its unchanged files keep their whole-file chunks and it reports current until `memory rebuild` is run
+once.
+
 The API and the Worker must share one memory seed tenant and owner. The Worker writes the corpus and its
 synchronization status under that scope, and the API's `GET /api/v1/health/memory-sync` and
 `GET /api/v1/health/memory-corpus` read them under the scope the API is given, so an API configured with

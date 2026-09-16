@@ -221,6 +221,27 @@ publishes nothing and reports `memory_embedding_model_unavailable`. The previous
 in both states. The API, which has no model, compares only the id part and takes the two model states
 from the code the Worker last persisted.
 
+The seed pass cuts each file's frontmatter-free body into chunks before embedding it. It first splits
+on ATX headings (`#` through `######`, ignoring heading-like lines inside fenced code) and then caps
+each section by tokens: a section that fits is one chunk, and a longer one becomes several chunks
+split on whole lines, preferring blank-line paragraph boundaries, with adjacent chunks repeating up
+to `OverlapTokens` of trailing lines. Every chunk text starts with its heading path, the ancestor
+headings joined with ` > ` (the file title for text without headings), and the path is also stored
+in `memory_chunks.heading_path`. A heading with no body folds into the path of the next section, and
+a file of headings alone becomes one chunk holding its folded path. A heading path or a single line
+that cannot fit the cap is refused rather than split or truncated, and the pass fails naming the
+seed file's relative path. The token counter is the installed model's own tokenizer for the local
+adapter and a character estimate for the OpenAI-compatible and mock adapters.
+
+Each generation also records its chunking policy in `memory_corpus_generations.chunk_policy`, for
+example `v1;max=448;overlap=48;min=32;exact`, where the last field is the counter kind (`exact` or
+`estimate`). An incremental pass that finds a different configured policy publishes nothing, leaves
+the previous corpus current and retrievable, and reports `memory_chunk_policy_changed` through
+`memory status`, the memory-sync health status and `GET /api/v1/health/memory-corpus`, until
+`memory rebuild` publishes a generation under the new policy. A generation published before policies
+were recorded has none and is not treated as different: its unchanged files keep their whole-file
+chunks and it stays current until the next `memory rebuild`.
+
 The manual `CurrentReleases` map is the single per-service release marker: memory retrieval labels
 matching evidence as current, stale, unversioned or service-mismatched before it reaches the model.
 Report publication derives and verifies the stored documentation-fit status from those durable
@@ -240,6 +261,10 @@ Component and evidence-kind boosts require exact normalized query aliases; neith
 model output or accepted as a tool argument. Ties resolve by combined score, vector score and chunk
 UUID. A model/provider/dimension mismatch returns an honest empty result instead of falling back to
 fuzzy retrieval.
+
+Chunks, not items, are the retrieval unit. `TopK` counts chunks and nothing collapses several chunks
+of one item into one match, so two sections of one runbook can both be returned, each with its own
+`headingPath` in the tool output and its own `RetrievedItem` artifact.
 
 Successful matches are written as attempt-level `RetrievedItem` artifacts with
 `domain_ref = memory_item:<id>`, and those artifacts commit in the same transaction as the

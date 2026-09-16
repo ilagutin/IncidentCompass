@@ -104,7 +104,7 @@ remains the provenance and review path; there is no memory write API. Runtime re
 default; enable it only with a bounded interval when a long-running local corpus should follow
 reviewed file changes.
 
-Changing the embedding model or provider is the one case a file change cannot cover, because the
+Changing the embedding model or provider is one case a file change cannot cover, because the
 files stay identical while the vector space moves. Synchronization notices and stops rather than
 publishing half a corpus: the previous one stays searchable and the memory-sync health status reports
 `memory_embedding_route_changed`. Run `memory rebuild` on the Worker to re-embed everything under
@@ -112,6 +112,16 @@ the new route, and `memory status` on the Worker to see the configured route bes
 built the corpus. The local model adds two states of its own, `memory_embedding_model_mismatch` for
 an installed model that is not the route's model and `memory_embedding_model_unavailable` for no usable
 installed model; `docs/single-host-production.md`, "Local embedding model", says what to do about each.
+
+A file is embedded as chunks, not whole. Each chunk is one markdown section, or a token-capped piece
+of a long section with a small overlap, and starts with its heading path, so a match in `memory_search`
+names the section it came from as `headingPath`. The chunking settings live under
+`IncidentCompass:Memory:Seed:Chunking` (`MaxTokens` 448, `OverlapTokens` 48 and `MinTokens` 32 by
+default; `docs/quickstart.md`, "Optional Memory Seed", gives the rules). They are the other change a
+file edit cannot cover: after changing them, synchronization publishes nothing, the previous corpus
+stays searchable and the memory-sync health status reports `memory_chunk_policy_changed` until
+`memory rebuild` runs. A file with a line too long to fit a chunk is refused by name rather than
+truncated.
 The shared Compose environment anchor still passes the `Embeddings__*` settings to
 the api service as well; the API composes no embedding client and does not use them beyond
 validating the shape of the embeddings section at startup.

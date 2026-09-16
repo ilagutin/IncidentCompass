@@ -151,6 +151,10 @@ model or sets the route's model back.
   stored per action and hashes the complete immutable review tuple with domain separation and
   length-prefixed fields. A future tuple change requires a new contract version and an additive
   migration; released tuple rows and provenance are never rewritten.
+- `036-memory-chunk-structure.sql` is catalog migration version 27. It adds two nullable columns,
+  `memory_chunks.heading_path` and `memory_corpus_generations.chunk_policy`, and rewrites no existing
+  row: chunks and generations published before it keep null in both, which reads as "unrecorded", not
+  as a different chunking policy.
 - If EF Core is introduced later for broader persistence, use migrations and name them after the use case or schema change.
 
 ## Pricing

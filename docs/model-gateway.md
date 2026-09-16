@@ -100,6 +100,13 @@ the defaults under `IncidentCompass:Embeddings:LocalOnnx`. The adapter prefixes 
 `query: ` and a passage with `passage: `, truncates input at 512 tokens including the two sequence
 markers, mean-pools, L2-normalizes and returns 384 dimensions.
 
+That cap applies to both kinds of input, but it no longer cuts seed content in practice. A seed passage
+reaches the adapter as a chunk the memory seed pass has already sized with this same tokenizer, prefix
+and markers included, and the Worker refuses to start seeding when the configured chunk
+`MaxTokens` plus the prefix and markers would exceed the installed model's window. A `memory_search`
+query is not chunked: a query longer than the window is still cut at 512 tokens, silently, and only
+its beginning is embedded.
+
 The model lives in `IncidentCompass:Embeddings:LocalOnnx:ModelDirectory`, an absolute path that is
 required when the host provider is `LocalOnnx` and has no default; both compose files set it to
 `/app/models`, the Worker's `embedding-models` volume. The directory holds `manifest.json`, which names

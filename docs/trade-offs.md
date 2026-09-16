@@ -47,6 +47,7 @@ Memory, grouping and evidence
 - [File-Backed Memory Is The Write Path](#file-backed-memory-is-the-write-path)
 - [Documentation Fit Is Evidence Classification](#documentation-fit-is-evidence-classification)
 - [Memory Embedding Model Changes Require Re-Embedding](#memory-embedding-model-changes-require-re-embedding)
+- [Structural Memory Chunking, Not Semantic](#structural-memory-chunking-not-semantic)
 - [Bounded Memory Reranking Instead of Database Full-Text Search](#bounded-memory-reranking-instead-of-database-full-text-search)
 - [Deterministic Grouping Is Not Incident Correlation](#deterministic-grouping-is-not-incident-correlation)
 - [Re-triage Reuses Untrusted History](#re-triage-reuses-untrusted-history)
@@ -538,6 +539,29 @@ owners in one tenant that use different providers with the same adapter name, mo
 width would both be searched. The shipped configuration has one owner per tenant, and separating
 owners further would mean scoping retrieval by owner, which is a change to what a tenant's memory
 means rather than a fix to this check.
+
+## Structural Memory Chunking, Not Semantic
+
+A seed file is cut where its author already cut it: at ATX headings, then by a token cap on whole
+lines with a small overlap, each chunk carrying its heading path. Nothing looks at meaning. A section
+that mixes two topics stays one chunk, a long section is split where the cap falls rather than where
+the argument turns, and a document without headings is one section however it is organized. Semantic
+or embedding-driven segmentation would place boundaries better, but it would make a chunk's extent
+depend on a model's judgement, need its own evaluation and make a chunking change harder to explain
+than three numbers in a recorded policy string. Reviewed runbooks are usually sectioned already, which
+is what the structural rule relies on.
+
+Token counts are exact only for the in-process model, which counts with its own tokenizer. The
+OpenAI-compatible and mock adapters count with an estimate of one token per four UTF-16 characters,
+rounded up, because a generic embedding endpoint exposes no tokenizer. The estimate can be wrong in
+either direction: text that tokenizes densely, such as some non-Latin scripts or long identifiers, can
+exceed the external model's real window and be cut by that provider, and sparse text produces chunks
+smaller than they needed to be. The counter kind is part of the recorded policy string, so a corpus
+chunked by one counter is never reported current under the other.
+
+A line that does not fit is refused, naming its file, rather than split mid-line or truncated. That
+keeps every chunk a faithful excerpt, at the cost of failing the whole seed pass on one file until the
+line is shortened.
 
 ## Bounded Memory Reranking Instead of Database Full-Text Search
 
