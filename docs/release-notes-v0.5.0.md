@@ -1,10 +1,14 @@
 # IncidentCompass 0.5.0 - local embeddings, sectioned memory, and limits that fit a slow model
 
-IncidentCompass 0.5.0 changes two things an operator meets on the first day. Memory embeddings no
+IncidentCompass 0.5.0 changes three things an operator meets on the first day. Memory embeddings no
 longer need an external embedding server: the Worker runs a pinned multilingual model in process and
-installs it itself. And a slow local chat model no longer fails an investigation at a short total
+installs it itself. A slow local chat model no longer fails an investigation at a short total
 deadline: each provider call is bounded by what it is waiting for, chat answers are streamed by
 default so a stall is visible as a stall, and the attempt as a whole gets a four-hour safety ceiling.
+And an investigation now polices its own tool use and its own progress: every tool call has its own
+execution limit, repeated calls and stalled progress are detected, a bounded recovery call gets one
+attempt to unstick it, and a stalled investigation still ends with an honest report the backend writes
+itself.
 
 This is still reference-quality software with the single-host envelope described in
 [Single-host production runbook](single-host-production.md). Nothing below widens that envelope.
@@ -168,6 +172,80 @@ and a single event line at 4 MiB characters, both ending the call as `provider_r
 OpenAI-compatible layers that stream tool-call fragments without `index`, which need
 `Streaming=false`.
 
+### Every tool call has an execution limit
+
+Each tool in the triage configuration may set `TimeoutSeconds`, from 1 through 3600. An immediate
+worker tool that sets none is bounded at 120 seconds; an external action that sets none uses the
+Worker's `IncidentCompass:ActionDispatch:AdapterTimeoutSeconds`, 30 by default. The shipped
+configuration sets none, so its hash is unchanged.
+
+An immediate tool call runs under three bounds at once, and the outcome names the bound that fired:
+
+- its own limit records a `Failed` tool result with `tool_execution_timeout`, and the worker continues
+  with that limitation;
+- the attempt ceiling ends the attempt with `triage_budget_wall_clock_reached_during_call`, as during a
+  model call;
+- shutdown propagates as cancellation without a ledger write.
+
+Any other exception records a `Failed` tool result with `tool_execution_failed`, naming the tool, and
+propagates unchanged. The executor stops waiting as soon as a bound fires, even for a tool that ignores
+cancellation; such a read-only tool is abandoned and may keep running until it returns.
+
+An external action resolves its limit before it is claimed, so the adapter deadline and the claim
+deadline use the same value. An action stopped after its claim but before its adapter was invoked,
+shutdown included, now closes as `dispatch_not_invoked`; after invocation the outcome stays
+`dispatch_outcome_unknown` and the action is never re-sent.
+
+### An investigation that stops making progress is detected and ended honestly
+
+**Repeated calls.** A worker tool call with the same tool and the same canonical arguments, or a
+delegate with the same role and the same task, that has already been repeated
+`Orchestrator.Budget.MaxEquivalentCalls` times in a row with an unchanged result is refused before it
+runs (with the default 2, the first call and two identical repeats run and the fourth call is
+refused). The worker receives a tool failure with status `NotExecuted` and code
+`repeated_call_without_new_evidence`; the orchestrator receives the same code as a delegate result.
+The attempt is not failed and no reprompt is charged. "The same result" ignores the fresh artifact ids
+a call writes, so two identical memory searches that find the same runbook are the same result, and a
+result that changed resets the count. Once a call is refused it is not run again in that attempt, so
+data behind that exact call is not re-read later. The check runs after the policy decision, so
+`rate_cap` is unchanged. A worker that proposes two refused calls in a row is stopped without an
+answer: the orchestrator receives `worker_stopped_repeating`, no worker output is stored and no schema
+reprompt is charged.
+
+**Progress.** An orchestrator turn makes progress when it adds evidence not seen before in the attempt
+or changes the candidate classification. Time is not an input, so a slow model that keeps producing is
+never a stalled one. When consecutive turns without progress go past
+`Orchestrator.Budget.MaxTurnsWithoutProgress` (default 4, range 2 to 32):
+
+- with a recovery left (`Orchestrator.Budget.MaxRecoveries`, default 1, range 0 to 3), the backend
+  makes one diagnostic call on the orchestrator route with the new call kind `recovery`, through the
+  same budgets, provider limits and `ModelCall` accounting. It is offered no tools and sees only a
+  backend summary of counts, role and tool names, the evidence count, the candidate classification
+  and the fixed task text. Its answer, bounded to 2000 characters, reaches the orchestrator as a user
+  message marked as a suggestion, and the orchestrator continues through its own tools. The recovery
+  call cannot start another recovery. A provider outage or another failure a later attempt could get
+  past goes back to the job runner as for any call. A failure that would repeat for the same request
+  has its accounting written and uses up that recovery; the attempt continues, with a fixed backend
+  note telling the orchestrator to change its next call, only when another recovery and another
+  window remain, and otherwise ends as below.
+- with none left, when the remaining turns or workers could not hold another window, or when the token
+  budget or context window leaves no room for the recovery call, the backend publishes its own report
+  through the same grounding path: status `InsufficientEvidence`, classification `Unknown`, confidence
+  `Low`, a fixed summary and next action, and a fixed limitation that names why it stopped. It cites
+  only the trigger signal, and on a re-triage the recurrence state. The job succeeds, and the report's
+  `ReportPublished` ledger rationale opens with `backend_authored: `, which a model-authored report
+  cannot produce. Reserved backend text in a model-authored report is refused or removed.
+
+Running out of turns or workers inside a stall the attempt detected, and that no progress has ended
+since, also ends with the backend report; otherwise both limits dead-letter as before. A backend
+report the repository refuses dead-letters as `triage_no_progress_termination_failed`.
+
+`Orchestrator.RecoveryInstructions` optionally points at other recovery instructions; absent, the
+built-in text shipped as `config/instructions/recovery.md` is used, and a configuration that does not
+set any of the new keys keeps its hash. Every intervention writes a `BudgetEvent` with the
+`no_progress:` prefix (`repeated_call`, `turns_without_progress`, `worker_stopped`, `recovery`,
+`recovery_failed`, `terminated`) and a log event.
+
 ### Model answers that cannot be used are refused sooner
 
 - `publish_report` accepts exactly one argument shape per call: `report_json` alone, `report` alone,
@@ -251,6 +329,14 @@ states their removal, with a warning naming the new key, and setting both names 
   provider is OpenAI-compatible. The old key no longer bounds reading the body, which the inactivity
   limit now does. The embedding section's `TimeoutSeconds` is not deprecated.
 
+**A stalled investigation now ends with a report instead of running to the turn limit.** A job whose
+orchestrator keeps making turns without new evidence gets one recovery call and then succeeds with a
+backend-authored `InsufficientEvidence` report, where it previously ran until `MaxTurns` and
+dead-lettered. Set `Orchestrator.Budget.MaxRecoveries` to 0 to skip the recovery call, or raise
+`MaxTurnsWithoutProgress` to give a slow-converging model more room. A model that repeats the same call
+with the same result is now refused after two repeats, where only `rate_cap` bounded repeats of a call
+before.
+
 **Streaming is on by default.** Set `IncidentCompass:ModelGateway:OpenAiCompatible:Streaming` to
 `false` for a provider that rejects `stream` or `stream_options`, or that streams tool calls in a shape
 this adapter refuses.
@@ -270,8 +356,16 @@ create the GitHub App described in [Versioning and release flow](versioning.md) 
 - New error codes: the three phase timeouts above, `remediation_answer_unrecorded`,
   `memory_embedding_model_mismatch`, `memory_embedding_model_unavailable`,
   `memory_chunk_policy_changed` and the local model install codes listed in
-  [Model gateway](model-gateway.md). New log events: 2701 and 2801 for the deprecated keys, and 3213
-  for a skipped fallback whose budget event could not be recorded.
+  [Model gateway](model-gateway.md), `tool_execution_timeout`, `tool_execution_failed`,
+  `dispatch_not_invoked`, `repeated_call_without_new_evidence`, `worker_stopped_repeating` and
+  `triage_no_progress_termination_failed`. New log
+  events: 2701 and 2801 for the deprecated keys, 3213 for a skipped fallback whose budget event could
+  not be recorded, 3305 to 3309 and 3521 for tool execution limits, and 3404 to 3411 for repetition,
+  progress, recovery and termination.
+- New optional configuration keys: `Tools.<id>.TimeoutSeconds`, `Orchestrator.Budget.MaxEquivalentCalls`,
+  `MaxTurnsWithoutProgress`, `MaxRecoveries` and `Orchestrator.RecoveryInstructions`. The shipped
+  configuration sets none of them. `ModelCall` rows gain the call kind `recovery`, and tool-call
+  telemetry gains the outcome `refused`.
 - Configuration validation is stricter in two places: a role output schema with a secret-named
   non-string property, and a configuration that sets both names of a deprecated key. Neither affects
   the shipped configuration.
@@ -284,9 +378,9 @@ create the GitHub App described in [Versioning and release flow](versioning.md) 
 
 ## Not in this release
 
-- Per-tool execution limits.
-- Detection of repetition or lack of progress in a model's output, and recovery from it. The limits
-  above catch silence and a run that never ends, not a model that keeps producing without converging.
+- Semantic progress detection. Repetition and progress are judged from result identities and the
+  candidate classification, so a model that loops through reworded tasks or calls is not caught as
+  repeating.
 - Cross-language retrieval. The multilingual model embeds other languages, but the lexical coverage
   rule means a query in another language than the corpus usually finds nothing.
 - Accounting of external embedding calls. An embedding call served by an OpenAI-compatible server
@@ -305,8 +399,11 @@ gate.
 including the PostgreSQL-backed integration tests through Testcontainers with
 `INCIDENTCOMPASS_REQUIRE_DOCKER_TESTS` set.
 
-On the release tree the full solution run reported 2514 tests: 2510 passed, 0 failed and 4
+On the release tree the full solution run reported 2628 tests: 2624 passed, 0 failed and 4
 skipped. The skips are three symbolic-link tests the Windows test process cannot create links for
+and the explicit OpenAPI baseline regeneration, which only `scripts/update-openapi-baseline.ps1`
+runs.
+The skips are three symbolic-link tests the Windows test process cannot create links for
 and the explicit OpenAPI baseline regeneration, which only `scripts/update-openapi-baseline.ps1`
 runs.
 
@@ -325,3 +422,5 @@ What that does not cover:
   default.
 - The streaming checks use scripted providers. Behavior against a specific provider's stream is
   covered only by the incompatibilities documented in [Model gateway](model-gateway.md).
+- Tool execution limits, repetition detection, bounded recovery and honest termination are exercised
+  with scripted model clients and a manual time provider, not against a real model.
