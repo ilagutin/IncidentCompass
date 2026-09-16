@@ -33,7 +33,6 @@ RUN apt-get update && \
 
 COPY --chown=incidentcompass:incidentcompass --from=build /app/publish ./
 COPY --chown=incidentcompass:incidentcompass config ./config
-COPY --chown=incidentcompass:incidentcompass samples ./samples
 
 ENV ASPNETCORE_URLS=http://+:8080 \
     IncidentCompass__ConfigSource__Path=/app/config/incidentcompass.config.json

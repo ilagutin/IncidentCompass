@@ -49,11 +49,11 @@ PostgreSQL initialization and container startup rather than by generation.
 
 - postgres: pgvector/pgvector:pg16, initialized from infra/postgres/init.
 - api: builds from src/IncidentCompass.Api/Dockerfile, exposes the configured host mapping (default http://localhost:5198), runs as the
-  non-root incidentcompass user, copies config/ and samples/, and sets
+  non-root incidentcompass user, copies config/ only, and sets
   IncidentCompass__ConfigSource__Path=/app/config/incidentcompass.config.json plus the memory seed
   tenant and owner that its memory health endpoints read.
 - worker: builds from src/IncidentCompass.Worker/Dockerfile, runs as the non-root incidentcompass
-  user, copies the same config/ and samples/, enables sample memory seeding, uses the same
+  user, copies config/ and samples/, enables sample memory seeding, uses the same
   explicit config and sample-source paths inside the image, and mounts the `embedding-models` named
   volume at `/app/models` for the local embedding model.
 - otel-collector: runs the pinned stock OpenTelemetry Collector Contrib image under the demo profile,
