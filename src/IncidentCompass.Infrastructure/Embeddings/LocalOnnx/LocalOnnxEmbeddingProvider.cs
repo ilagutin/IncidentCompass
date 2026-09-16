@@ -21,7 +21,10 @@ internal static class LocalOnnxEmbeddingProvider
     /// <summary>The request's route provider is missing or is not a <c>LocalOnnx</c> provider.</summary>
     public const string RouteProviderMismatchErrorCode = "embedding_route_provider_mismatch";
 
-    /// <summary>The request names a model other than the installed one.</summary>
+    /// <summary>
+    /// The request names a model other than the installed one. Carried as the provider error code; the
+    /// refusal's normalized code is <c>memory_embedding_model_mismatch</c>.
+    /// </summary>
     public const string ModelMismatchErrorCode = "embedding_model_mismatch";
 
     /// <summary>The verified model or tokenizer file could not be loaded into the runtime.</summary>

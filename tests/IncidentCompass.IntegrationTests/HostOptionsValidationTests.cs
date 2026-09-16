@@ -5,6 +5,7 @@ using IncidentCompass.Application.Tickets;
 using IncidentCompass.Infrastructure;
 using IncidentCompass.Infrastructure.EmbeddingModels;
 using IncidentCompass.Infrastructure.Embeddings.LocalOnnx;
+using IncidentCompass.Infrastructure.Memory;
 using IncidentCompass.Infrastructure.Tickets;
 using IncidentCompass.TestSupport;
 using IncidentCompass.Worker;
@@ -361,7 +362,8 @@ public sealed class HostOptionsValidationTests
                     TestContext.Current.CancellationToken));
 
             Assert.IsType<LocalOnnxEmbeddingClient>(embeddingClient);
-            Assert.Equal(LocalOnnxModelErrorCodes.FetchFailed, exception.ErrorCode);
+            Assert.Equal(MemoryCorpusErrorCodes.EmbeddingModelUnavailable, exception.ErrorCode);
+            Assert.Equal(LocalOnnxModelErrorCodes.FetchFailed, exception.ProviderErrorCode);
             Assert.Equal(LocalOnnxEmbeddingProvider.Name, exception.Provider);
             await host.StopAsync();
         }

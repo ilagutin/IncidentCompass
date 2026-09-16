@@ -365,7 +365,9 @@ states from the code the Worker last persisted, so it shows what the Worker reco
 synchronization pass rather than the volume as it is now.
 
 Resolve either state promptly. While it lasts, every triage job that reaches `memory_search` has its
-embedding call refused as unavailable and waits and retries as it would during a provider outage.
+embedding call refused with the state's code. That is a configuration failure, not a provider outage: the
+attempt fails with `memory_embedding_model_mismatch` or `memory_embedding_model_unavailable`, it does not
+pause claims, and the job retries only within its ordinary attempt budget before it is dead-lettered.
 
 **Memory and CPU.** The Worker loads the model on its first embedding call and keeps it loaded. Plan for
 its memory to grow by roughly the model file's size, about 118 MB, plus 100 to 200 MB; that is a planning

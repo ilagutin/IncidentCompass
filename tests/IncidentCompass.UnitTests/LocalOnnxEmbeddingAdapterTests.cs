@@ -147,6 +147,7 @@ public sealed class LocalOnnxEmbeddingAdapterTests : IAsyncLifetime
 
         Assert.Equal(LocalOnnxEmbeddingProvider.ConfigurationReadFailedErrorCode, exception.ErrorCode);
         Assert.Equal(ProviderFailureKind.Unavailable, exception.FailureKind);
+        Assert.True(ProviderOutageExceptionClassifier.IsProviderOutage(exception));
         Assert.IsType<InvalidOperationException>(exception.InnerException);
     }
 
@@ -206,20 +207,22 @@ public sealed class LocalOnnxEmbeddingAdapterTests : IAsyncLifetime
 
     /// <summary>
     /// A request for another model, which is what <c>memory_search</c> sends when the installed model
-    /// is not the one its route names, is a provider outage the job waits out rather than a request
-    /// the job fails on: that is the existing unavailable outcome of a tool call.
+    /// is not the one its route names, is a configuration state an operator fixes, not a provider
+    /// outage: it is normalized to the corpus state's code, keeps the adapter's own code as the
+    /// provider error code, and does not feed the outage pause.
     /// </summary>
     [Fact]
-    public async Task CreateEmbedding_RefusesAModelOtherThanTheInstalledOneAsAProviderOutage()
+    public async Task CreateEmbedding_RefusesAModelOtherThanTheInstalledOneAsAConfigurationState()
     {
         var exception = await Assert.ThrowsAsync<EmbeddingClientException>(() =>
             CreateClient().CreateEmbeddingAsync(
                 Request("checkout timeout", model: "intfloat/multilingual-e5-base"),
                 TestContext.Current.CancellationToken));
 
-        Assert.Equal(LocalOnnxEmbeddingProvider.ModelMismatchErrorCode, exception.ErrorCode);
-        Assert.Equal(ProviderFailureKind.Unavailable, exception.FailureKind);
-        Assert.True(ProviderOutageExceptionClassifier.IsProviderOutage(exception));
+        Assert.Equal(MemoryEmbeddingModelErrorCodes.Mismatch, exception.ErrorCode);
+        Assert.Equal(LocalOnnxEmbeddingProvider.ModelMismatchErrorCode, exception.ProviderErrorCode);
+        Assert.Equal(ProviderFailureKind.ConfigurationRequired, exception.FailureKind);
+        Assert.False(ProviderOutageExceptionClassifier.IsProviderOutage(exception));
         Assert.Contains("intfloat/multilingual-e5-base", exception.Message, StringComparison.Ordinal);
         Assert.Contains(Fixture.FixtureManifest.Id, exception.Message, StringComparison.Ordinal);
     }
@@ -236,12 +239,14 @@ public sealed class LocalOnnxEmbeddingAdapterTests : IAsyncLifetime
         var exception = await Assert.ThrowsAsync<EmbeddingClientException>(() =>
             client.CreateEmbeddingAsync(Request("checkout timeout"), TestContext.Current.CancellationToken));
 
-        Assert.Equal(LocalOnnxEmbeddingProvider.ModelNotInstalledErrorCode, exception.ErrorCode);
-        Assert.Equal(ProviderFailureKind.Unavailable, exception.FailureKind);
+        Assert.Equal(MemoryEmbeddingModelErrorCodes.Unavailable, exception.ErrorCode);
+        Assert.Equal(LocalOnnxEmbeddingProvider.ModelNotInstalledErrorCode, exception.ProviderErrorCode);
+        Assert.Equal(ProviderFailureKind.ConfigurationRequired, exception.FailureKind);
+        Assert.False(ProviderOutageExceptionClassifier.IsProviderOutage(exception));
     }
 
     [Fact]
-    public async Task CreateEmbedding_AfterAFailedInstall_IsRefusedWithTheInstallCodeAsAProviderOutage()
+    public async Task CreateEmbedding_AfterAFailedInstall_IsRefusedAsUnavailableWithTheInstallCode()
     {
         var state = new LocalOnnxModelInstallState();
         state.RecordFailed(LocalOnnxModelErrorCodes.DigestMismatch, "The onnx file has the wrong digest.");
@@ -249,9 +254,10 @@ public sealed class LocalOnnxEmbeddingAdapterTests : IAsyncLifetime
         var exception = await Assert.ThrowsAsync<EmbeddingClientException>(() =>
             CreateClient(state).CreateEmbeddingAsync(Request("checkout timeout"), TestContext.Current.CancellationToken));
 
-        Assert.Equal(LocalOnnxModelErrorCodes.DigestMismatch, exception.ErrorCode);
-        Assert.Equal(ProviderFailureKind.Unavailable, exception.FailureKind);
-        Assert.True(ProviderOutageExceptionClassifier.IsProviderOutage(exception));
+        Assert.Equal(MemoryEmbeddingModelErrorCodes.Unavailable, exception.ErrorCode);
+        Assert.Equal(LocalOnnxModelErrorCodes.DigestMismatch, exception.ProviderErrorCode);
+        Assert.Equal(ProviderFailureKind.ConfigurationRequired, exception.FailureKind);
+        Assert.False(ProviderOutageExceptionClassifier.IsProviderOutage(exception));
     }
 
     [Fact]

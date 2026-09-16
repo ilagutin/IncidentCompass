@@ -1,5 +1,6 @@
 using IncidentCompass.Application.Core.Embeddings;
 using IncidentCompass.Application.Core.Errors;
+using IncidentCompass.Application.Memory;
 using IncidentCompass.Infrastructure.EmbeddingModels;
 
 namespace IncidentCompass.Infrastructure.Embeddings.LocalOnnx;
@@ -27,23 +28,31 @@ internal static class LocalOnnxEmbeddingErrors
         Create(detail, LocalOnnxEmbeddingProvider.RouteProviderMismatchErrorCode, ProviderFailureKind.RejectedRequest);
 
     /// <summary>
-    /// Unavailable rather than rejected: the request is well formed, and what is missing is the model
-    /// it names on this host. A job whose <c>memory_search</c> meets it is delayed as a provider outage
-    /// instead of failing for good. It keeps meeting it until an operator installs the configured model
-    /// and restarts the Worker, because a running Worker keeps the model it verified at start.
+    /// A configuration state rather than an outage or a rejection: the request is well formed, and
+    /// what is missing is the model it names on this host. It keeps being refused until an operator
+    /// installs the configured model or corrects the route and restarts the Worker, because a running
+    /// Worker keeps the model it verified at start. The normalized code is the corpus state's own
+    /// <c>memory_embedding_model_mismatch</c>, so a job whose <c>memory_search</c> meets it stores
+    /// what an operator has to fix and retries only inside its attempt budget; the adapter's own code
+    /// is kept as the provider error code.
     /// </summary>
     public static EmbeddingClientException ModelMismatch(string requestedModel, string installedModel) =>
-        Create(
+        CreateConfigurationRequired(
             $"The request names embedding model '{requestedModel}', but the installed local embedding model is" +
             $" '{installedModel}'.",
-            LocalOnnxEmbeddingProvider.ModelMismatchErrorCode,
-            ProviderFailureKind.Unavailable);
+            MemoryEmbeddingModelErrorCodes.Mismatch,
+            LocalOnnxEmbeddingProvider.ModelMismatchErrorCode);
 
+    /// <summary>
+    /// No usable installed model, which is the same configuration state as a mismatch, reported as
+    /// <c>memory_embedding_model_unavailable</c>. The install code that says why, for example
+    /// <c>embedding_model_digest_mismatch</c>, is kept as the provider error code.
+    /// </summary>
     public static EmbeddingClientException NotAvailable(LocalOnnxInstalledModelLookup lookup) =>
-        Create(
+        CreateConfigurationRequired(
             lookup.Detail ?? "The local embedding model is not installed on this host.",
-            lookup.ErrorCode ?? LocalOnnxEmbeddingProvider.ModelNotInstalledErrorCode,
-            ProviderFailureKind.Unavailable);
+            MemoryEmbeddingModelErrorCodes.Unavailable,
+            lookup.ErrorCode ?? LocalOnnxEmbeddingProvider.ModelNotInstalledErrorCode);
 
     public static EmbeddingClientException LoadFailed(string detail, Exception? innerException = null) =>
         Create(
@@ -77,4 +86,15 @@ internal static class LocalOnnxEmbeddingErrors
             errorCode: errorCode,
             innerException: innerException,
             failureKind: failureKind);
+
+    private static EmbeddingClientException CreateConfigurationRequired(
+        string message,
+        string errorCode,
+        string adapterErrorCode) =>
+        new(
+            LocalOnnxEmbeddingProvider.Name,
+            message,
+            errorCode: errorCode,
+            providerErrorCode: adapterErrorCode,
+            failureKind: ProviderFailureKind.ConfigurationRequired);
 }

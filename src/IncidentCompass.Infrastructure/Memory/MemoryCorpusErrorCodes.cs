@@ -12,9 +12,9 @@ internal static class MemoryCorpusErrorCodes
 
     public const string EmbeddingRoutesMixed = "memory_embedding_routes_mixed";
 
-    public const string EmbeddingModelMismatch = "memory_embedding_model_mismatch";
+    public const string EmbeddingModelMismatch = MemoryEmbeddingModelErrorCodes.Mismatch;
 
-    public const string EmbeddingModelUnavailable = "memory_embedding_model_unavailable";
+    public const string EmbeddingModelUnavailable = MemoryEmbeddingModelErrorCodes.Unavailable;
 
     public const string ChunkPolicyChanged = "memory_chunk_policy_changed";
 

@@ -24,6 +24,8 @@ internal static class ProviderErrorCodes
             ProviderFailureKind.AmbiguousInterruption => "provider_dispatch_outcome_unknown",
             ProviderFailureKind.InvalidResponse =>
                 ProviderOutageExceptionClassifier.FindSafeErrorCode(exception) ?? "provider_invalid_response",
+            ProviderFailureKind.ConfigurationRequired =>
+                ProviderOutageExceptionClassifier.FindSafeErrorCode(exception) ?? "provider_configuration_required",
             _ => ProviderOutageExceptionClassifier.FindSafeErrorCode(exception) ?? "provider_failure"
         };
 }
