@@ -25,6 +25,15 @@ internal sealed class TriageBudgetExhaustedException : Exception
 
     public const string WorkerTurnLimitReachedCode = "triage_budget_worker_turn_limit_reached";
 
+    /// <summary>
+    /// The backend's own no-progress report was refused at publication. It is carried by this type
+    /// rather than a new one because the stop it reports is a bounded-run stop (no progress within the
+    /// bounded recovery allowance), and <see cref="TriageNonRetryableFailureClassifier"/> already
+    /// dead-letters this type without being widened to other exceptions: a backend report built from
+    /// the same snapshot and job artifacts would be refused again on every retry.
+    /// </summary>
+    public const string NoProgressTerminationFailedCode = "triage_no_progress_termination_failed";
+
     public TriageBudgetExhaustedException(string errorCode, string message)
         : this(errorCode, message, innerException: null)
     {

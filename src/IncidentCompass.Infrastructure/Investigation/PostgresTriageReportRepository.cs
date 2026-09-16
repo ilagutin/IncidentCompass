@@ -68,7 +68,7 @@ internal sealed partial class PostgresTriageReportRepository(
             await PostgresTriageEvidenceWriter.ReplaceAsync(connection, transaction, reportId, evidence, now, cancellationToken);
             await MarkFaultTerminalAsync(connection, transaction, job, report.Status, now, cancellationToken);
             await faultInjector.BeforeReportPublishedLedgerEventAsync(cancellationToken);
-            await PostgresReportPublishedEventWriter.InsertAsync(connection, transaction, job, reportId, report.Summary, now, cancellationToken);
+            await PostgresReportPublishedEventWriter.InsertAsync(connection, transaction, job, reportId, report, now, cancellationToken);
             if (report.Status == TriageReportStatus.Completed)
             {
                 var context = await PostgresReportPublicationIntentWriter.ReadFaultContextAsync(

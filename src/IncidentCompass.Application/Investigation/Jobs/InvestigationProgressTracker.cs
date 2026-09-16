@@ -38,9 +38,19 @@ internal sealed class InvestigationProgressTracker(int maxEquivalentCalls, int m
 
     public int TurnsWithoutProgress { get; private set; }
 
+    /// <summary>
+    /// Whether a stall is open: the no-progress window was exceeded at least once in this attempt and
+    /// no turn has made progress since. Resetting the window after a recovery does not close it; only
+    /// progress does.
+    /// </summary>
+    public bool StallDetected { get; private set; }
+
     public int EvidenceCount => evidenceHashes.Count;
 
     public string? CandidateClassification { get; private set; }
+
+    /// <summary>What the attempt has done so far, for the recovery summary and the termination audit.</summary>
+    public InvestigationActivity Activity { get; } = new();
 
     public static InvestigationProgressTracker For(OrchestratorBudgetSettings budget) =>
         new(budget.MaxEquivalentCalls, budget.MaxTurnsWithoutProgress);
@@ -112,11 +122,14 @@ internal sealed class InvestigationProgressTracker(int maxEquivalentCalls, int m
     {
         var madeProgress = progressThisTurn;
         progressThisTurn = false;
+        Activity.RecordTurnCompleted();
         TurnsWithoutProgress = madeProgress ? 0 : TurnsWithoutProgress + 1;
+        var limitExceeded = TurnsWithoutProgress > MaxTurnsWithoutProgress;
+        StallDetected = !madeProgress && (StallDetected || limitExceeded);
         return new InvestigationTurnProgress(
             madeProgress,
             TurnsWithoutProgress,
-            TurnsWithoutProgress > MaxTurnsWithoutProgress);
+            limitExceeded);
     }
 
     /// <summary>

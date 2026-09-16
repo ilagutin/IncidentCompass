@@ -134,7 +134,10 @@ internal sealed class TriageConfigurationMaterializer(TriageConfigurationLoadVal
     {
         return orchestrator with
         {
-            Instructions = ResolveReference(orchestrator.Instructions, referencesNode)
+            Instructions = ResolveReference(orchestrator.Instructions, referencesNode),
+            RecoveryInstructions = orchestrator.RecoveryInstructions is null
+                ? null
+                : ResolveReference(orchestrator.RecoveryInstructions, referencesNode)
         };
     }
 

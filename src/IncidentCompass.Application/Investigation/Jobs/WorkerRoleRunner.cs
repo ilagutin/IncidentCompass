@@ -26,6 +26,13 @@ internal sealed partial class WorkerRoleRunner(
     /// </summary>
     internal const string RepromptRationalePrefix = "worker_output_reprompt: ";
 
+    /// <summary>
+    /// Refused repeat calls in a row after which one worker run is stopped. The first refusal tells the
+    /// model why; a second in a row shows it is not acting on that, and every further turn would be a
+    /// billed model call that can only be refused again.
+    /// </summary>
+    internal const int MaxConsecutiveRefusedToolCalls = 2;
+
     private readonly ILogger logger = logger ?? NullLogger<WorkerRoleRunner>.Instance;
 
     public async Task<string> RunAsync(
@@ -59,6 +66,7 @@ internal sealed partial class WorkerRoleRunner(
         };
 
         var reprompts = 0;
+        var consecutiveRefusals = 0;
         var maxTurns = configuration.Orchestrator.Budget.MaxReprompts + role.Tools.Count + WorkerTurnSlack;
         for (var turn = 0; turn < maxTurns; turn++)
         {
@@ -74,9 +82,16 @@ internal sealed partial class WorkerRoleRunner(
             if (toolCall is not null)
             {
                 messages.Add(new AiChatMessage(AiMessageRole.Assistant, response.Content, ToolCalls: [toolCall]));
+                var refusedBefore = progress.Activity.RefusedCalls;
                 var toolResult = await toolCallExecutor.ExecuteAsync(
                     job, configuration, context, roleName, toolCall, attemptStartedAtUtc, progress, cancellationToken);
                 messages.Add(new AiChatMessage(AiMessageRole.Tool, toolResult, toolCall.Id));
+                consecutiveRefusals = progress.Activity.RefusedCalls > refusedBefore ? consecutiveRefusals + 1 : 0;
+                if (consecutiveRefusals >= MaxConsecutiveRefusedToolCalls)
+                {
+                    throw new WorkerStoppedRepeatingException(consecutiveRefusals);
+                }
+
                 continue;
             }
 

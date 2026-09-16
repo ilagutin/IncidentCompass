@@ -178,6 +178,10 @@ internal sealed class TriageConfigurationLoadValidator(
     {
         RequireChatRoute(routes, orchestrator.RouteId, "Orchestrator.RouteId");
         RequireNonBlank("Orchestrator.Instructions", orchestrator.Instructions);
+        if (orchestrator.RecoveryInstructions is not null)
+        {
+            RequireNonBlank("Orchestrator.RecoveryInstructions", orchestrator.RecoveryInstructions);
+        }
 
         var tools = orchestrator.Tools.ToHashSet(StringComparer.Ordinal);
         if (tools.Count != OrchestratorTools.Count || !tools.SetEquals(OrchestratorTools))
@@ -221,6 +225,11 @@ internal sealed class TriageConfigurationLoadValidator(
             orchestrator.Budget.MaxTurnsWithoutProgress,
             OrchestratorBudgetSettings.MinimumMaxTurnsWithoutProgress,
             OrchestratorBudgetSettings.MaximumMaxTurnsWithoutProgress);
+        RequireBudgetInRange(
+            OrchestratorBudgetSettings.MaxRecoveriesSettingName,
+            orchestrator.Budget.MaxRecoveries,
+            OrchestratorBudgetSettings.MinimumMaxRecoveries,
+            OrchestratorBudgetSettings.MaximumMaxRecoveries);
     }
 
     private static void RequireBudgetInRange(string settingName, int value, int minimum, int maximum)

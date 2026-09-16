@@ -666,9 +666,74 @@ except the events named below.
   classification from an analysis output. No order of roles is prescribed, and time is not an input:
   a slow model that keeps producing never counts as a turn without progress. When consecutive turns
   without progress go past `Orchestrator.Budget.MaxTurnsWithoutProgress` (default 4, range 2-32), a
-  `no_progress: turns_without_progress` budget event and log event 3405 are written, the count starts
-  a new window and the attempt continues. The turn limit (`MaxTurns` plus `MaxReprompts`) still bounds
-  it and still dead-letters when spent.
+  `no_progress: turns_without_progress` budget event and log event 3405 are written and the backend
+  either recovers or terminates, as below.
+- **Worker stopped for repeating.** Inside one worker run, two refused calls in a row end that run
+  early. The worker has produced no output, so no `WorkerOutput` artifact or `WorkerCompleted` entry is
+  written and no schema reprompt is charged; the orchestrator receives a delegate result of the
+  validation shape with code `worker_stopped_repeating`, a `no_progress: worker_stopped` budget event
+  and log event 3406 are written, and the turn adds no evidence. The result is recorded against the
+  delegate's fingerprint, so the same delegate stopped the same way is itself a repeat.
+- **Bounded recovery.** At a no-progress detection with a recovery left
+  (`Orchestrator.Budget.MaxRecoveries`, default 1, range 0-3), the backend makes one diagnostic call on
+  the orchestrator route with call kind `recovery`, through the same bounded model caller, so the
+  budgets, the provider limits, route fail-over and `ModelCall` accounting apply. It is offered no
+  tools. Its system message is `Orchestrator.RecoveryInstructions` (a `ref:` like `Instructions`; when
+  absent, the built-in text shipped as `config/instructions/recovery.md`), and its user message is a
+  backend-built summary: turn, delegation, tool-call, refusal and stopped-worker counts, the roles
+  delegated to, refused calls as role and tool names with counts, the evidence count, the candidate
+  classification (a vocabulary label or `none`) and the fixed task the orchestrator was given. It
+  holds no tool output, argument, task text or incident context. The answer, trimmed and bounded to
+  2000 characters, is appended to the orchestrator conversation as a user message that says it is a
+  recovery suggestion and not an instruction; a tool call the answer proposes is ignored. A
+  `no_progress: recovery` budget event and log event 3407 are written, the no-progress window starts
+  again and the orchestrator continues, still acting only through `delegate` and `publish_report`.
+  The recovery call is not a turn and cannot trigger another recovery. How it can end:
+  - A failure a later attempt could get past (provider unavailable, generation timeout, transport
+    failure, configuration required, or an unknown provider failure) propagates, so the job runner
+    applies its ordinary disposition: an outage delays the job without spending an attempt and feeds
+    the outage pause.
+  - A failure that would repeat for the same request (rejected request, output limit, invalid
+    response, ambiguous interruption, client contract breach) has its `ModelCall` accounting written,
+    a `no_progress: recovery_failed` budget event and log event 3408, and uses up that recovery.
+  - A token-budget or context-window refusal before dispatch is recorded the same way and ends the
+    attempt with the backend report, since no later recovery would be admitted.
+  - The attempt duration ceiling, a cancellation, a governance denial, or an answered call whose
+    accounting could not be written propagates as from any other call.
+- **When a recovery is attempted.** At a no-progress detection the handler terminates when every
+  recovery is used. Otherwise it recovers only when another window fits: at least
+  `MaxTurnsWithoutProgress + 1` orchestrator turns remain in `MaxTurns + MaxReprompts`, and at least one
+  worker remains in `MaxWorkers`. When no window fits it terminates without the recovery call, because
+  the attempt would have no room to act on a suggestion. After a failed recovery the attempt continues
+  into a fresh window only when another recovery is left and another window fits, and the orchestrator
+  receives one fixed backend message, marked like a suggestion, saying the recovery review returned
+  nothing and asking it to change its next call; otherwise it terminates.
+- **Honest termination.** The backend publishes its own report through the same publisher,
+  repository, grounding and documentation-fit path as any report: status `InsufficientEvidence`,
+  classification `Unknown`, confidence `Low`, documentation fit `Missing`, a fixed summary, the fixed
+  limitation for its termination reason and a fixed next action to review the ledger. It cites only the job-level trigger signal
+  and, on a re-triage, the recurrence state, which ground for every attempt. Derived limitations
+  (read-only context, cited redaction, fallback routing) still apply. The job succeeds. Authorship is
+  durable: the report is published as backend-authored, so its `ReportPublished` ledger rationale opens
+  with `backend_authored: `, which no model-authored publication can produce. After the publication
+  commits, a `no_progress: terminated reason=<reason> ...` budget event and log event 3409 are written.
+  If the repository refuses the backend report, the attempt dead-letters as
+  `triage_no_progress_termination_failed` (log event 3410) and no terminated row is written.
+- **Termination reasons.** `no_recovery_left`, `no_window_left`, `recovery_not_admitted`, and two that
+  replace a dead-letter inside a detected stall. A stall is detected when the no-progress window is
+  exceeded, and it stays open until a turn makes progress; resetting the window after a recovery does
+  not close it. `worker_budget_during_stall` applies when `MaxWorkers` is reached while such a stall is
+  open. `turn_limit_during_stall` applies when `MaxTurns` plus `MaxReprompts` is spent while one is
+  open; because a recovery is only attempted when a whole window still fits, the handler normally
+  terminates first, and this reason is the backstop. Without an open stall both limits dead-letter as
+  before (`triage_budget_orchestrator_turn_limit_reached`, `triage_budget_max_workers_reached`), even
+  when the last turns made no progress. Each reason has its own fixed limitation sentence, and none
+  claims a recovery was used.
+- **Reserved text.** As defence in depth, a model-authored report is refused with a fixed reprompt
+  diagnostic when its summary matches the backend summary or opens with `backend_authored:`, or when
+  its limitations, joined, still contain any of the backend limitations; a single limitation matching
+  one of them is removed. Matching is after NFKC normalization, removal of zero-width and other format
+  characters, whitespace collapse including non-breaking spaces, and ignoring case.
 
 See `docs/observability.md` for the event wording and `docs/trade-offs.md` for what the heuristic can
 and cannot see.

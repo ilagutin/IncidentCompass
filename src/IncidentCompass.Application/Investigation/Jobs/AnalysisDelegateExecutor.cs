@@ -106,6 +106,7 @@ internal sealed class AnalysisDelegateExecutor(
         var fingerprint = EquivalentCallFingerprint.ForDelegate(roleName, task);
         if (progress.IsRepeatLimitReached(fingerprint, out var unproductiveRepeats))
         {
+            progress.Activity.RecordRefusal(roleName, OrchestratorToolNames.Delegate);
             await noProgressRecorder.RecordRepeatedCallAsync(
                 job,
                 roleName,
@@ -126,16 +127,26 @@ internal sealed class AnalysisDelegateExecutor(
             workersDelta: 1,
             cancellationToken: cancellationToken);
 
-        var workerContent = await workerRoleRunner.RunAsync(
-            job,
-            configuration,
-            context,
-            roleName,
-            role,
-            task,
-            attemptStartedAtUtc,
-            progress,
-            cancellationToken);
+        progress.Activity.RecordDelegation(roleName);
+        string workerContent;
+        try
+        {
+            workerContent = await workerRoleRunner.RunAsync(
+                job,
+                configuration,
+                context,
+                roleName,
+                role,
+                task,
+                attemptStartedAtUtc,
+                progress,
+                cancellationToken);
+        }
+        catch (WorkerStoppedRepeatingException stopped)
+        {
+            return await StopRepeatingWorkerAsync(job, roleName, fingerprint, stopped, progress, cancellationToken);
+        }
+
         var artifact = await InsertWorkerOutputArtifactAsync(job, configuration, roleName, workerContent, cancellationToken);
         // The delegate result is built from the stored payload, not from the worker's raw text: its
         // serialized form becomes an orchestrator model message and its rationale becomes ledger
@@ -161,6 +172,32 @@ internal sealed class AnalysisDelegateExecutor(
             cancellationToken);
 
         return delegateResult.SerializedPayload;
+    }
+
+    /// <summary>
+    /// A worker stopped for repeating produced no output, so no <c>WorkerOutput</c> artifact and no
+    /// <c>WorkerCompleted</c> entry are written and nothing is added as evidence: the turn counts as a
+    /// turn without progress. The orchestrator receives the same structured shape as a delegate
+    /// validation result, and the result is recorded against the delegate fingerprint, so asking the
+    /// same delegate again and getting the same stop is itself a repeat.
+    /// </summary>
+    private async Task<string> StopRepeatingWorkerAsync(
+        TriageJob job,
+        string roleName,
+        EquivalentCallFingerprint fingerprint,
+        WorkerStoppedRepeatingException stopped,
+        InvestigationProgressTracker progress,
+        CancellationToken cancellationToken)
+    {
+        progress.Activity.RecordWorkerStopped();
+        await noProgressRecorder.RecordWorkerStoppedAsync(job, roleName, stopped.ConsecutiveRefusals, cancellationToken);
+        var result = JsonSerializer.Serialize(new
+        {
+            errorCode = WorkerStoppedRepeatingException.ErrorCode,
+            errorMessage = WorkerStoppedRepeatingException.ErrorMessage
+        });
+        progress.RecordCallResult(fingerprint, progress.IdentityOf(result));
+        return result;
     }
 
     private async Task EnsureWorkerBudgetAsync(

@@ -37,8 +37,9 @@ public sealed class WorkerFailClosedPropagationTests
     public async Task RunAsync_TurnLimitReachedRaisesItsOwnBudgetErrorCode()
     {
         // A worker that only ever proposes accepted tool calls never validates output, so it walks the
-        // whole bounded turn allowance and must stop at the turn limit rather than loop forever.
-        var model = new ScriptedModelClient(_ => ToolCallResponse());
+        // whole bounded turn allowance and must stop at the turn limit rather than loop forever. Each
+        // call asks for something different, so repetition detection never stops the run first.
+        var model = new ScriptedModelClient(call => ToolCallResponse(arguments: "{\"page\":" + call + "}"));
         var harness = CreateHarness(model);
 
         var exception = await Assert.ThrowsAsync<TriageBudgetExhaustedException>(
@@ -294,14 +295,17 @@ public sealed class WorkerFailClosedPropagationTests
     private static AiModelResponse ContentResponse(string content) =>
         new(content, "test-model", "test-provider", new AiModelUsage(1, 1, 2), "correlation", ProposedToolCalls: []);
 
-    private static AiModelResponse ToolCallResponse(string toolName = ProbeToolName) =>
-        new(
+    private static AiModelResponse ToolCallResponse(string toolName = ProbeToolName, string arguments = "{}")
+    {
+        using var document = JsonDocument.Parse(arguments);
+        return new(
             string.Empty,
             "test-model",
             "test-provider",
             new AiModelUsage(1, 1, 2),
             "correlation",
-            [new AiToolCall("call-1", toolName, "v1", EmptyObject())]);
+            [new AiToolCall("call-1", toolName, "v1", document.RootElement.Clone())]);
+    }
 
     private static JsonElement EmptyObject()
     {

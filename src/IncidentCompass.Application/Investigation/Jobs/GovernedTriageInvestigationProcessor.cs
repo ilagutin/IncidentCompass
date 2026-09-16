@@ -1,6 +1,5 @@
 using System.Text.Json;
 using IncidentCompass.Application.Core.ModelClients;
-using IncidentCompass.Application.Core.Text;
 using IncidentCompass.Application.Intake.Configuration;
 using IncidentCompass.Application.Investigation.Reports;
 using IncidentCompass.Domain.Incidents;
@@ -14,7 +13,7 @@ namespace IncidentCompass.Application.Investigation.Jobs;
 /// exactly one named <see cref="OrchestratorTurnOutcome"/>; the loop itself only decides whether that
 /// outcome finished the investigation and how many reprompts the next turn starts from.
 /// </summary>
-internal sealed partial class GovernedTriageInvestigationProcessor : IClaimedTriageJobProcessor
+internal sealed class GovernedTriageInvestigationProcessor : IClaimedTriageJobProcessor
 {
     /// <summary>
     /// The classification that opens every orchestrator reprompt rationale in the ledger. It is
@@ -31,7 +30,8 @@ internal sealed partial class GovernedTriageInvestigationProcessor : IClaimedTri
     private readonly TriageLedgerAppender ledgerAppender;
     private readonly TimeProvider timeProvider;
     private readonly ILogger logger;
-    private readonly InvestigationNoProgressRecorder noProgressRecorder;
+    private readonly InvestigationNoProgressHandler noProgressHandler;
+    private readonly OrchestratorRepromptCharger repromptCharger;
 
     public GovernedTriageInvestigationProcessor(
         ITriageJobInvestigationContextRepository contextRepository,
@@ -49,7 +49,8 @@ internal sealed partial class GovernedTriageInvestigationProcessor : IClaimedTri
         this.ledgerAppender = ledgerAppender;
         this.timeProvider = timeProvider;
         this.logger = logger ?? NullLogger<GovernedTriageInvestigationProcessor>.Instance;
-        noProgressRecorder = new InvestigationNoProgressRecorder(ledgerAppender, this.logger);
+        noProgressHandler = new InvestigationNoProgressHandler(modelCaller, reportPublisher, ledgerAppender, this.logger);
+        repromptCharger = new OrchestratorRepromptCharger(ledgerAppender, this.logger);
     }
 
     public async Task ProcessAsync(
@@ -72,21 +73,45 @@ internal sealed partial class GovernedTriageInvestigationProcessor : IClaimedTri
         var maxTurns = budget.MaxTurns + budget.MaxReprompts;
         var reprompts = 0;
         var progress = InvestigationProgressTracker.For(budget);
+        var stall = new NoProgressStall(job, configuration, context, workerId, attemptStartedAtUtc, messages, progress);
         for (var turn = 0; turn < maxTurns; turn++)
         {
-            var outcome = await RunTurnAsync(
-                job, configuration, context, workerId, attemptStartedAtUtc, messages, reprompts, progress, cancellationToken);
+            OrchestratorTurnOutcome outcome;
+            try
+            {
+                outcome = await RunTurnAsync(
+                    job, configuration, context, workerId, attemptStartedAtUtc, messages, reprompts, progress, cancellationToken);
+            }
+            catch (TriageBudgetExhaustedException exhausted) when (
+                exhausted.ErrorCode == TriageBudgetExhaustedException.MaxWorkersReachedCode && progress.StallDetected)
+            {
+                // The worker budget ran out during a stall the tracker detected and no progress has
+                // ended since: the honest end is the backend report. Without such a stall it dead-letters.
+                await noProgressHandler.TerminateAsync(stall, NoProgressTerminationReason.WorkerBudgetDuringStall, cancellationToken);
+                return;
+            }
+
             reprompts = outcome.Reprompts;
             if (outcome.InvestigationFinished)
             {
                 return;
             }
 
+            // Past the no-progress window the handler recovers while a recovery and a further window
+            // fit, and otherwise publishes the backend's InsufficientEvidence report.
             if (progress.CompleteTurn().LimitExceeded &&
-                await OnNoProgressLimitExceededAsync(job, progress, cancellationToken))
+                await noProgressHandler.HandleAsync(stall, maxTurns - turn - 1, cancellationToken))
             {
                 return;
             }
+        }
+
+        // Out of turns. A run inside a detected stall that no progress has ended since ends with the
+        // backend report; any other run dead-letters on the turn limit as before.
+        if (progress.StallDetected)
+        {
+            await noProgressHandler.TerminateAsync(stall, NoProgressTerminationReason.TurnLimitDuringStall, cancellationToken);
+            return;
         }
 
         throw new TriageBudgetExhaustedException(
@@ -112,7 +137,7 @@ internal sealed partial class GovernedTriageInvestigationProcessor : IClaimedTri
         if (toolCall is null)
         {
             const string diagnostic = "orchestrator response did not propose delegate or publish_report.";
-            var afterNoToolCall = await RepromptOrThrowAsync(
+            var afterNoToolCall = await repromptCharger.ChargeOrThrowAsync(
                 job,
                 configuration,
                 reprompts,
@@ -140,7 +165,7 @@ internal sealed partial class GovernedTriageInvestigationProcessor : IClaimedTri
         }
 
         const string unknownToolDiagnostic = "orchestrator proposed an unsupported tool.";
-        var afterUnknownTool = await RepromptOrThrowAsync(
+        var afterUnknownTool = await repromptCharger.ChargeOrThrowAsync(
             job,
             configuration,
             reprompts,
@@ -170,7 +195,7 @@ internal sealed partial class GovernedTriageInvestigationProcessor : IClaimedTri
         catch (TriageReportValidationException exception)
         {
             var safeDiagnostic = OrchestratorRepromptDiagnostics.ForReportValidation(exception);
-            var afterPublishFailure = await RepromptOrThrowAsync(
+            var afterPublishFailure = await repromptCharger.ChargeOrThrowAsync(
                 job,
                 configuration,
                 reprompts,
@@ -231,7 +256,7 @@ internal sealed partial class GovernedTriageInvestigationProcessor : IClaimedTri
         catch (DelegateToolCallValidationException exception)
         {
             var safeDiagnostic = OrchestratorRepromptDiagnostics.ForDelegateValidation(exception);
-            var afterDelegateFailure = await RepromptOrThrowAsync(
+            var afterDelegateFailure = await repromptCharger.ChargeOrThrowAsync(
                 job,
                 configuration,
                 reprompts,
@@ -277,115 +302,8 @@ internal sealed partial class GovernedTriageInvestigationProcessor : IClaimedTri
             cancellationToken);
     }
 
-    /// <summary>
-    /// Charges one reprompt against the configured allowance and returns the new count, or throws when
-    /// the allowance is already spent. Returning the count keeps the counter an ordinary local owned by
-    /// the loop instead of shared mutable state written through a <c>ref</c> parameter.
-    /// </summary>
-    /// <remarks>
-    /// A spent allowance is a bounded-run limit like any other, so it leaves under
-    /// <see cref="TriageBudgetExhaustedException.OrchestratorRepromptLimitReachedCode"/>: the attempt
-    /// dead-letters under its own durable code instead of consuming a retry under the generic
-    /// attempt-failure code. One code covers every call site because the condition is one condition -
-    /// the allowance is spent - while the cause of each individual correction turn is already durable
-    /// per reprompt in log event 3401 and the matching <c>orchestrator_reprompt:</c> ledger
-    /// <c>BudgetEvent</c>. The exhausting turn's own cause, which never becomes a reprompt, is logged
-    /// here as event 3403 so nothing about why the allowance ran out depends on the error code alone.
-    /// </remarks>
-    private async Task<int> RepromptOrThrowAsync(
-        TriageJob job,
-        TriageConfiguration configuration,
-        int reprompts,
-        string repromptReason,
-        string validationDiagnostic,
-        string exhaustedMessage,
-        CancellationToken cancellationToken,
-        Exception? innerException = null)
-    {
-        // The log site and the ledger site describe the same turn, so they are bounded once, by the
-        // same constant, before either is written. The appender then charges the rationale prefix
-        // against that same bound so the prefix cannot displace part of the diagnostic.
-        var safeDiagnostic = TextTruncator.Truncate(
-            validationDiagnostic,
-            TriageLedgerAppender.MaxRepromptRationaleLength);
-        if (reprompts >= configuration.Orchestrator.Budget.MaxReprompts)
-        {
-            LogOrchestratorRepromptLimitReached(
-                logger,
-                job.Id,
-                job.Attempt,
-                repromptReason,
-                safeDiagnostic,
-                configuration.Orchestrator.Budget.MaxReprompts);
-            throw new TriageBudgetExhaustedException(
-                TriageBudgetExhaustedException.OrchestratorRepromptLimitReachedCode,
-                exhaustedMessage,
-                innerException);
-        }
-
-        var chargedReprompts = reprompts + 1;
-        LogOrchestratorReprompted(
-            logger,
-            job.Id,
-            job.Attempt,
-            repromptReason,
-            safeDiagnostic,
-            chargedReprompts,
-            configuration.Orchestrator.Budget.MaxReprompts);
-        await ledgerAppender.AppendRepromptBudgetEventAsync(
-            job,
-            "orchestrator",
-            OrchestratorRepromptRationalePrefix + repromptReason + ": ",
-            safeDiagnostic,
-            cancellationToken);
-        return chargedReprompts;
-    }
-
-    /// <summary>
-    /// Acts on consecutive orchestrator turns without progress past
-    /// <c>Orchestrator.Budget.MaxTurnsWithoutProgress</c> and returns whether that ended the
-    /// investigation. The stall is recorded as a <c>no_progress: turns_without_progress</c> budget
-    /// event and log event 3405. Until bounded recovery exists the attempt then continues under the
-    /// turn limit with a fresh window, so one stall is reported once; recovery or honest termination
-    /// replaces the continuation here without changing the tracker.
-    /// </summary>
-    private async Task<bool> OnNoProgressLimitExceededAsync(
-        TriageJob job,
-        InvestigationProgressTracker progress,
-        CancellationToken cancellationToken)
-    {
-        await noProgressRecorder.RecordTurnsWithoutProgressAsync(job, progress, cancellationToken);
-        progress.ResetTurnsWithoutProgress();
-        return false;
-    }
-
     private static string UnknownToolResult(string toolName)
     {
         return JsonSerializer.Serialize(new { errorCode = "unknown_tool", toolName });
     }
-
-    [LoggerMessage(
-        EventId = 3401,
-        Level = LogLevel.Information,
-        Message = "Orchestrator for triage job {JobId} attempt {Attempt} was reprompted because of {RepromptReason} ({Reprompts}/{MaxReprompts}): {ValidationDiagnostic}")]
-    private static partial void LogOrchestratorReprompted(
-        ILogger logger,
-        Guid jobId,
-        int attempt,
-        string repromptReason,
-        string validationDiagnostic,
-        int reprompts,
-        int maxReprompts);
-
-    [LoggerMessage(
-        EventId = 3403,
-        Level = LogLevel.Warning,
-        Message = "Orchestrator for triage job {JobId} attempt {Attempt} spent its bounded reprompt allowance ({MaxReprompts}) and could not correct {RepromptReason}: {ValidationDiagnostic}")]
-    private static partial void LogOrchestratorRepromptLimitReached(
-        ILogger logger,
-        Guid jobId,
-        int attempt,
-        string repromptReason,
-        string validationDiagnostic,
-        int maxReprompts);
 }

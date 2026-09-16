@@ -22,6 +22,8 @@ internal sealed partial class InvestigationNoProgressRecorder(TriageLedgerAppend
 
     internal const string TurnsWithoutProgressReason = "turns_without_progress";
 
+    internal const string WorkerStoppedReason = "worker_stopped";
+
     /// <summary>The error code the caller of a refused equivalent call receives.</summary>
     internal const string RepeatedCallErrorCode = "repeated_call_without_new_evidence";
 
@@ -74,6 +76,34 @@ internal sealed partial class InvestigationNoProgressRecorder(TriageLedgerAppend
             " evidence=" + tracker.EvidenceCount.ToString(CultureInfo.InvariantCulture),
             cancellationToken);
     }
+
+    public async Task RecordWorkerStoppedAsync(
+        TriageJob job,
+        string roleName,
+        int consecutiveRefusals,
+        CancellationToken cancellationToken)
+    {
+        LogWorkerStopped(logger, job.Id, job.Attempt, roleName, consecutiveRefusals);
+        await ledgerAppender.AppendNoProgressBudgetEventAsync(
+            job,
+            roleName,
+            OrchestratorToolNames.Delegate,
+            RationalePrefix + WorkerStoppedReason +
+            " role=" + roleName +
+            " consecutive_refusals=" + consecutiveRefusals.ToString(CultureInfo.InvariantCulture),
+            cancellationToken);
+    }
+
+    [LoggerMessage(
+        EventId = 3406,
+        Level = LogLevel.Warning,
+        Message = "Worker {Role} for triage job {JobId} attempt {Attempt} was stopped without an answer after {ConsecutiveRefusals} refused repeat calls in a row.")]
+    private static partial void LogWorkerStopped(
+        ILogger logger,
+        Guid jobId,
+        int attempt,
+        string role,
+        int consecutiveRefusals);
 
     [LoggerMessage(
         EventId = 3404,

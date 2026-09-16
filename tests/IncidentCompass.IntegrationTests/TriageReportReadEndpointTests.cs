@@ -112,6 +112,45 @@ public sealed class TriageReportReadEndpointTests(PostgresRepositoryFixture post
     }
 
     [DockerAvailableFact]
+    public async Task StalledReTriage_EndsSucceededWithABackendReportCitingTheRecurrenceState()
+    {
+        // The first job publishes normally. The re-triage job's orchestrator only ever delegates the
+        // same memory task and its worker only ever repeats the same search, so repetition, the worker
+        // stop, one recovery and then termination run through the real runner and PostgreSQL.
+        using var scope = await CreateScopeAsync(useReTriageConfig: true, stallReTriage: true);
+        var serviceName = "retriage-stall-svc-" + Guid.NewGuid().ToString("N");
+        var first = await PostIngestAsync(scope.Client, serviceName);
+        await RunClaimedJobAsync(scope, first.JobId!.Value, "worker-retriage-stall-prior");
+        await ExecuteAsync(scope.ConnectionString, "UPDATE incidentcompass.faults SET created_at_utc = now() - interval '3 hours', completed_at_utc = now() - interval '2 hours' WHERE id = @fault_id;", ("fault_id", first.FaultId));
+        var recurrence = await PostIngestAsync(scope.Client, serviceName);
+        var reTriageJobId = await ScalarAsync<Guid>(
+            scope.ConnectionString,
+            "SELECT id FROM incidentcompass.triage_jobs WHERE retriage_trigger_job_id = @trigger_job_id;",
+            ("trigger_job_id", recurrence.JobId!.Value));
+
+        await RunClaimedJobAsync(scope, reTriageJobId, "worker-retriage-stall-successor");
+
+        Assert.Equal("Succeeded", await ScalarAsync<string>(scope.ConnectionString, "SELECT status FROM incidentcompass.triage_jobs WHERE id = @job_id;", ("job_id", reTriageJobId)));
+        var reportId = await ScalarAsync<Guid>(scope.ConnectionString, "SELECT id FROM incidentcompass.triage_reports WHERE job_id = @job_id;", ("job_id", reTriageJobId));
+        var report = await GetReportAsync(scope.Client, "/api/v1/triage-reports/" + reportId);
+        Assert.Equal("InsufficientEvidence", await ScalarAsync<string>(scope.ConnectionString, "SELECT status FROM incidentcompass.triage_reports WHERE id = @report_id;", ("report_id", reportId)));
+        Assert.Equal("Unknown", report.Classification);
+        Assert.Equal(NoProgressTerminationReport.Summary, await ScalarAsync<string>(scope.ConnectionString, "SELECT summary FROM incidentcompass.triage_reports WHERE id = @report_id;", ("report_id", reportId)));
+        Assert.Equal(2, report.Evidence.Count);
+        Assert.Contains(report.Evidence, evidence => evidence.Kind == "RecurrenceState");
+        Assert.Contains(report.Evidence, evidence => evidence.Kind == "TriggerSignal");
+        var published = await ScalarAsync<string>(
+            scope.ConnectionString,
+            "SELECT rationale FROM incidentcompass.triage_ledger WHERE job_id = @job_id AND event_type = 'ReportPublished';",
+            ("job_id", reTriageJobId));
+        Assert.Equal(ReservedReportText.BackendAuthoredLedgerPrefix + NoProgressTerminationReport.Summary, published);
+        Assert.Equal(1L, await ScalarAsync<long>(
+            scope.ConnectionString,
+            "SELECT count(*) FROM incidentcompass.triage_ledger WHERE job_id = @job_id AND event_type = 'BudgetEvent' AND rationale LIKE 'no_progress: terminated reason=%';",
+            ("job_id", reTriageJobId)));
+    }
+
+    [DockerAvailableFact]
     public async Task GetTriageReportHistory_ExposesImmutableSupersessionAndLatestFaultReport()
     {
         using var scope = await CreateScopeAsync();
@@ -256,7 +295,7 @@ public sealed class TriageReportReadEndpointTests(PostgresRepositoryFixture post
         Assert.All(document.RootElement.GetProperty("reports").EnumerateArray(), report => Assert.False(report.TryGetProperty("evidence", out _)));
         return JsonSerializer.Deserialize<TriageReportListDto>(content, ResponseDeserializationOptions)!;
     }
-    private async Task<TestScope> CreateScopeAsync(bool citeRecurrenceState = false, bool useReTriageConfig = false)
+    private async Task<TestScope> CreateScopeAsync(bool citeRecurrenceState = false, bool useReTriageConfig = false, bool stallReTriage = false)
     {
         var connectionString = await postgres.GetConnectionStringAsync();
         await PostgresSchemaTestHelper.EnsureSchemaAsync(connectionString);
@@ -269,10 +308,17 @@ public sealed class TriageReportReadEndpointTests(PostgresRepositoryFixture post
             {
                 builder.UseSetting("IncidentCompass:ConfigSource:Path", ReTriageFixtureConfigPath());
             }
+
+            if (stallReTriage)
+            {
+                builder.UseWorkerModelHost();
+            }
             builder.ConfigureTestServices(services =>
             {
                 services.RemoveAll<IAiModelClient>();
-                services.AddScoped<IAiModelClient>(_ => useReTriageConfig
+                services.AddScoped<IAiModelClient>(_ => stallReTriage
+                    ? new StallingReTriageModelClient()
+                    : useReTriageConfig
                     ? new ReTriageModelClient()
                     : citeRecurrenceState
                         ? new RecurrenceStateCitingModelClient()
@@ -450,6 +496,45 @@ public sealed class TriageReportReadEndpointTests(PostgresRepositoryFixture post
 
             var start = line.IndexOf("artifact:", StringComparison.Ordinal);
             return line[(start + "artifact:".Length)..].Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries)[0];
+        }
+    }
+
+    /// <summary>
+    /// Publishes the first triage like <see cref="ReTriageModelClient"/>; on the re-triage job, whose
+    /// prompt carries a prior report, it only delegates one memory task, only repeats one search and
+    /// answers a recovery call with plain text.
+    /// </summary>
+    private sealed class StallingReTriageModelClient : IAiModelClient
+    {
+        private readonly ReTriageModelClient publisher = new();
+
+        public Task<AiModelResponse> CompleteAsync(AiModelRequest request, CancellationToken cancellationToken)
+        {
+            var toolNames = request.Tools?.Select(static tool => tool.Name).ToHashSet(StringComparer.Ordinal) ?? [];
+            var prompt = request.Messages.First(message => message.Role == AiMessageRole.User).Content;
+            if (toolNames.Contains("memory_search"))
+            {
+                return Respond(request, "search", Call("memory_search", "{\"query\":\"checkout timeout inventory\"}"));
+            }
+
+            if (toolNames.Contains("delegate") && prompt.Contains("kind=PriorReport", StringComparison.Ordinal))
+            {
+                return Respond(request, "delegate memory", Call("delegate", "{\"role\":\"memory\",\"task\":\"repeat memory_search\"}"));
+            }
+
+            return request.Tools is null
+                ? Respond(request, "Delegate a narrower task to a different role.")
+                : publisher.CompleteAsync(request, cancellationToken);
+        }
+
+        private static Task<AiModelResponse> Respond(AiModelRequest request, string content, params AiToolCall[] toolCalls) =>
+            Task.FromResult(new AiModelResponse(
+                content, request.Model, "retriage-stall-test", new AiModelUsage(10, 5, 15), request.CorrelationId, toolCalls));
+
+        private static AiToolCall Call(string name, string argumentsJson)
+        {
+            using var arguments = JsonDocument.Parse(argumentsJson);
+            return new AiToolCall(name + "-call", name, "v1", arguments.RootElement.Clone());
         }
     }
 

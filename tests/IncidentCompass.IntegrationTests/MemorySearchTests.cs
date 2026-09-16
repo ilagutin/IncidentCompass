@@ -21,7 +21,7 @@ using NpgsqlTypes;
 namespace IncidentCompass.IntegrationTests;
 
 [Collection(PostgresRepositoryCollection.CollectionName)]
-public sealed partial class MemorySearchTests(PostgresRepositoryFixture postgres)
+public sealed class MemorySearchTests(PostgresRepositoryFixture postgres)
 {
     private const string MemoryModel = "mock-memory-embedding-v1";
 
@@ -290,7 +290,7 @@ public sealed partial class MemorySearchTests(PostgresRepositoryFixture postgres
         Assert.Contains(decisions, row => row.EventType == "PolicyDecision" && row.ToolName == "memory_search" && row.Decision == "Denied" && row.DecisionReason!.StartsWith("rate_cap_exceeded:", StringComparison.Ordinal));
     }
 
-    private async Task<TestScope> CreateScopeAsync(
+    internal async Task<TestScope> CreateScopeAsync(
         string? configPath = null,
         Action<IServiceCollection>? configureServices = null)
     {
@@ -324,7 +324,7 @@ public sealed partial class MemorySearchTests(PostgresRepositoryFixture postgres
         return connectionString;
     }
 
-    private static async Task SeedCheckoutRunbookAsync(WebApplicationFactory<Program> factory)
+    internal static async Task SeedCheckoutRunbookAsync(WebApplicationFactory<Program> factory)
     {
         using var serviceScope = factory.Services.CreateScope();
         var embeddingClient = serviceScope.ServiceProvider.GetRequiredService<IEmbeddingClient>();
@@ -372,7 +372,7 @@ public sealed partial class MemorySearchTests(PostgresRepositoryFixture postgres
             TestContext.Current.CancellationToken);
     }
 
-    private static async Task RunClaimedJobAsync(
+    internal static async Task RunClaimedJobAsync(
         TestScope scope,
         Guid expectedJobId,
         string workerId,
@@ -391,7 +391,7 @@ public sealed partial class MemorySearchTests(PostgresRepositoryFixture postgres
             TestContext.Current.CancellationToken);
     }
 
-    private static async Task<IngestSignalResponseDto> PostIngestAsync(HttpClient client, TesterEnvelopeDto envelope)
+    internal static async Task<IngestSignalResponseDto> PostIngestAsync(HttpClient client, TesterEnvelopeDto envelope)
     {
         var response = await client.PostAsJsonAsync("/api/v1/incidents", envelope, TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
@@ -401,7 +401,7 @@ public sealed partial class MemorySearchTests(PostgresRepositoryFixture postgres
         return body;
     }
 
-    private static TesterEnvelopeDto TesterEnvelope(string serviceName, string errorType, string errorMessage, string route)
+    internal static TesterEnvelopeDto TesterEnvelope(string serviceName, string errorType, string errorMessage, string route)
     {
         return new TesterEnvelopeDto(
             "tester",
@@ -524,7 +524,7 @@ public sealed partial class MemorySearchTests(PostgresRepositoryFixture postgres
         await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
     }
 
-    private static async Task<ReportRow> ReadReportAsync(string connectionString, Guid faultId)
+    internal static async Task<ReportRow> ReadReportAsync(string connectionString, Guid faultId)
     {
         await using var connection = new NpgsqlConnection(connectionString);
         await connection.OpenAsync();
@@ -537,7 +537,7 @@ public sealed partial class MemorySearchTests(PostgresRepositoryFixture postgres
         return new ReportRow(reader.GetString(0), reader.GetString(1));
     }
 
-    private static async Task<IReadOnlyList<Guid>> ReadArtifactIdsAsync(string connectionString, Guid jobId, string kind)
+    internal static async Task<IReadOnlyList<Guid>> ReadArtifactIdsAsync(string connectionString, Guid jobId, string kind)
     {
         await using var connection = new NpgsqlConnection(connectionString);
         await connection.OpenAsync();
@@ -571,7 +571,7 @@ public sealed partial class MemorySearchTests(PostgresRepositoryFixture postgres
         return document.RootElement.Clone();
     }
 
-    private static async Task<IReadOnlyList<ToolLedgerRow>> ReadToolLedgerRowsAsync(string connectionString, Guid jobId)
+    internal static async Task<IReadOnlyList<ToolLedgerRow>> ReadToolLedgerRowsAsync(string connectionString, Guid jobId)
     {
         await using var connection = new NpgsqlConnection(connectionString);
         await connection.OpenAsync();
@@ -675,7 +675,7 @@ public sealed partial class MemorySearchTests(PostgresRepositoryFixture postgres
         throw new InvalidOperationException("Repository root was not found.");
     }
 
-    private sealed class RepeatMemorySearchModelClient : IAiModelClient
+    internal sealed class RepeatMemorySearchModelClient : IAiModelClient
     {
         public Task<AiModelResponse> CompleteAsync(AiModelRequest request, CancellationToken cancellationToken)
         {
@@ -701,7 +701,7 @@ public sealed partial class MemorySearchTests(PostgresRepositoryFixture postgres
         }
     }
 
-    private sealed record TestScope(WebApplicationFactory<Program> Factory, HttpClient Client, string ConnectionString) : IDisposable
+    internal sealed record TestScope(WebApplicationFactory<Program> Factory, HttpClient Client, string ConnectionString) : IDisposable
     {
         public void Dispose()
         {
@@ -710,16 +710,16 @@ public sealed partial class MemorySearchTests(PostgresRepositoryFixture postgres
         }
     }
 
-    private sealed record TesterAttributesDto(string ErrorType, string ErrorMessage, string HttpRoute);
+    internal sealed record TesterAttributesDto(string ErrorType, string ErrorMessage, string HttpRoute);
 
-    private sealed record TesterEnvelopeDto(
+    internal sealed record TesterEnvelopeDto(
         string SourceKind,
         string ServiceName,
         string Environment,
         DateTimeOffset ObservedAtUtc,
         TesterAttributesDto Attributes);
 
-    private sealed record IngestSignalResponseDto(
+    internal sealed record IngestSignalResponseDto(
         Guid SignalId,
         Guid FaultId,
         bool IsNewFault,
@@ -728,9 +728,9 @@ public sealed partial class MemorySearchTests(PostgresRepositoryFixture postgres
         Guid? JobId,
         string? ConfigHash);
 
-    private sealed record ReportRow(string Status, string Classification);
+    internal sealed record ReportRow(string Status, string Classification);
 
-    private sealed record ToolLedgerRow(
+    internal sealed record ToolLedgerRow(
         string EventType,
         string? ToolName,
         string? Decision,

@@ -124,4 +124,27 @@ public sealed class InvestigationProgressTrackerTests
         // An id the attempt did not create is not substituted either.
         Assert.NotEqual(tracker.IdentityOf(Output(first, memoryItemId)), tracker.IdentityOf(Output(Guid.NewGuid(), memoryItemId)));
     }
+
+    [Fact]
+    public void StallDetected_OpensWhenAWindowIsExceededAndClosesOnlyOnProgress()
+    {
+        var tracker = new InvestigationProgressTracker(maxEquivalentCalls: 2, maxTurnsWithoutProgress: 2);
+
+        tracker.CompleteTurn();
+        tracker.CompleteTurn();
+        Assert.False(tracker.StallDetected);
+        Assert.True(tracker.CompleteTurn().LimitExceeded);
+        Assert.True(tracker.StallDetected);
+
+        // A recovery resets the window but not the stall.
+        tracker.ResetTurnsWithoutProgress();
+        tracker.CompleteTurn();
+        Assert.True(tracker.StallDetected);
+
+        tracker.RecordEvidence("new");
+        tracker.CompleteTurn();
+        Assert.False(tracker.StallDetected);
+        tracker.CompleteTurn();
+        Assert.False(tracker.StallDetected);
+    }
 }
