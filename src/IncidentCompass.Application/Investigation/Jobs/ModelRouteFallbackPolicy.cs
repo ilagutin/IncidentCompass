@@ -51,6 +51,8 @@ internal static class ModelRouteFallbackPolicy
     /// an exhausted chat transport fault is classified as <c>Unavailable</c> or
     /// <c>AmbiguousInterruption</c> - so the day something does produce it, the decision belongs
     /// with whatever produces it rather than with a guess made here in advance.
+    /// <see cref="ProviderFailureKind.ConfigurationRequired" /> is not produced on the chat path either;
+    /// the local embedding adapter raises it for a model an operator has to install or correct.
     /// </para>
     /// </summary>
     public static bool IsWorthFailingOver(ProviderFailureKind failureKind) =>

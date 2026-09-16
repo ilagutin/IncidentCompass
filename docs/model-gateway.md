@@ -123,14 +123,18 @@ Worker's start waits for this pass for up to `InstallTimeoutSeconds`, 900 by def
 `embedding_model_not_installed`, `embedding_model_digest_mismatch`, `embedding_model_file_missing`,
 `embedding_model_fetch_failed`, `embedding_model_download_too_large`,
 `embedding_model_install_timed_out`, `embedding_model_manifest_invalid` or
-`embedding_model_store_unavailable`, and every local embedding call is refused with that code until a
-later start installs the model.
+`embedding_model_store_unavailable`, and every local embedding call is refused until a later start
+installs the model, with `memory_embedding_model_unavailable` as its code and the recorded install code
+as its provider error code.
 
 Every vector the adapter returns names the model file that produced it with an encoded identity,
 `<model id>@sha256:<first 16 lowercase hex characters of the model file's SHA-256>`, and a corpus built
 from those vectors records that string as its embedding model. A request may name the installed model
 by its id, which is what a route names, or by that encoded identity; any other name is refused with
-`embedding_model_mismatch`, as unavailable rather than rejected.
+`memory_embedding_model_mismatch`, carrying `embedding_model_mismatch` as its provider error code. Both
+refusals are a configuration failure rather than an outage or a rejection: a triage job whose
+`memory_search` meets one stores that code, does not pause claims, and retries only within its ordinary
+attempt budget.
 
 The Worker judges the memory route against the installed model before it embeds anything. An
 installed model whose id is not the route's model makes the pass publish nothing and record

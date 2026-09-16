@@ -149,8 +149,8 @@ volume with the database, and the next start downloads the model again.
 
 `.env.example` carries the same three embedding values, so a `.env` copied from it embeds with the local
 model. Changing `INCIDENTCOMPASS_EMBEDDINGS_MODEL` on its own names a model the Worker has not installed:
-the seed pass reports `memory_embedding_model_mismatch`, and every `memory_search` waits as it would
-during a provider outage.
+the seed pass reports `memory_embedding_model_mismatch`, and every job that reaches `memory_search` fails
+its attempt with that code and is dead-lettered once its attempt budget is spent.
 
 To embed through an OpenAI-compatible server instead, set `INCIDENTCOMPASS_EMBEDDINGS_PROVIDER` to
 `OpenAICompatible`, `INCIDENTCOMPASS_EMBEDDINGS_PROVIDER_ID` to `local-oai`,

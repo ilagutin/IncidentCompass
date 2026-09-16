@@ -84,9 +84,10 @@ public sealed class LocalOnnxProviderKindTests
                     EmbeddingInputKind.Query),
                 TestContext.Current.CancellationToken));
 
-        Assert.Equal("embedding_model_not_installed", exception.ErrorCode);
+        Assert.Equal("memory_embedding_model_unavailable", exception.ErrorCode);
+        Assert.Equal("embedding_model_not_installed", exception.ProviderErrorCode);
         Assert.Equal("local-onnx", exception.Provider);
-        Assert.Equal(ProviderFailureKind.Unavailable, exception.FailureKind);
+        Assert.Equal(ProviderFailureKind.ConfigurationRequired, exception.FailureKind);
         Assert.DoesNotContain("checkout timeout", exception.ToString(), StringComparison.Ordinal);
     }
 

@@ -192,6 +192,9 @@ internal sealed partial class TriageJobRunner(
                 ModelCallAccounting: accounting);
         }
 
+        // Every other kind, ConfigurationRequired included, consumes the ordinary attempt budget: a
+        // host that cannot serve the request until an operator fixes it is neither an outage to wait
+        // out without a cap nor a request that can never succeed, and its safe code names the state.
         var maxAttempts = Math.Max(1, settings.MaxAttempts);
         var errorCode = providerFailureKind is { } failureKind
             ? ProviderErrorCodes.For(failureKind, exception)

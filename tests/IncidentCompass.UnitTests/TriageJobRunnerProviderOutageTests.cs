@@ -20,6 +20,7 @@ public sealed class TriageJobRunnerProviderOutageTests
         { ProviderFailureKind.AmbiguousInterruption, false },
         { ProviderFailureKind.TransportFailure, false },
         { ProviderFailureKind.InvalidResponse, false },
+        { ProviderFailureKind.ConfigurationRequired, false },
         { ProviderFailureKind.Unknown, false }
     };
 
@@ -84,6 +85,8 @@ public sealed class TriageJobRunnerProviderOutageTests
     [InlineData(ProviderFailureKind.OutputLimitReached, 1, 3, TriageJobStatus.DeadLettered, "provider_output_limit_reached")]
     [InlineData(ProviderFailureKind.AmbiguousInterruption, 1, 3, TriageJobStatus.DeadLettered, "provider_dispatch_outcome_unknown")]
     [InlineData(ProviderFailureKind.InvalidResponse, 1, 3, TriageJobStatus.RetryPending, "provider_invalid_response")]
+    [InlineData(ProviderFailureKind.ConfigurationRequired, 1, 3, TriageJobStatus.RetryPending, "provider_configuration_required")]
+    [InlineData(ProviderFailureKind.ConfigurationRequired, 3, 3, TriageJobStatus.DeadLettered, "provider_configuration_required")]
     [InlineData(ProviderFailureKind.Unknown, 1, 3, TriageJobStatus.RetryPending, "provider_failure")]
     [InlineData(ProviderFailureKind.Unknown, 3, 3, TriageJobStatus.DeadLettered, "provider_failure")]
     public async Task ProcessClaimedAsync_ProviderFailureKindHasFiniteDisposition(
@@ -152,6 +155,49 @@ public sealed class TriageJobRunnerProviderOutageTests
         Assert.Equal("transport_error", failure.ErrorCode);
         Assert.Equal(TriageJobRetryBudgetDisposition.ConsumeAttempt, failure.RetryBudgetDisposition);
         Assert.False(ProviderOutageExceptionClassifier.IsProviderOutage(embeddingFailure));
+    }
+
+    /// <summary>
+    /// A local embedding model that is mismatched or not installed is refused by the adapter as a
+    /// configuration state. The runner stores the state's code, never records a provider failure,
+    /// and consumes the ordinary attempt budget until the last attempt dead-letters.
+    /// </summary>
+    [Theory]
+    [InlineData("memory_embedding_model_mismatch", 1, TriageJobStatus.RetryPending)]
+    [InlineData("memory_embedding_model_mismatch", 3, TriageJobStatus.DeadLettered)]
+    [InlineData("memory_embedding_model_unavailable", 1, TriageJobStatus.RetryPending)]
+    [InlineData("memory_embedding_model_unavailable", 3, TriageJobStatus.DeadLettered)]
+    public async Task ProcessClaimedAsync_EmbeddingModelConfigurationStateIsBoundedAndNotAnOutage(
+        string stateCode,
+        int attempt,
+        TriageJobStatus expectedStatus)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var recorder = new RecordingRuntimeRepository();
+        var tracker = new CountingProviderOutageTracker();
+        var runner = new TriageJobRunner(
+            recorder,
+            new StaticConfigurationRepository(),
+            new ProviderFailingProcessor(new EmbeddingClientException(
+                "local-onnx",
+                "The local embedding model cannot serve the route.",
+                errorCode: stateCode,
+                providerErrorCode: "embedding_model_not_installed",
+                failureKind: ProviderFailureKind.ConfigurationRequired)),
+            new FixedTimeProvider(now),
+            tracker);
+
+        await runner.ProcessClaimedAsync(
+            CreateJob(now, attempt),
+            "worker",
+            new TriageJobProcessingSettings(MaxAttempts: 3, RetryDelay: TimeSpan.FromSeconds(5)),
+            CancellationToken.None);
+
+        var failure = Assert.Single(recorder.Failures);
+        Assert.Equal(expectedStatus, failure.Status);
+        Assert.Equal(stateCode, failure.ErrorCode);
+        Assert.Equal(TriageJobRetryBudgetDisposition.ConsumeAttempt, failure.RetryBudgetDisposition);
+        Assert.Equal(0, tracker.FailureCount);
     }
 
     /// <summary>
