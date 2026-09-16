@@ -9,6 +9,27 @@ internal static class OrchestratorRepromptDiagnostics
     internal const string UnknownReportValidationFailure =
         "publish_report failed backend validation.";
 
+    // Envelope and bound refusals. Each names the violated rule and, for a bound, its limit, which
+    // equals the matching TriageReportParser constant; none echoes any model-supplied text.
+    internal const string ReportEnvelopeHasBothWrappers =
+        "publish_report arguments must carry report_json or report, not both.";
+    internal const string ReportJsonWrapperNotAlone =
+        "publish_report report_json must be the only top-level argument.";
+    internal const string ReportWrapperNotAlone =
+        "publish_report report must be the only top-level argument.";
+    internal const string SummaryTooLong =
+        "publish_report summary must be at most 4000 characters.";
+    internal const string RecommendedNextActionTooLong =
+        "publish_report recommendedNextAction must be at most 2000 characters.";
+    internal const string TooManyLimitations =
+        "publish_report limitations must contain at most 20 items.";
+    internal const string LimitationTooLong =
+        "publish_report limitations items must be at most 1000 characters each.";
+    internal const string TooManyEvidenceItems =
+        "publish_report evidence must contain at most 50 items.";
+    internal const string QuoteTooLong =
+        "publish_report quote must be at most 1000 characters.";
+
     private static readonly HashSet<string> KnownReportDiagnostics = CreateKnownReportDiagnostics();
 
     public static string ForReportValidation(TriageReportValidationException exception) =>
@@ -52,7 +73,16 @@ internal static class OrchestratorRepromptDiagnostics
             "publish_report evidence items must be objects.",
             "publish_report quote must be a string.",
             "publish_report limitations must be an array of strings.",
-            "publish_report limitations must contain only strings."
+            "publish_report limitations must contain only strings.",
+            ReportEnvelopeHasBothWrappers,
+            ReportJsonWrapperNotAlone,
+            ReportWrapperNotAlone,
+            SummaryTooLong,
+            RecommendedNextActionTooLong,
+            TooManyLimitations,
+            LimitationTooLong,
+            TooManyEvidenceItems,
+            QuoteTooLong
         };
 
         // A documentationFit mismatch is the one refusal that names a backend-derived value, so its

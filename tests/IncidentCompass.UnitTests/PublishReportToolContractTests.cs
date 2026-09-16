@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using IncidentCompass.Application.Core.ModelClients;
 using IncidentCompass.Application.Investigation.Jobs;
@@ -124,6 +125,129 @@ public sealed class PublishReportToolContractTests
         Assert.Equal(["role", "task"], required.OrderBy(static name => name, StringComparer.Ordinal));
     }
 
+    /// <summary>
+    /// Each row is one report bound: the bounded value, the phrase the tool description must carry
+    /// (a composite format filled with the parser constant), the parser constant and its refusal.
+    /// </summary>
+    public static TheoryData<string, string, int, string> ReportBounds => new()
+    {
+        { "summary", "summary at most {0} characters", TriageReportParser.MaxSummaryLength, OrchestratorRepromptDiagnostics.SummaryTooLong },
+        { "recommendedNextAction", "recommendedNextAction at most {0}", TriageReportParser.MaxRecommendedNextActionLength, OrchestratorRepromptDiagnostics.RecommendedNextActionTooLong },
+        { "limitations", "limitations at most {0} items", TriageReportParser.MaxLimitationItems, OrchestratorRepromptDiagnostics.TooManyLimitations },
+        { "limitations.item", "items of at most {0} characters", TriageReportParser.MaxLimitationLength, OrchestratorRepromptDiagnostics.LimitationTooLong },
+        { "evidence", "evidence at most {0} items", TriageReportParser.MaxEvidenceItems, OrchestratorRepromptDiagnostics.TooManyEvidenceItems },
+        { "evidence.quote", "quote at most {0} characters", TriageReportParser.MaxQuoteLength, OrchestratorRepromptDiagnostics.QuoteTooLong }
+    };
+
+    /// <summary>
+    /// The model and the backend must agree on every bound: the tool description states exactly the
+    /// parser constant, the refusal the model is reprompted with names that same limit, and the
+    /// refusal is on the reprompt allowlist so it reaches the model verbatim instead of the fallback.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ReportBounds))]
+    public void ReportBound_IsStatedInTheDescriptionAndItsRefusalNamesItOnTheAllowlist(
+        string boundedValue,
+        string descriptionPhrase,
+        int parserLimit,
+        string refusal)
+    {
+        _ = boundedValue;
+        var limit = parserLimit.ToString(CultureInfo.InvariantCulture);
+
+        Assert.Contains(
+            string.Format(CultureInfo.InvariantCulture, descriptionPhrase, parserLimit),
+            PublishReportTool().Description,
+            StringComparison.Ordinal);
+        Assert.Contains(" " + limit + " ", refusal, StringComparison.Ordinal);
+        Assert.Equal(refusal, OrchestratorRepromptDiagnostics.ForReportValidation(new TriageReportValidationException(refusal)));
+    }
+
+    /// <summary>
+    /// The stated numbers are also measured against the parser's behaviour, not only its constants:
+    /// a value exactly at each bound parses, and one past it is refused with the named diagnostic.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ReportBounds))]
+    public void ReportBound_IsTheBoundaryTheParserEnforces(
+        string boundedValue,
+        string descriptionPhrase,
+        int parserLimit,
+        string refusal)
+    {
+        _ = descriptionPhrase;
+
+        Assert.NotNull(ParseReport(ReportWithBoundedValue(boundedValue, parserLimit)));
+        var exception = Assert.Throws<TriageReportValidationException>(
+            () => ParseReport(ReportWithBoundedValue(boundedValue, parserLimit + 1)));
+        Assert.Equal(refusal, exception.Message);
+    }
+
+    /// <summary>
+    /// The bounds are deliberately not schema keywords: grammar-constrained local runtimes expand
+    /// <c>maxLength</c> and <c>maxItems</c> into large repetition rules, so neither may appear anywhere
+    /// in the publish_report schema.
+    /// </summary>
+    [Fact]
+    public void PublishReportSchema_CarriesNoLengthOrCountKeywords()
+    {
+        var schemaText = PublishReportSchema().GetRawText();
+
+        Assert.DoesNotContain("maxLength", schemaText, StringComparison.Ordinal);
+        Assert.DoesNotContain("maxItems", schemaText, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(OrchestratorRepromptDiagnostics.ReportEnvelopeHasBothWrappers)]
+    [InlineData(OrchestratorRepromptDiagnostics.ReportJsonWrapperNotAlone)]
+    [InlineData(OrchestratorRepromptDiagnostics.ReportWrapperNotAlone)]
+    public void EnvelopeRefusal_IsOnTheRepromptAllowlist(string refusal)
+    {
+        Assert.Equal(refusal, OrchestratorRepromptDiagnostics.ForReportValidation(new TriageReportValidationException(refusal)));
+    }
+
+    private static Dictionary<string, object> ReportWithBoundedValue(string boundedValue, int size)
+    {
+        var report = ValidReport();
+        switch (boundedValue)
+        {
+            case "summary":
+            case "recommendedNextAction":
+                report[boundedValue] = new string('a', size);
+                break;
+            case "limitations":
+                report[boundedValue] = Enumerable.Repeat("Limitation.", size).ToArray();
+                break;
+            case "limitations.item":
+                report["limitations"] = new[] { new string('l', size) };
+                break;
+            case "evidence":
+                report[boundedValue] = Enumerable.Range(0, size).Select(static _ => EvidenceItem(null)).ToArray();
+                break;
+            case "evidence.quote":
+                report["evidence"] = new[] { EvidenceItem(new string('q', size)) };
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(boundedValue), boundedValue, "Unhandled bound.");
+        }
+
+        return report;
+    }
+
+    private static Dictionary<string, object> EvidenceItem(string? quote)
+    {
+        var item = new Dictionary<string, object>(StringComparer.Ordinal)
+        {
+            ["referenceId"] = "artifact:00000000-0000-0000-0000-000000000001"
+        };
+        if (quote is not null)
+        {
+            item["quote"] = quote;
+        }
+
+        return item;
+    }
+
     private static string ReadBack(TriageReport report, string propertyName) => propertyName switch
     {
         "documentationFit" => report.DocumentationFit.ToString(),
@@ -189,11 +313,12 @@ public sealed class PublishReportToolContractTests
 
     private static JsonElement PublishReportSchema() => ToolSchema(OrchestratorToolNames.PublishReport);
 
-    private static JsonElement ToolSchema(string toolName)
-    {
-        var definition = Assert.Single(
+    private static AiToolDefinition PublishReportTool() => ToolDefinition(OrchestratorToolNames.PublishReport);
+
+    private static JsonElement ToolSchema(string toolName) => ToolDefinition(toolName).InputSchema;
+
+    private static AiToolDefinition ToolDefinition(string toolName) =>
+        Assert.Single(
             OrchestratorToolDefinitions.Create(TestTriageConfiguration.Create()),
             (AiToolDefinition tool) => string.Equals(tool.Name, toolName, StringComparison.Ordinal));
-        return definition.InputSchema;
-    }
 }
