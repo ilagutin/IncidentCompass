@@ -8,7 +8,9 @@
 
 Memory embeddings run inside the Worker by default, seed documents are chunked by section, and a slow
 model is bounded by per-phase provider limits and a long attempt ceiling instead of a short total
-deadline, with chat completions streamed by default.
+deadline, with chat completions streamed by default. Every tool call has an execution limit, and an
+investigation that stops making progress gets bounded recovery and then an honest backend-authored
+report.
 
 ### Added
 
@@ -54,6 +56,34 @@ deadline, with chat completions streamed by default.
   completion a JSON answer produces. `IncidentCompass:ModelGateway:OpenAiCompatible:Streaming=false`
   restores the previous request, and a provider that ignores `stream` and answers with JSON still
   works.
+- A configurable execution limit per tool, `Tools.<id>.TimeoutSeconds` (1 to 3600). An immediate
+  worker tool defaults to 120 seconds and an external action to the Worker's
+  `ActionDispatch:AdapterTimeoutSeconds`. A worker tool bounded by its own limit is recorded as a
+  failed tool result with `tool_execution_timeout` and the worker continues; the attempt ceiling ends
+  the attempt with the existing wall-clock code; shutdown propagates without a ledger write; any other
+  exception is recorded as `tool_execution_failed` and rethrown. The executor stops waiting when a
+  bound fires even for a tool that ignores cancellation.
+- Repetition detection. A worker tool call with the same tool and canonical arguments, or a delegate
+  with the same role and task, that has already been repeated
+  `Orchestrator.Budget.MaxEquivalentCalls` times in a row with an unchanged result is refused before
+  it runs with `repeated_call_without_new_evidence`, without failing the attempt (with the default 2,
+  the first call and two identical repeats run and the fourth call is refused). The result identity
+  ignores the fresh artifact ids a call writes, and a result that changed resets the count. Once a
+  call is refused it is not run again in that attempt, so data behind that exact call is not re-read
+  later. A worker that proposes two refused calls in a row is stopped without an answer and the
+  orchestrator receives `worker_stopped_repeating`.
+- Progress detection, bounded recovery and honest termination. When consecutive orchestrator turns add
+  no new evidence and no changed candidate classification past
+  `Orchestrator.Budget.MaxTurnsWithoutProgress` (default 4, 2 to 32), the backend makes up to
+  `Orchestrator.Budget.MaxRecoveries` (default 1, 0 to 3) tool-less recovery calls per attempt, one per
+  detected stall and only while another no-progress window still fits, with call kind `recovery` and a
+  summary of counts and names only, and hands its bounded answer to the orchestrator as a suggestion.
+  With no recovery left, no room for another window, the turn or worker budget spent inside a detected
+  stall, or the token budget or context window leaving no room for the recovery call, the backend
+  publishes its own `InsufficientEvidence` report with fixed sentences, its `ReportPublished` ledger
+  rationale opens with `backend_authored: `, and the job succeeds. A provider outage during the
+  recovery call is handed to the job runner as for any call. `Orchestrator.RecoveryInstructions`
+  optionally replaces the recovery instructions, shipped as `config/instructions/recovery.md`.
 - An opt-in retrieval benchmark for the local embedding models, run only when
   `INCIDENTCOMPASS_EMBEDDING_BENCHMARK` is set. It measures `multilingual-e5-small` and
   `multilingual-e5-base` on the retrieval corpus with English queries and Polish and Russian
@@ -99,8 +129,13 @@ deadline, with chat completions streamed by default.
   `DEPENDABOT_LOCKFILE_APP_ID` and `DEPENDABOT_LOCKFILE_APP_PRIVATE_KEY` are set.
 - The Tester reads either attempt ceiling key, and its evaluation result adds
   `maxAttemptDurationSeconds` with `attemptDurationSetting` naming its source.
-- New log events 2701 and 2801 for deprecated configuration keys, and 3213 for a skipped fallback
-  whose budget event could not be recorded.
+- An approved action stopped after its claim but before its adapter was invoked, shutdown included,
+  closes as `dispatch_not_invoked` instead of `dispatch_outcome_unknown`. The adapter deadline and the
+  claim deadline both use the tool's execution limit.
+- New log events 2701 and 2801 for deprecated configuration keys, 3213 for a skipped fallback whose
+  budget event could not be recorded, 3305 to 3309 and 3521 for tool execution limits, and 3404 to
+  3411 for repetition, progress, recovery and termination. Every no-progress intervention writes a
+  `BudgetEvent` with the `no_progress:` prefix, and tool-call telemetry gains the outcome `refused`.
 
 ### Deprecated
 
