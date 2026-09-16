@@ -593,7 +593,9 @@ before a generation finishes, so there the first-output limit has to cover a who
 
 ## Investigation Budget Events
 
-Investigation model calls write compact redacted `ModelCall` metadata. Each row includes a unique
+Investigation model calls write compact redacted `ModelCall` metadata under a call kind: `orchestrator`,
+`worker`, `recovery` (the tool-less diagnostic call a stalled investigation may make on the
+orchestrator route, see `docs/architecture.md`) or `remediation`. Each row includes a unique
 call id, `success` or `failed` outcome and a normalized error code when failed. Its `payload_ref` is
 `model-call:<call-id>`; the matching `BudgetEvent`, when present, carries the same reference. The
 shared reference lets failure persistence deduplicate accounting for one call while holding the job

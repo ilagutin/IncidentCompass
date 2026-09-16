@@ -19,7 +19,34 @@ internal sealed class TriageReportPublisher(
         AiToolCall toolCall,
         CancellationToken cancellationToken)
     {
-        var report = TriageReportParser.Parse(toolCall.Arguments);
+        // A model-authored report never carries the backend's termination sentence, whatever the
+        // model wrote; only PublishBackendAuthoredAsync adds it.
+        var report = NoProgressTerminationReport.ApplyToModelAuthored(TriageReportParser.Parse(toolCall.Arguments));
+        report = await ApplyDerivedLimitationsAsync(job, report, cancellationToken);
+        await reportRepository.PublishAsync(job, workerId, report, cancellationToken);
+    }
+
+    /// <summary>
+    /// Publishes the backend's own no-progress report through the same derived-limitation policies,
+    /// repository, grounding and documentation-fit check as a model-authored one, then settles the
+    /// reserved termination sentence last.
+    /// </summary>
+    public async Task PublishBackendAuthoredAsync(
+        TriageJob job,
+        string workerId,
+        TriageReport report,
+        CancellationToken cancellationToken)
+    {
+        report = await ApplyDerivedLimitationsAsync(job, report, cancellationToken);
+        report = report with { BackendAuthored = true };
+        await reportRepository.PublishAsync(job, workerId, report, cancellationToken);
+    }
+
+    private async Task<TriageReport> ApplyDerivedLimitationsAsync(
+        TriageJob job,
+        TriageReport report,
+        CancellationToken cancellationToken)
+    {
         var contextOutcomes = await contextOutcomeRepository.ReadCurrentAttemptAsync(
             job.Id,
             job.Attempt,
@@ -43,7 +70,6 @@ internal sealed class TriageReportPublisher(
             job.Id,
             job.Attempt,
             cancellationToken);
-        report = ModelFallbackReportPolicy.Apply(report, fallbacks);
-        await reportRepository.PublishAsync(job, workerId, report, cancellationToken);
+        return ModelFallbackReportPolicy.Apply(report, fallbacks);
     }
 }

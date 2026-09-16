@@ -46,11 +46,15 @@ internal sealed class InvestigationProgressTestHarness
         Func<int, string> probeOutput,
         bool probeEmitsArtifacts = false,
         int maxEquivalentCalls = OrchestratorBudgetSettings.DefaultMaxEquivalentCalls,
-        int maxTurnsWithoutProgress = OrchestratorBudgetSettings.DefaultMaxTurnsWithoutProgress)
+        int maxTurnsWithoutProgress = OrchestratorBudgetSettings.DefaultMaxTurnsWithoutProgress,
+        int maxRecoveries = OrchestratorBudgetSettings.DefaultMaxRecoveries,
+        int maxTurns = OrchestratorBudgetSettings.DefaultMaxTurns,
+        int maxWorkers = 32)
     {
         Model = model;
         Probe = new ScriptedProbeTool(probeOutput, probeEmitsArtifacts);
-        var reader = new ZeroUsageLedgerReader();
+        Reader = new WriterBackedLedgerReader(Writer);
+        var reader = Reader;
         var appender = new TriageLedgerAppender(Writer);
         var modelCaller = new InvestigationModelCaller(model, reader, appender, Time);
         var toolExecutor = new WorkerToolCallExecutor(
@@ -81,10 +85,12 @@ internal sealed class InvestigationProgressTestHarness
                 "report-chat",
                 [OrchestratorToolNames.Delegate, OrchestratorToolNames.PublishReport],
                 new OrchestratorBudgetSettings(
-                    MaxWorkers: 32,
+                    MaxWorkers: maxWorkers,
                     MaxTokens: 1_000_000,
                     MaxEquivalentCalls: maxEquivalentCalls,
-                    MaxTurnsWithoutProgress: maxTurnsWithoutProgress)),
+                    MaxTurnsWithoutProgress: maxTurnsWithoutProgress,
+                    MaxRecoveries: maxRecoveries,
+                    MaxTurns: maxTurns)),
             Roles = new Dictionary<string, TriageRoleSettings>(StringComparer.Ordinal)
             {
                 ["analysis"] = new("analysis-chat", "analysis instructions", [], OutputSchema),
@@ -102,6 +108,8 @@ internal sealed class InvestigationProgressTestHarness
 
     public RecordingWriter Writer { get; } = new();
 
+    public WriterBackedLedgerReader Reader { get; }
+
     public RecordingReports Reports { get; } = new();
 
     public RecordingLogger<GovernedTriageInvestigationProcessor> ProcessorLogger { get; } = new();
@@ -118,13 +126,15 @@ internal sealed class InvestigationProgressTestHarness
 
     public TriageConfiguration Configuration { get; }
 
-    public Task ProcessAsync()
+    public Task ProcessAsync() => ProcessUntilCancelledAsync(TestContext.Current.CancellationToken);
+
+    public Task ProcessUntilCancelledAsync(CancellationToken cancellationToken)
     {
         var now = Time.GetUtcNow();
         var job = new TriageJob(
             Guid.NewGuid(), Guid.NewGuid(), TriageJobStatus.Processing, 1, "worker-test",
             now.AddMinutes(5), null, null, null, "config-hash", now, now);
-        return Processor.ProcessAsync(job, Configuration, "worker-test", TestContext.Current.CancellationToken);
+        return Processor.ProcessAsync(job, Configuration, "worker-test", cancellationToken);
     }
 
     public TriageLedgerAppendRequest[] NoProgressEvents(string reason) =>
@@ -176,9 +186,18 @@ internal sealed class InvestigationProgressTestHarness
     /// </summary>
     internal sealed class ScriptedInvestigationModel(
         Func<int, AiModelRequest, AiModelResponse> orchestrator,
-        Func<int, AiModelRequest, AiModelResponse> worker) : IAiModelClient
+        Func<int, AiModelRequest, AiModelResponse> worker,
+        Func<int, AiModelRequest, AiModelResponse>? recovery = null) : IAiModelClient
     {
+        public const string DefaultRecoveryText = "Delegate a narrower task to a different role.";
+
         public int OrchestratorCalls { get; private set; }
+
+        public int RecoveryCalls { get; private set; }
+
+        public List<AiModelRequest> RecoveryRequests { get; } = [];
+
+        public List<AiModelRequest> OrchestratorRequests { get; } = [];
 
         public int WorkerCalls { get; private set; }
 
@@ -188,7 +207,22 @@ internal sealed class InvestigationProgressTestHarness
 
         public Task<AiModelResponse> CompleteAsync(AiModelRequest request, CancellationToken cancellationToken)
         {
+            // A recovery request is the tool-less one whose user message is the backend progress summary.
+            if (request.Tools is null &&
+                request.Messages.Count == 2 &&
+                request.Messages[1].Content.StartsWith(InvestigationProgressSummaryBuilder.Header, StringComparison.Ordinal))
+            {
+                RecoveryRequests.Add(request);
+                var recoveryCall = ++RecoveryCalls;
+                return Task.FromResult(recovery?.Invoke(recoveryCall, request) ?? Response(DefaultRecoveryText));
+            }
+
             var isOrchestrator = request.Tools?.Any(tool => tool.Name == OrchestratorToolNames.Delegate) == true;
+            if (isOrchestrator)
+            {
+                OrchestratorRequests.Add(request);
+            }
+
             var lastMessage = request.Messages[^1];
             if (lastMessage.Role == AiMessageRole.Tool)
             {
@@ -271,8 +305,16 @@ internal sealed class InvestigationProgressTestHarness
     {
         public List<TriageReport> Published { get; } = [];
 
+        /// <summary>When set, a backend-authored report is refused as the repository would refuse it.</summary>
+        public bool RefuseBackendAuthored { get; set; }
+
         public Task<Guid> PublishAsync(TriageJob job, string workerId, TriageReport report, CancellationToken cancellationToken)
         {
+            if (RefuseBackendAuthored && report.BackendAuthored)
+            {
+                throw new TriageReportValidationException("A re-triage report must cite recurrence state evidence.");
+            }
+
             Published.Add(report);
             return Task.FromResult(Guid.NewGuid());
         }
@@ -288,10 +330,21 @@ internal sealed class InvestigationProgressTestHarness
                 "tool:" + request.ToolName, request.Output, request.ContentHash, DateTimeOffset.UtcNow));
     }
 
-    private sealed class ZeroUsageLedgerReader : ITriageLedgerReader
+    /// <summary>
+    /// Reads attempt usage the way the PostgreSQL reader does, from the budget events written so far,
+    /// plus <see cref="ExtraTokensSpent"/> a script can raise to exhaust the token budget.
+    /// </summary>
+    internal sealed class WriterBackedLedgerReader(RecordingWriter writer) : ITriageLedgerReader
     {
-        public Task<TriageBudgetLedgerUsage> ReadBudgetUsageAsync(TriageJob job, CancellationToken cancellationToken) =>
-            Task.FromResult(new TriageBudgetLedgerUsage(0, 0));
+        public int ExtraTokensSpent { get; set; }
+
+        public Task<TriageBudgetLedgerUsage> ReadBudgetUsageAsync(TriageJob job, CancellationToken cancellationToken)
+        {
+            var budgetEvents = writer.Requests.Where(static row => row.EventType == TriageLedgerEventType.BudgetEvent).ToArray();
+            return Task.FromResult(new TriageBudgetLedgerUsage(
+                ExtraTokensSpent + budgetEvents.Sum(static row => row.TokensDelta ?? 0),
+                budgetEvents.Sum(static row => row.WorkersDelta ?? 0)));
+        }
 
         public Task<int> CountPolicyDecisionsAsync(
             TriageJob job, string toolName, ToolRuleScope scope, TriageLedgerDecision decision,

@@ -108,6 +108,7 @@ internal sealed partial class WorkerToolCallExecutor(
         if (progress.IsRepeatLimitReached(fingerprint, out var unproductiveRepeats))
         {
             telemetry?.RecordToolCall(RuntimeTelemetryOutcome.Refused);
+            progress.Activity.RecordRefusal(roleName, toolCall.Name);
             await noProgressRecorder.RecordRepeatedCallAsync(
                 job, roleName, toolCall.Name, fingerprint, unproductiveRepeats, progress.MaxEquivalentCalls, cancellationToken);
             return SerializeToolFailure(
@@ -120,6 +121,7 @@ internal sealed partial class WorkerToolCallExecutor(
         // The limiter owns every way the call can end short of a returned result: a per-tool timeout
         // comes back as an ordinary Failed result and takes the failure path below, while the attempt
         // ceiling, host cancellation and a thrown tool leave this method as exceptions.
+        progress.Activity.RecordToolCallExecuted();
         var execution = await limiter.ExecuteAsync(
             tool!,
             new AgentToolExecutionContext(

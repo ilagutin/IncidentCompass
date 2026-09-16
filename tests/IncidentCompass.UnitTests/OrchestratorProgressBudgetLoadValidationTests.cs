@@ -2,6 +2,7 @@ using System.Text.Json.Nodes;
 using IncidentCompass.Application.Governance.Tools;
 using IncidentCompass.Application.Intake.Configuration;
 using IncidentCompass.Application.Intake.Normalization;
+using IncidentCompass.Application.Investigation.Jobs;
 using IncidentCompass.Application.Tickets;
 using IncidentCompass.Infrastructure.Configuration;
 using IncidentCompass.Infrastructure.Intake;
@@ -10,7 +11,7 @@ using IncidentCompass.TestSupport;
 namespace IncidentCompass.UnitTests;
 
 /// <summary>
-/// The repetition and progress limits are optional budget knobs: absent keys keep the defaults and the
+/// The repetition, progress and recovery limits are optional budget knobs: absent keys keep the defaults and the
 /// configuration hash, and an out-of-range value is refused at load and by the published schema alike.
 /// </summary>
 public sealed class OrchestratorProgressBudgetLoadValidationTests
@@ -20,6 +21,8 @@ public sealed class OrchestratorProgressBudgetLoadValidationTests
     [InlineData("MaxEquivalentCalls", OrchestratorBudgetSettings.MaximumMaxEquivalentCalls + 1)]
     [InlineData("MaxTurnsWithoutProgress", OrchestratorBudgetSettings.MinimumMaxTurnsWithoutProgress - 1)]
     [InlineData("MaxTurnsWithoutProgress", OrchestratorBudgetSettings.MaximumMaxTurnsWithoutProgress + 1)]
+    [InlineData("MaxRecoveries", OrchestratorBudgetSettings.MinimumMaxRecoveries - 1)]
+    [InlineData("MaxRecoveries", OrchestratorBudgetSettings.MaximumMaxRecoveries + 1)]
     public void Materialize_OutOfRange_FailsLoadValidationNamingTheSetting(string key, int value)
     {
         var node = ValidConfigNode();
@@ -32,18 +35,55 @@ public sealed class OrchestratorProgressBudgetLoadValidationTests
     }
 
     [Theory]
-    [InlineData(OrchestratorBudgetSettings.MinimumMaxEquivalentCalls, OrchestratorBudgetSettings.MinimumMaxTurnsWithoutProgress)]
-    [InlineData(OrchestratorBudgetSettings.MaximumMaxEquivalentCalls, OrchestratorBudgetSettings.MaximumMaxTurnsWithoutProgress)]
-    public void Materialize_InRange_IsAccepted(int maxEquivalentCalls, int maxTurnsWithoutProgress)
+    [InlineData(OrchestratorBudgetSettings.MinimumMaxEquivalentCalls, OrchestratorBudgetSettings.MinimumMaxTurnsWithoutProgress, OrchestratorBudgetSettings.MinimumMaxRecoveries)]
+    [InlineData(OrchestratorBudgetSettings.MaximumMaxEquivalentCalls, OrchestratorBudgetSettings.MaximumMaxTurnsWithoutProgress, OrchestratorBudgetSettings.MaximumMaxRecoveries)]
+    public void Materialize_InRange_IsAccepted(int maxEquivalentCalls, int maxTurnsWithoutProgress, int maxRecoveries)
     {
         var node = ValidConfigNode();
         Budget(node)["MaxEquivalentCalls"] = maxEquivalentCalls;
         Budget(node)["MaxTurnsWithoutProgress"] = maxTurnsWithoutProgress;
+        Budget(node)["MaxRecoveries"] = maxRecoveries;
 
         var budget = CreateMaterializer().Materialize("hash-1", node, ResolvedReferences()).Orchestrator.Budget;
 
         Assert.Equal(maxEquivalentCalls, budget.MaxEquivalentCalls);
         Assert.Equal(maxTurnsWithoutProgress, budget.MaxTurnsWithoutProgress);
+        Assert.Equal(maxRecoveries, budget.MaxRecoveries);
+    }
+
+    [Fact]
+    public void Materialize_RecoveryInstructionsReference_IsResolvedLikeInstructions()
+    {
+        var node = ValidConfigNode();
+        ((JsonObject)node["Orchestrator"]!)["RecoveryInstructions"] = "ref:instructions/recovery.md";
+        var references = ResolvedReferences();
+        references["ref:instructions/recovery.md"] = "recovery body";
+
+        var orchestrator = CreateMaterializer().Materialize("hash-1", node, references).Orchestrator;
+
+        Assert.Equal("recovery body", orchestrator.RecoveryInstructions);
+        Assert.Equal("recovery body", InvestigationRecoveryInstructions.Resolve(orchestrator));
+    }
+
+    [Fact]
+    public void Materialize_BlankRecoveryInstructions_FailsLoadValidation()
+    {
+        var node = ValidConfigNode();
+        ((JsonObject)node["Orchestrator"]!)["RecoveryInstructions"] = " ";
+
+        var exception = Assert.Throws<TriageConfigurationLoadException>(() =>
+            CreateMaterializer().Materialize("hash-1", node, ResolvedReferences()));
+
+        Assert.Contains("Orchestrator.RecoveryInstructions", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ShippedRecoveryInstructionsFile_IsTheBuiltInDefault()
+    {
+        var shipped = File.ReadAllText(Path.Combine(RepositoryRootLocator.Find(), "config", "instructions", "recovery.md"))
+            .Replace("\r\n", "\n", StringComparison.Ordinal);
+
+        Assert.Equal(InvestigationRecoveryInstructions.Default, shipped);
     }
 
     [Fact]
@@ -56,12 +96,14 @@ public sealed class OrchestratorProgressBudgetLoadValidationTests
 
         Assert.Equal(OrchestratorBudgetSettings.DefaultMaxEquivalentCalls, budget.MaxEquivalentCalls);
         Assert.Equal(OrchestratorBudgetSettings.DefaultMaxTurnsWithoutProgress, budget.MaxTurnsWithoutProgress);
+        Assert.Equal(OrchestratorBudgetSettings.DefaultMaxRecoveries, budget.MaxRecoveries);
 
         // The configuration hash is taken over the file as written, so a key nobody sets cannot move
         // it; materializing must not write the defaults back into the document either.
         Assert.Equal(before, node.ToJsonString());
         Assert.False(Budget(node).ContainsKey("MaxEquivalentCalls"));
         Assert.False(Budget(node).ContainsKey("MaxTurnsWithoutProgress"));
+        Assert.False(Budget(node).ContainsKey("MaxRecoveries"));
     }
 
     [Theory]
@@ -73,6 +115,10 @@ public sealed class OrchestratorProgressBudgetLoadValidationTests
     [InlineData("MaxTurnsWithoutProgress", OrchestratorBudgetSettings.MaximumMaxTurnsWithoutProgress, true)]
     [InlineData("MaxTurnsWithoutProgress", OrchestratorBudgetSettings.MinimumMaxTurnsWithoutProgress - 1, false)]
     [InlineData("MaxTurnsWithoutProgress", OrchestratorBudgetSettings.MaximumMaxTurnsWithoutProgress + 1, false)]
+    [InlineData("MaxRecoveries", OrchestratorBudgetSettings.MinimumMaxRecoveries, true)]
+    [InlineData("MaxRecoveries", OrchestratorBudgetSettings.MaximumMaxRecoveries, true)]
+    [InlineData("MaxRecoveries", OrchestratorBudgetSettings.MinimumMaxRecoveries - 1, false)]
+    [InlineData("MaxRecoveries", OrchestratorBudgetSettings.MaximumMaxRecoveries + 1, false)]
     public void PublishedSchema_AcceptsTheSameRangeAsLoadValidation(string key, int value, bool expectedValid)
     {
         var configuration = (JsonObject)JsonNode.Parse(File.ReadAllText(Path.Combine(

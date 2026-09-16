@@ -107,7 +107,13 @@ leased work was abandoned for an unrequested reason and is reported rather than 
 | 3402 | Warning | Worker role output was reprompted, with job, attempt, role, a safe validator diagnostic list, bounded reprompt counter and durable `BudgetEvent` ledger record. |
 | 3403 | Warning | Orchestrator spent its bounded reprompt allowance, with the closed reason and safe diagnostic of the turn it could not correct. The attempt then dead-letters as `triage_budget_orchestrator_reprompt_limit_reached`. |
 | 3404 | Warning | An equivalent call was refused before it ran because the same call had already returned the same result `Orchestrator.Budget.MaxEquivalentCalls` times in a row. Carries job, attempt, role, tool name (`delegate` for a delegate), the 16-character fingerprint hash and the counts; never arguments or task text. Mirrors the `no_progress: repeated_call` budget event. The attempt continues. |
-| 3405 | Warning | Orchestrator turns without progress (no new result identity and no changed candidate classification) went past `Orchestrator.Budget.MaxTurnsWithoutProgress`. Carries job, attempt, the consecutive turn count, the limit and the evidence count. Mirrors the `no_progress: turns_without_progress` budget event. The attempt continues under the turn limit with a fresh window. |
+| 3405 | Warning | Orchestrator turns without progress (no new result identity and no changed candidate classification) went past `Orchestrator.Budget.MaxTurnsWithoutProgress`. Carries job, attempt, the consecutive turn count, the limit and the evidence count. Mirrors the `no_progress: turns_without_progress` budget event. Recovery (3407 or 3408) or termination (3409) follows. |
+| 3406 | Warning | A worker run was stopped without an answer after two refused repeat calls in a row. Carries job, attempt, role and the refusal count. Mirrors the `no_progress: worker_stopped` budget event; the orchestrator receives `worker_stopped_repeating`. |
+| 3407 | Warning | A recovery call returned a suggestion that was appended to the orchestrator conversation. Carries job, attempt, the recovery number, `MaxRecoveries` and the suggestion's length; never its text. Mirrors the `no_progress: recovery` budget event. |
+| 3408 | Warning | A recovery call ended without a suggestion: a provider failure that would repeat for the same request (its `ModelCall` row is written) or a token-budget or context-window refusal before dispatch. Carries job, attempt, the recovery number, `MaxRecoveries` and the recorded error code. Mirrors the `no_progress: recovery_failed` budget event. A provider failure a later attempt could get past is not recorded here; it propagates to the job runner. |
+| 3409 | Warning | A stalled attempt ended with the backend-authored `InsufficientEvidence` report, which is published before this event is written. Carries job, attempt, the termination reason, recoveries used, `MaxRecoveries` and the evidence count. Mirrors the `no_progress: terminated` budget event. |
+| 3410 | Error | The repository refused the backend's own no-progress report. Carries job, attempt and the termination reason; the attempt dead-letters as `triage_no_progress_termination_failed` and no terminated row is written. |
+| 3411 | Warning | The backend no-progress report was published but its `no_progress: terminated` budget event could not be recorded; carries the exception type only. The job stays succeeded and the `backend_authored:` `ReportPublished` entry still marks the report. |
 | 3501 | Debug | Immediate tool policy allowed a worker tool. |
 | 3502 | Warning | Immediate tool policy denied a worker tool. |
 | 3503 | Information | Immediate tool policy requires approval for a worker tool. |
@@ -314,14 +320,32 @@ provider stall code, which remain the only signals for something slow):
   ignores the fresh artifact ids a call writes (see `docs/architecture.md`, Governance Rails).
 - `no_progress: turns_without_progress turns=<n> max_turns_without_progress=<m> evidence=<count>`
   is written with the role `orchestrator` when consecutive turns without progress go past the limit.
+- `no_progress: worker_stopped role=<role> consecutive_refusals=<n>` is written with the role and the
+  tool name `delegate` when a worker run is stopped for repeating.
+- `no_progress: recovery recovery=<n>/<max> evidence=<count> suggestion_chars=<length>` is written with
+  the role `orchestrator` when a recovery suggestion reached the orchestrator.
+- `no_progress: recovery_failed recovery=<n>/<max> error_code=<code>` is written when the recovery call
+  failed; the code is the one on its `ModelCall` row, or `unspecified`.
+- `no_progress: terminated reason=<reason> recoveries_used=<n> max_recoveries=<max> turns=<turns> evidence=<count> report=backend_authored`
+  is written after the backend's own `InsufficientEvidence` report is published. The reasons are
+  `no_recovery_left`, `no_window_left`, `recovery_not_admitted`, `turn_limit_during_stall` and
+  `worker_budget_during_stall`; the last two apply only inside a stall the attempt detected (see
+  `docs/architecture.md`, Governance Rails).
+
+**Which reports the backend wrote.** Read the `ReportPublished` ledger entry: its rationale is the
+report summary, and for a backend-authored report, and only for one, it opens with
+`backend_authored: `. A model-authored summary that opens with that marker is refused before
+publication and again by the ledger writer. The `no_progress: terminated` row for the same attempt
+corroborates it. The reserved report sentences are defence in depth, not the marker to rely on.
 
 `ModelCall` rows carry a `kind` naming what the call was for. `orchestrator` and `worker` are the
-investigation kinds; `remediation` is the post-report call that asks for a unified diff. The
-remediation call runs on the same bounded caller, so it is admitted, deadlined, charged and accounted
+investigation kinds; `recovery` is the tool-less diagnostic call an investigation that stopped making
+progress may make, on the orchestrator route; `remediation` is the post-report call that asks for a
+unified diff. The recovery and remediation calls run on the same bounded caller, so it is admitted, deadlined, charged and accounted
 exactly as the others are, and cost roll-ups can separate what an incident spent producing its report
 from what it spent proposing a change by grouping on that one field.
 
-`ModelCall` rows and token-accounting `BudgetEvent` rows are mirrored by bounded application log events 3201-3206 and 3211-3212 above, while reprompt `BudgetEvent` rows are mirrored by events 3401, 3402 and 3802 and `no_progress:` rows by events 3404 and 3405, so live model observability is readable from logs and auditable from the ledger.
+`ModelCall` rows and token-accounting `BudgetEvent` rows are mirrored by bounded application log events 3201-3206 and 3211-3212 above, while reprompt `BudgetEvent` rows are mirrored by events 3401, 3402 and 3802 and `no_progress:` rows by events 3404 to 3409 and 3411, so live model observability is readable from logs and auditable from the ledger.
 
 ### Report Model Provenance
 

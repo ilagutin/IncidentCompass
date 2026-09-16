@@ -1,3 +1,4 @@
+using IncidentCompass.Application.Investigation.Reports;
 using IncidentCompass.Domain.Incidents;
 using IncidentCompass.Infrastructure.Postgres;
 using Npgsql;
@@ -11,10 +12,21 @@ internal static class PostgresReportPublishedEventWriter
         NpgsqlTransaction transaction,
         TriageJob job,
         Guid reportId,
-        string summary,
+        TriageReport report,
         DateTimeOffset now,
         CancellationToken cancellationToken)
     {
+        // The rationale is the report summary. Only a report the backend wrote itself carries the
+        // authorship marker; a model-authored summary that opens with it is refused before it gets
+        // here, and is refused again here so no caller can write a forged marker into the ledger.
+        if (!report.BackendAuthored && ReservedReportText.StartsWithBackendMarker(report.Summary))
+        {
+            throw new TriageReportValidationException(ReservedReportText.ReservedTextRefusal);
+        }
+
+        var rationale = report.BackendAuthored
+            ? ReservedReportText.BackendAuthoredLedgerPrefix + report.Summary
+            : report.Summary;
         await using var command = new NpgsqlCommand("""
             INSERT INTO incidentcompass.triage_ledger (
                 fault_id, job_id, attempt, event_type, role, tool_name, rationale,
@@ -27,7 +39,7 @@ internal static class PostgresReportPublishedEventWriter
         command.AddParameter("fault_id", job.FaultId);
         command.AddParameter("job_id", job.Id);
         command.AddParameter("attempt", job.Attempt);
-        command.AddParameter("rationale", summary);
+        command.AddParameter("rationale", rationale);
         command.AddParameter("payload_ref", "report:" + reportId);
         command.AddParameter("config_hash", job.ConfigHash);
         command.AddParameter("created_at_utc", now);

@@ -82,7 +82,8 @@ internal static class OrchestratorRepromptDiagnostics
             TooManyLimitations,
             LimitationTooLong,
             TooManyEvidenceItems,
-            QuoteTooLong
+            QuoteTooLong,
+            ReservedReportText.ReservedTextRefusal
         };
 
         // A documentationFit mismatch is the one refusal that names a backend-derived value, so its

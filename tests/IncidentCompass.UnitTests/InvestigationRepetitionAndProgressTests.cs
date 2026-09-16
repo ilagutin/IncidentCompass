@@ -106,7 +106,7 @@ public sealed class InvestigationRepetitionAndProgressTests
     }
 
     [Fact]
-    public async Task ProcessAsync_TurnsWithoutProgressPastTheLimit_RecordsOneEventPerWindowAndContinues()
+    public async Task ProcessAsync_TurnsWithoutProgressPastTheLimit_RecordsOneEventPerWindowRecoversThenTerminates()
     {
         // Every delegate asks something new, so nothing is refused, but every worker answers the same
         // thing: turn 1 adds evidence and turns 2 to 7 add nothing.
@@ -117,8 +117,9 @@ public sealed class InvestigationRepetitionAndProgressTests
 
         await harness.ProcessAsync();
 
-        // Turns 2-4 are the first window (3 > 2 at turn 4); the count restarts, and turns 5-7 are the
-        // second. The interim action is to continue, so the report is still published.
+        // Turns 2-4 are the first window (3 > 2 at turn 4), which spends the one recovery; the count
+        // restarts, and turns 5-7 are the second window, which has no recovery left and ends the
+        // attempt with the backend's own report before the orchestrator's publish turn is reached.
         var events = harness.NoProgressEvents("turns_without_progress");
         Assert.Equal(2, events.Length);
         Assert.All(events, budgetEvent =>
@@ -131,8 +132,11 @@ public sealed class InvestigationRepetitionAndProgressTests
         });
         Assert.Equal(2, harness.ProcessorLogger.Entries.Count(entry => entry.EventId.Id == 3405));
         Assert.Empty(harness.NoProgressEvents("repeated_call"));
-        Assert.Equal(8, model.OrchestratorCalls);
-        Assert.Single(harness.Reports.Published);
+        Assert.Equal(1, model.RecoveryCalls);
+        Assert.Equal(7, model.OrchestratorCalls);
+        Assert.Equal(
+            Application.Investigation.Reports.NoProgressTerminationReport.Summary,
+            Assert.Single(harness.Reports.Published).Summary);
     }
 
     [Fact]

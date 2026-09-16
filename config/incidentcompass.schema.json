@@ -101,6 +101,10 @@
       "required": ["Instructions", "RouteId", "Tools", "Budget"],
       "properties": {
         "Instructions": { "$ref": "#/$defs/referenceString" },
+        "RecoveryInstructions": {
+          "description": "System instructions for the tool-less recovery call made when an investigation stops making progress. Absent means the built-in text shipped as instructions/recovery.md.",
+          "$ref": "#/$defs/referenceString"
+        },
         "RouteId": { "$ref": "#/$defs/nonBlankString" },
         "Tools": {
           "type": "array",
@@ -145,6 +149,12 @@
               "type": "integer",
               "minimum": 2,
               "maximum": 32
+            },
+            "MaxRecoveries": {
+              "description": "Tool-less recovery calls allowed per attempt when the investigation stops making progress; a no-progress detection with none left ends the attempt with a backend-authored InsufficientEvidence report. Absent means 1; 0 disables recovery.",
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 3
             }
           }
         }

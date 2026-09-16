@@ -472,8 +472,9 @@ incomplete usage. When both ledger rows exist, model-call accounting is atomic a
 not an exactly-once distributed billing system beyond the database lock and call-id deduplication
 boundary. Stream stall detection ships: a streamed answer is bounded by the first-output limit until
 its first `data` event and by the inactivity limit between events, see "Local-Safe Ceilings Allow
-Slower Generation" above. Per-tool execution limits, and detection of repetition or lack of progress
-in a model's output with recovery from it, remain separate design work.
+Slower Generation" above. Per-tool execution limits are described in "A Timed-Out Read Degrades The
+Report, A Timed-Out Action Stays Unknown", and repetition and progress detection with bounded recovery
+in "Progress Detection Is Structural, Not Semantic".
 
 A call that fails over is charged twice, once per provider call, and that is the intended answer
 rather than an oversight: both calls happened, and a provider invoices for a generation it failed
@@ -722,8 +723,22 @@ paraphrases and it can flag a turn that was useful in ways it cannot see.
 Two choices keep the cost of a wrong judgement low. A refused repeat does not fail the attempt; the
 caller is told why and can make a different call. The refusal is sticky for the attempt: data behind
 that exact call that changes later is not re-read, which is the price of not running a call to find
-out whether it would still be a repeat. A run of turns without progress is recorded and the
-attempt continues under the unchanged turn limit, so the worst case is the bound that existed before.
+out whether it would still be a repeat. A worker that proposes two refused calls in a row is stopped
+without an answer rather than left to spend its turn allowance on refusals.
+
+A run of turns without progress gets one recovery call by default and then ends with a
+backend-authored `InsufficientEvidence` report, and the job succeeds. That trades a possible answer
+for an honest stop: a model that would have converged after more stalled turns loses the chance, and
+an operator sees a report that says the investigation stopped rather than a dead-lettered job. The
+recovery call sees only a summary, so its suggestion can be generic; that is the price of not
+handing a second call the tool output the first one already failed to use. A provider outage or
+another failure a later attempt could get past goes back to the job runner, so the job is delayed or
+retried and the whole attempt runs again; only a failure that would repeat for the same request uses
+up the recovery. A recovery is skipped when the remaining turns or workers could not hold another
+window, which can end a run that might have used one more suggestion. Running out of turns or workers
+inside a stall the attempt detected, and that no progress has ended since, ends with the backend
+report; otherwise both limits still dead-letter, even after a few unproductive turns, because a run
+the backend never saw stall is not one it should summarize as stalled.
 Fingerprints live in memory for one attempt, so a retried attempt starts with a clean record, and the
 same tool with the same arguments called from two roles is one fingerprint because it asks for the
 same data.

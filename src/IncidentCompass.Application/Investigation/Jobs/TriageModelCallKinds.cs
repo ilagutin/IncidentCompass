@@ -17,4 +17,10 @@ internal static class TriageModelCallKinds
     /// proposing a change, while both keep running on the same admission, deadline and accounting.
     /// </summary>
     public const string Remediation = "remediation";
+
+    /// <summary>
+    /// The single tool-less diagnostic call made when an investigation stops making progress. It runs
+    /// on the orchestrator route and is accounted like any other investigation call.
+    /// </summary>
+    public const string Recovery = "recovery";
 }

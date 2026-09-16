@@ -33,6 +33,7 @@ public sealed class TriageConfigurationValidationParityTests
         { "rule", false, false, "Rules.Type" },
         { "budget", false, false, "Orchestrator.Budget.MaxTokens" },
         { "progress-budget", false, false, "Orchestrator.Budget.MaxTurnsWithoutProgress" },
+        { "recovery-budget", false, false, "Orchestrator.Budget.MaxRecoveries" },
         { "ingestion", false, false, "Ingestion.AllowedSources" },
         { "grouping", false, false, "FaultGrouping.LookbackMinutes" },
         { "recurrence", false, false, "FaultGrouping.Recurrence.EscalateAfterCount" },
@@ -182,6 +183,9 @@ public sealed class TriageConfigurationValidationParityTests
                 return;
             case "progress-budget":
                 root["Orchestrator"]!["Budget"]!["MaxTurnsWithoutProgress"] = 1;
+                return;
+            case "recovery-budget":
+                root["Orchestrator"]!["Budget"]!["MaxRecoveries"] = 4;
                 return;
             case "ingestion":
                 root["Ingestion"]!["AllowedSources"] = new JsonArray("webhook");

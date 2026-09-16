@@ -20,7 +20,8 @@ public sealed record OrchestratorBudgetSettings(
     int MaxTurns = OrchestratorBudgetSettings.DefaultMaxTurns,
     int? MaxAttemptDurationSeconds = null,
     int MaxEquivalentCalls = OrchestratorBudgetSettings.DefaultMaxEquivalentCalls,
-    int MaxTurnsWithoutProgress = OrchestratorBudgetSettings.DefaultMaxTurnsWithoutProgress)
+    int MaxTurnsWithoutProgress = OrchestratorBudgetSettings.DefaultMaxTurnsWithoutProgress,
+    int MaxRecoveries = OrchestratorBudgetSettings.DefaultMaxRecoveries)
 {
     /// <summary>
     /// The work-turn allowance used when a configuration does not set one. It is the constant the
@@ -67,6 +68,21 @@ public sealed record OrchestratorBudgetSettings(
 
     /// <summary>Half the largest work-turn allowance; beyond it the turn limit is the only bound left.</summary>
     public const int MaximumMaxTurnsWithoutProgress = 32;
+
+    /// <summary>
+    /// Recovery calls allowed per attempt when a configuration does not set one. Each is a single
+    /// tool-less diagnostic call made when the investigation stops making progress; a no-progress
+    /// detection with none left ends the attempt with a backend-authored report.
+    /// </summary>
+    public const int DefaultMaxRecoveries = 1;
+
+    /// <summary>Zero disables recovery: the first no-progress detection ends the attempt.</summary>
+    public const int MinimumMaxRecoveries = 0;
+
+    /// <summary>Each recovery is a billed call that has already been shown not to unstick the run.</summary>
+    public const int MaximumMaxRecoveries = 3;
+
+    public const string MaxRecoveriesSettingName = "Orchestrator.Budget.MaxRecoveries";
 
     public const string MaxEquivalentCallsSettingName = "Orchestrator.Budget.MaxEquivalentCalls";
 

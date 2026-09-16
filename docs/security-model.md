@@ -1366,6 +1366,31 @@ actions are never advertised to the investigation model. Startup and `config val
 capability mismatches, wildcard or read-tool approval targets and action metadata that disagrees
 with registration.
 
+A stalled investigation may make one bounded recovery call per `Orchestrator.Budget.MaxRecoveries`
+(default 1). That call is offered no tools, and nothing it returns is executed: a tool call it
+proposes is ignored, and its text, bounded to 2000 characters, reaches the orchestrator only as a user
+message marked as a suggestion, after which the orchestrator must still act through `delegate` or
+`publish_report` under the same policy as before. Its input is a backend-built summary of counts,
+configured role and tool names, a classification vocabulary label and the fixed task text; it carries
+no tool output, argument, delegated task or incident context, so the recovery call sees less than the
+orchestrator already saw. It is not an orchestrator turn and cannot start another recovery, so there
+is no escalation chain. It runs through the same model caller as every investigation call, so budget
+admission, provider limits and `ModelCall` accounting apply to it.
+
+A provider failure on the recovery call that a later attempt could get past, an outage above all,
+is not absorbed into termination: it propagates to the job runner, which delays or retries the job and
+feeds the outage pause as for any investigation call.
+
+When the backend ends a stalled investigation, it publishes an `InsufficientEvidence` report it
+authored itself, with fixed sentences and only job-level evidence, through the same grounding and
+publication path. Authorship is a durable property of the publication, not of the wording: the
+`ReportPublished` ledger rationale of that report, and of no other, opens with `backend_authored: `,
+and a `no_progress: terminated` budget event for the same attempt follows it. A model cannot produce
+either: a model-authored summary opening with the marker is refused before publication and again by
+the ledger writer. As defence in depth, the reserved summary and limitation are also refused or
+removed from model-authored reports after normalization (NFKC, format and zero-width characters
+removed, whitespace collapsed, case ignored), including a limitation split across items.
+
 Report publication is also fail-closed. The model may name evidence references, but the backend
 accepts only citable artifacts from the same job/current attempt, never `WorkerOutput`, derives
 evidence kind and `is_mass_issue` itself, and marks prior reports as untrusted hypotheses in the
