@@ -139,12 +139,31 @@ try {
     if (@($configuration.Actions.AllowedTools).Count -ne 0 -or $configuration.Actions.DefaultMode -ne "disabled") {
         throw "The evaluation configuration must have empty action grants and disabled action mode."
     }
-    $wallClockSeconds = [int] $configuration.Orchestrator.Budget.MaxWallClockSeconds
-    if ($ProviderTimeoutSeconds -ge $wallClockSeconds) {
-        throw "ProviderTimeoutSeconds must be lower than the evaluation investigation wall-clock budget ($wallClockSeconds seconds)."
+    # The attempt ceiling resolves the way the backend resolves it: MaxAttemptDurationSeconds when
+    # present, the deprecated MaxWallClockSeconds otherwise, 14400 seconds when neither is set, and 0
+    # means no ceiling. The evaluation contract needs a finite ceiling to wait past.
+    $budget = $configuration.Orchestrator.Budget
+    $budgetKeys = @($budget.PSObject.Properties.Name)
+    if ($budgetKeys -contains "MaxAttemptDurationSeconds" -and $budgetKeys -contains "MaxWallClockSeconds") {
+        throw "The evaluation configuration sets both MaxAttemptDurationSeconds and the deprecated MaxWallClockSeconds."
     }
-    if ($AttemptTimeoutSeconds -le $wallClockSeconds) {
-        throw "AttemptTimeoutSeconds must exceed the evaluation investigation wall-clock budget ($wallClockSeconds seconds)."
+    if ($budgetKeys -contains "MaxAttemptDurationSeconds") {
+        $attemptCeilingSeconds = [int] $budget.MaxAttemptDurationSeconds
+    }
+    elseif ($budgetKeys -contains "MaxWallClockSeconds") {
+        $attemptCeilingSeconds = [int] $budget.MaxWallClockSeconds
+    }
+    else {
+        $attemptCeilingSeconds = 14400
+    }
+    if ($attemptCeilingSeconds -le 0) {
+        throw "The evaluation configuration must keep a finite investigation attempt ceiling; 0 disables it."
+    }
+    if ($ProviderTimeoutSeconds -ge $attemptCeilingSeconds) {
+        throw "ProviderTimeoutSeconds must be lower than the evaluation investigation attempt ceiling ($attemptCeilingSeconds seconds)."
+    }
+    if ($AttemptTimeoutSeconds -le $attemptCeilingSeconds) {
+        throw "AttemptTimeoutSeconds must exceed the evaluation investigation attempt ceiling ($attemptCeilingSeconds seconds)."
     }
 
     $resolvedResult = Resolve-EvaluationResultPath -Path $ResultPath -RepositoryRoot $repoRoot

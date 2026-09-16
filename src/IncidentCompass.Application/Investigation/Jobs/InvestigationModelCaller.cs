@@ -95,10 +95,16 @@ internal sealed partial class InvestigationModelCaller(
         catch (InvestigationModelCallFailureException primaryFailure)
         {
             var fallback = ModelRouteFallbackPolicy.TryResolve(context, route, primaryFailure);
+            var fallbackUsage = usageBefore with
+            {
+                TokensSpent = usageBefore.TokensSpent + (primaryFailure.Accounting.ChargeTokens ?? 0)
+            };
 
-            // No fallback to take, or no deadline left to spend on one. Either way the primary's
-            // failure stands exactly as it does for a route that declared nothing.
-            if (fallback is null || callCancellation.IsCancellationRequested)
+            // No fallback to take, no deadline left, or no token budget left once the failed call is
+            // paid for. Each way the primary's failure stands as it does for a route that declared
+            // nothing; it is decided before the failed call is charged, so nothing is charged twice.
+            if (fallback is null || callCancellation.IsCancellationRequested ||
+                !await budgetGate.AdmitsFallbackAsync(context, fallback.RouteId, fallbackUsage, messages, tools))
             {
                 throw;
             }
@@ -108,7 +114,7 @@ internal sealed partial class InvestigationModelCaller(
                 fallback,
                 messages,
                 tools,
-                usageBefore,
+                fallbackUsage,
                 primaryFailure,
                 callCancellation.Token,
                 cancellationToken);
@@ -117,13 +123,15 @@ internal sealed partial class InvestigationModelCaller(
 
     /// <summary>
     /// Retries a failed call once on <paramref name="fallback" />, reusing the primary's deadline.
+    /// <paramref name="fallbackUsage" /> already includes what the failed call is charged, so the
+    /// fallback's output limit is computed from what is really left.
     /// </summary>
     private async Task<AiModelResponse> CompleteOnFallbackAsync(
         TriageJobCallContext context,
         ModelRouteFallback fallback,
         IReadOnlyList<AiChatMessage> messages,
         IReadOnlyList<AiToolDefinition>? tools,
-        TriageBudgetLedgerUsage usageBefore,
+        TriageBudgetLedgerUsage fallbackUsage,
         InvestigationModelCallFailureException primaryFailure,
         CancellationToken callToken,
         CancellationToken cancellationToken)
@@ -169,10 +177,7 @@ internal sealed partial class InvestigationModelCaller(
                 fallback.Route,
                 messages,
                 tools,
-                usageBefore with
-                {
-                    TokensSpent = usageBefore.TokensSpent + (primaryAccounting.ChargeTokens ?? 0)
-                },
+                fallbackUsage,
                 context.RouteId,
                 callToken,
                 cancellationToken);
@@ -204,7 +209,9 @@ internal sealed partial class InvestigationModelCaller(
             Model: route.Model,
             Messages: messages,
             Temperature: route.Temperature,
-            MaxOutputTokens: route.MaxOutputTokens,
+            MaxOutputTokens: TriageOutputTokenBudget.LimitForRequest(
+                route,
+                TriageOutputTokenBudget.RemainingForOutput(context.Configuration.Orchestrator.Budget, usageBefore, messages, tools)),
             Tools: tools,
             ProviderId: route.ProviderId,
             Reasoning: route.Reasoning);
@@ -232,7 +239,9 @@ internal sealed partial class InvestigationModelCaller(
                 cancellationToken: CancellationToken.None);
             throw new TriageBudgetExhaustedException(
                 TriageBudgetExhaustedException.WallClockReachedDuringCallCode,
-                "The triage attempt exceeded MaxWallClockSeconds during a model call.");
+                "The triage attempt exceeded " +
+                context.Configuration.Orchestrator.Budget.ResolveAttemptDurationSettingName() +
+                " during a model call.");
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {

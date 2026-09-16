@@ -227,7 +227,10 @@ public sealed class BoundedRepromptAndBudgetTests(PostgresRepositoryFixture post
     [DockerAvailableFact]
     public async Task ProcessClaimedAsync_TokenBudgetStopsBeforeNextCallAfterOneCallOvershoot()
     {
-        using var scope = await CreateScopeAsync(RepromptScenario.NoOrchestratorTool, maxReprompts: 2, maxTokens: 10, contextWindowTokens: 8192);
+        // The budget leaves room for the estimated prompt, so the first call is admitted with the
+        // remainder as its output limit; the provider then reports far more than that, which is the
+        // overshoot the after-call event exists for, and the next call is refused.
+        using var scope = await CreateScopeAsync(RepromptScenario.NoOrchestratorTool, maxReprompts: 2, maxTokens: 20_000, contextWindowTokens: 8192, reportedTotalTokens: 25_000);
         var ingested = await RunOneAsync(scope);
 
         var budgetEvents = await ReadBudgetRationalesAsync(scope.ConnectionString, ingested.JobId!.Value);
@@ -294,7 +297,8 @@ public sealed class BoundedRepromptAndBudgetTests(PostgresRepositoryFixture post
         int maxReprompts,
         int maxTokens,
         int contextWindowTokens,
-        int maxWorkers = 2)
+        int maxWorkers = 2,
+        int reportedTotalTokens = 15)
     {
         var connectionString = await postgres.GetConnectionStringAsync();
         await PostgresSchemaTestHelper.EnsureSchemaAsync(connectionString);
@@ -309,7 +313,7 @@ public sealed class BoundedRepromptAndBudgetTests(PostgresRepositoryFixture post
             builder.ConfigureTestServices(services =>
             {
                 services.RemoveAll<IAiModelClient>();
-                services.AddScoped<IAiModelClient>(_ => new RepromptModelClient(scenario));
+                services.AddScoped<IAiModelClient>(_ => new RepromptModelClient(scenario, reportedTotalTokens));
             });
         });
         var client = factory.CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = new Uri("https://localhost") });
@@ -561,7 +565,7 @@ public sealed class BoundedRepromptAndBudgetTests(PostgresRepositoryFixture post
         return (T)(await command.ExecuteScalarAsync())!;
     }
 
-    private sealed class RepromptModelClient(RepromptScenario scenario) : IAiModelClient
+    private sealed class RepromptModelClient(RepromptScenario scenario, int reportedTotalTokens) : IAiModelClient
     {
         private static readonly string[] ValidWorkerKeyFacts = ["Valid worker output."];
 
@@ -683,9 +687,9 @@ public sealed class BoundedRepromptAndBudgetTests(PostgresRepositoryFixture post
         {
             return ToolCall("delegate-analysis", "delegate", "{\"role\":\"analysis\",\"task\":\"Analyze the signal.\"}");
         }
-        private static AiModelResponse Response(AiModelRequest request, string content, IReadOnlyList<AiToolCall> toolCalls)
+        private AiModelResponse Response(AiModelRequest request, string content, IReadOnlyList<AiToolCall> toolCalls)
         {
-            return new AiModelResponse(content, request.Model, "reprompt-test", new AiModelUsage(10, 5, 15), request.CorrelationId, toolCalls);
+            return new AiModelResponse(content, request.Model, "reprompt-test", new AiModelUsage(10, reportedTotalTokens - 10, reportedTotalTokens), request.CorrelationId, toolCalls);
         }
 
         private static AiToolCall PublishToolCall(AiModelRequest request)

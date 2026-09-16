@@ -11,10 +11,12 @@ namespace IncidentCompass.Infrastructure.ModelGateway.OpenAi;
 internal sealed class OpenAiCompatibleModelClient(
     HttpClient httpClient,
     IOptions<OpenAiCompatibleModelClientOptions> options,
-    OpenAiCompatibleProviderProfileResolver providerProfileResolver)
+    OpenAiCompatibleProviderProfileResolver providerProfileResolver,
+    TimeProvider? timeProvider = null)
     : IAiModelClient
 {
     private readonly OpenAiCompatibleRetryPolicy retryPolicy = new();
+    private readonly TimeProvider timeProvider = timeProvider ?? TimeProvider.System;
 
     public async Task<AiModelResponse> CompleteAsync(
         AiModelRequest request,
@@ -39,13 +41,31 @@ internal sealed class OpenAiCompatibleModelClient(
                 payloadJson,
                 providerProfile,
                 idempotencyKey);
+
+            // Each HTTP attempt has its own phases. The connect limit lives on the primary handler;
+            // the first-output limit runs from dispatch until the response starts; the inactivity
+            // limit restarts whenever the body delivers bytes. Both timers use the injected clock.
+            using var firstOutputTimeout = new CancellationTokenSource(
+                TimeSpan.FromSeconds(clientOptions.ResolveFirstOutputTimeoutSeconds()),
+                timeProvider);
+            using var inactivityTimeout = new CancellationTokenSource(Timeout.InfiniteTimeSpan, timeProvider);
+            var responseStarted = false;
             try
             {
-                using var attemptTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                attemptTimeout.CancelAfter(TimeSpan.FromSeconds(clientOptions.TimeoutSeconds));
-
-                using var httpResponse = await httpClient.SendAsync(httpRequest, attemptTimeout.Token);
-                var responseContent = await httpResponse.Content.ReadAsStringAsync(attemptTimeout.Token);
+                using var sendCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+                    cancellationToken,
+                    firstOutputTimeout.Token);
+                using var httpResponse = await httpClient.SendAsync(
+                    httpRequest,
+                    HttpCompletionOption.ResponseHeadersRead,
+                    sendCancellation.Token);
+                responseStarted = true;
+                var responseContent = await OpenAiResponseBodyReader.ReadAsync(
+                    httpResponse.Content,
+                    inactivityTimeout,
+                    TimeSpan.FromSeconds(clientOptions.StreamInactivityTimeoutSeconds),
+                    httpClient.MaxResponseContentBufferSize,
+                    cancellationToken);
 
                 if (!httpResponse.IsSuccessStatusCode)
                 {
@@ -73,7 +93,24 @@ internal sealed class OpenAiCompatibleModelClient(
             }
             catch (OperationCanceledException exception)
             {
-                throw OpenAiModelErrorMapper.Timeout(exception);
+                throw OpenAiAttemptCancellationClassifier.Map(
+                    exception,
+                    responseStarted,
+                    firstOutputTimeout.IsCancellationRequested,
+                    inactivityTimeout.IsCancellationRequested,
+                    httpClient.Timeout != Timeout.InfiniteTimeSpan);
+            }
+            catch (OpenAiResponseBodyTooLargeException exception)
+            {
+                throw OpenAiModelErrorMapper.ResponseTooLarge(exception);
+            }
+            catch (Exception exception) when (responseStarted && exception is IOException or HttpRequestException)
+            {
+                // The request was sent and the answer broke off mid-body. Nothing about that says the
+                // provider did not act on it, so it is never replayed here, whatever the transport
+                // classifier would say about the same exception before dispatch.
+                cancellationToken.ThrowIfCancellationRequested();
+                throw OpenAiModelErrorMapper.DispatchOutcomeUnknown(exception);
             }
             catch (HttpRequestException exception)
             {
@@ -97,6 +134,7 @@ internal sealed class OpenAiCompatibleModelClient(
             }
         }
     }
+
 
     private Task DelayBeforeRetryAsync(
         OpenAiCompatibleModelClientOptions clientOptions,

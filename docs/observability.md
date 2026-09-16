@@ -71,6 +71,8 @@ leased work was abandoned for an unrequested reason and is reported rather than 
 | 2501 | Warning | GitHub issue provider returned a bounded failure code. |
 | 2601 | Warning | PostgreSQL was not accepting connections yet; the failed attempt number, the wait before the next one and the exception type only, never the endpoint or the credential. |
 | 2602 | Error | PostgreSQL did not accept a connection within the configured startup budget, with the attempts made, the elapsed milliseconds and the exception type. The host start then fails. |
+| 2701 | Warning | The triage configuration file sets the deprecated `Orchestrator.Budget.MaxWallClockSeconds`; carries the two setting names and the ceiling in seconds that is applied. Stored snapshots rehydrated for a job do not repeat it. |
+| 2801 | Warning | The OpenAI-compatible chat gateway reads its first-output limit from the deprecated `TimeoutSeconds`; written once by the options validator at host start, carries the limit in seconds, never the endpoint or the credential. |
 
 ### Application (3000-3999)
 
@@ -85,12 +87,13 @@ leased work was abandoned for an unrequested reason and is reported rather than 
 | 3105 | Error | Attempt failure could not be recorded durably by the runtime repository. |
 | 3201 | Information | Model call completed, with route, call kind, provider, configured provider (or `unknown` when the route named none), model, usage source, token counts, duration and proposed tool-call count. |
 | 3202 | Warning | Model call failed with a bounded exception type. |
-| 3203 | Warning | Model call was cancelled because the attempt wall-clock budget ran out. |
+| 3203 | Warning | Model call was cancelled because the attempt duration ceiling ran out. Not raised when the ceiling is disabled. |
 | 3204 | Information | Model call was cancelled by host shutdown. |
 | 3205 | Warning | Model call failed on its route and is being retried once on that route's fallback, with both route IDs and the failed call's error code. |
 | 3206 | Warning | Fail-over was not attempted because the failed call's accounting could not be made durable. |
 | 3211 | Debug | Model tokens were charged to the attempt budget. |
-| 3212 | Warning | Attempt budget limit was reached, with its bounded reason token. |
+| 3212 | Warning | Attempt budget limit was reached, with its bounded reason token. Also raised, as `max_tokens_reached_before_call`, when a fallback is not taken because no token budget is left. |
+| 3213 | Warning | A fallback was skipped for lack of token budget but its budget event could not be recorded; carries the exception type only. The primary failure still propagates. |
 | 3301 | Warning | Worker tool call was denied, with its bounded denial token. |
 | 3302 | Information | Worker tool call was not executed because it requires approval. |
 | 3303 | Debug | Worker tool call executed successfully. |
@@ -204,6 +207,14 @@ job identity:
 `RetryPending` + `provider_unavailable` + a future `nextAttemptAtUtc`, which is a delay with an
 until-when, not a terminal failure. The outage path also does not consume the attempt budget, so
 `attempt` does not advance while the provider is down.
+
+A provider call that timed out names the phase that stalled: `provider_connect_timeout`,
+`provider_first_output_timeout` or `provider_stream_inactivity_timeout`, with
+`provider_generation_timeout` kept for an HTTP 408 answer. All four share one disposition,
+`RetryPending` while attempts remain, so the code tells an operator where to look without changing
+what the runner does. A cancellation none of those limits accounts for, and a response body that
+breaks off after the response started, are `provider_dispatch_outcome_unknown` instead, which
+dead-letters immediately because the provider may have acted on the request.
 
 One code in that vocabulary is about this system rather than about a provider.
 `provider_contract_violation` comes from `AiModelClientContractBreach`, and it says that the model

@@ -15,28 +15,33 @@ public sealed class WorkerOptionsTests
         Assert.Equal(900, options.LeaseSeconds);
     }
 
+    /// <summary>
+    /// The shipped attempt ceiling is hours long, far beyond a lease. That is safe because a Worker
+    /// renews the lease of the job it is processing for as long as it holds it, so the lease is sized
+    /// for how soon a crashed Worker's job becomes claimable again, not for how long an investigation
+    /// may run. This pins the shipped lease values and that the shipped ceiling is not a short deadline.
+    /// </summary>
     [Fact]
-    public void ShippedLeases_ExceedShippedInvestigationWallClockBudget()
+    public void ShippedLeases_AreRenewedRatherThanSizedToTheShippedAttemptCeiling()
     {
         var repositoryRoot = RepositoryRootLocator.Find();
         var developmentSettings = JsonNode.Parse(
             File.ReadAllText(Path.Combine(repositoryRoot, "src", "IncidentCompass.Worker", "appsettings.Development.json")))!;
         var productionSettings = JsonNode.Parse(
             File.ReadAllText(Path.Combine(repositoryRoot, "src", "IncidentCompass.Worker", "appsettings.json")))!;
-        var triageSettings = JsonNode.Parse(
-            File.ReadAllText(Path.Combine(repositoryRoot, "config", "incidentcompass.config.json")))!;
+        var budget = JsonNode.Parse(
+            File.ReadAllText(Path.Combine(repositoryRoot, "config", "incidentcompass.config.json")))!["Orchestrator"]!["Budget"]!;
 
         var developmentLeaseSeconds = developmentSettings["IncidentCompass"]!["Worker"]!["LeaseSeconds"]!.GetValue<int>();
         var productionLeaseSeconds = productionSettings["IncidentCompass"]!["Worker"]!["LeaseSeconds"]!.GetValue<int>();
-        var wallClockSeconds = triageSettings["Orchestrator"]!["Budget"]!["MaxWallClockSeconds"]!.GetValue<int>();
+        var attemptCeilingSeconds =
+            (budget["MaxAttemptDurationSeconds"] ?? budget["MaxWallClockSeconds"])?.GetValue<int>() ?? 14_400;
 
-        Assert.True(
-            developmentLeaseSeconds > wallClockSeconds,
-            $"Development lease ({developmentLeaseSeconds}s) must exceed the shipped investigation budget ({wallClockSeconds}s).");
         Assert.Equal(900, productionLeaseSeconds);
+        Assert.InRange(developmentLeaseSeconds, 1, productionLeaseSeconds);
         Assert.True(
-            productionLeaseSeconds > wallClockSeconds,
-            $"Production lease ({productionLeaseSeconds}s) must exceed the shipped investigation budget ({wallClockSeconds}s).");
+            attemptCeilingSeconds is 0 or >= 600,
+            $"The shipped attempt ceiling ({attemptCeilingSeconds}s) must not be a short investigation deadline.");
     }
 
     [Fact]

@@ -237,11 +237,43 @@ public sealed class InvestigationModelCallerTests
             CancellationToken.None));
 
         Assert.Equal(TriageBudgetExhaustedException.WallClockReachedBeforeCallCode, exception.ErrorCode);
-        Assert.Contains("wall-clock budget", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Orchestrator.Budget.MaxWallClockSeconds", exception.Message, StringComparison.Ordinal);
         Assert.Equal(0, model.CallCount);
         Assert.Contains(writer.Requests, request =>
             request.EventType == TriageLedgerEventType.BudgetEvent &&
             request.Rationale!.Contains("wall_clock_limit_reached_before_call", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task CompleteAsync_DisabledAttemptCeilingAdmitsACallLongAfterTheAttemptStarted()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var writer = new RecordingLedgerWriter();
+        var model = new StaticModelClient(new AiModelUsage(1, 1, 2));
+        var caller = CreateCaller(model, writer, new ConstantTimeProvider(now));
+        var context = CreateContext(now.AddDays(-30), maxWallClockSeconds: 1);
+        context = context with
+        {
+            Configuration = context.Configuration with
+            {
+                Orchestrator = context.Configuration.Orchestrator with
+                {
+                    Budget = new OrchestratorBudgetSettings(MaxWorkers: 2, MaxTokens: 100000, MaxAttemptDurationSeconds: 0)
+                }
+            }
+        };
+
+        await caller.CompleteAsync(
+            context,
+            context.Configuration.Routes[context.RouteId],
+            [new AiChatMessage(AiMessageRole.User, "No attempt ceiling is configured.")],
+            tools: null,
+            CancellationToken.None);
+
+        Assert.Equal(1, model.CallCount);
+        Assert.DoesNotContain(writer.Requests, request =>
+            request.EventType == TriageLedgerEventType.BudgetEvent &&
+            request.Rationale!.Contains("wall_clock_limit_reached", StringComparison.Ordinal));
     }
 
     [Fact]

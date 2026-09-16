@@ -195,10 +195,7 @@ internal sealed class TriageConfigurationLoadValidator(
             throw Invalid("Orchestrator.Budget.MaxTokens", orchestrator.Budget.MaxTokens.ToString(CultureInfo.InvariantCulture), "a positive integer");
         }
 
-        if (orchestrator.Budget.MaxWallClockSeconds <= 0)
-        {
-            throw Invalid("Orchestrator.Budget.MaxWallClockSeconds", orchestrator.Budget.MaxWallClockSeconds.ToString(CultureInfo.InvariantCulture), "a positive integer");
-        }
+        ValidateAttemptDuration(orchestrator.Budget);
 
         if (orchestrator.Budget.MaxReprompts < 0)
         {
@@ -212,6 +209,41 @@ internal sealed class TriageConfigurationLoadValidator(
                 orchestrator.Budget.MaxTurns.ToString(CultureInfo.InvariantCulture),
                 FormattableString.Invariant(
                     $"an integer between {OrchestratorBudgetSettings.MinimumMaxTurns} and {OrchestratorBudgetSettings.MaximumMaxTurns}"));
+        }
+    }
+
+    /// <summary>
+    /// The attempt duration ceiling may be spelled with the current key or the deprecated one, never
+    /// both: two values would leave the operator guessing which one governs. The deprecated key keeps
+    /// its original rule, a positive integer, so an existing configuration and every stored snapshot
+    /// carrying it loads unchanged; only the current key can disable the ceiling with <c>0</c>.
+    /// </summary>
+    private static void ValidateAttemptDuration(OrchestratorBudgetSettings budget)
+    {
+        if (budget is { MaxAttemptDurationSeconds: { } current, MaxWallClockSeconds: { } legacy })
+        {
+            throw Invalid(
+                OrchestratorBudgetSettings.MaxAttemptDurationSecondsSettingName,
+                FormattableString.Invariant($"{current} (with {OrchestratorBudgetSettings.MaxWallClockSecondsSettingName}={legacy})"),
+                "only one of " + OrchestratorBudgetSettings.MaxAttemptDurationSecondsSettingName + " and the deprecated " +
+                OrchestratorBudgetSettings.MaxWallClockSecondsSettingName);
+        }
+
+        if (budget.MaxWallClockSeconds is <= 0)
+        {
+            throw Invalid(
+                OrchestratorBudgetSettings.MaxWallClockSecondsSettingName,
+                budget.MaxWallClockSeconds.Value.ToString(CultureInfo.InvariantCulture),
+                "a positive integer");
+        }
+
+        if (budget.MaxAttemptDurationSeconds is < OrchestratorBudgetSettings.DisabledMaxAttemptDurationSeconds or > OrchestratorBudgetSettings.MaximumMaxAttemptDurationSeconds)
+        {
+            throw Invalid(
+                OrchestratorBudgetSettings.MaxAttemptDurationSecondsSettingName,
+                budget.MaxAttemptDurationSeconds.Value.ToString(CultureInfo.InvariantCulture),
+                FormattableString.Invariant(
+                    $"0 to disable the ceiling, or an integer between 1 and {OrchestratorBudgetSettings.MaximumMaxAttemptDurationSeconds}"));
         }
     }
 

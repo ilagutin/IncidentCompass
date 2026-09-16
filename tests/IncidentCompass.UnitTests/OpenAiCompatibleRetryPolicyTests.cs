@@ -39,27 +39,6 @@ public sealed class OpenAiCompatibleRetryPolicyTests
     }
 
     [Fact]
-    public async Task CompleteAsync_DoesNotRetryConfiguredGenerationTimeout()
-    {
-        var attempts = 0;
-        var handler = new CallbackHttpMessageHandler(async (_, cancellationToken) =>
-        {
-            attempts++;
-            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
-            throw new InvalidOperationException("Unreachable.");
-        });
-        using var httpClient = new HttpClient(handler);
-        var modelClient = CreateModelClient(httpClient, maxRetryAttempts: 3, timeoutSeconds: 1);
-
-        var exception = await Assert.ThrowsAsync<AiModelException>(() =>
-            modelClient.CompleteAsync(CreateRequest(), TestContext.Current.CancellationToken));
-
-        Assert.Equal(1, attempts);
-        Assert.Equal(ProviderFailureKind.GenerationTimeout, exception.FailureKind);
-        Assert.Equal("provider_generation_timeout", exception.ErrorCode);
-    }
-
-    [Fact]
     public async Task CompleteAsync_ClassifiesDefensiveEndpointValidationAsRejectedRequest()
     {
         var attempts = 0;
@@ -353,7 +332,7 @@ public sealed class OpenAiCompatibleRetryPolicyTests
             MaxRetryAttempts = maxRetryAttempts,
             RetryBaseDelayMilliseconds = 1,
             MaxRetryDelaySeconds = 5,
-            TimeoutSeconds = timeoutSeconds
+            FirstOutputTimeoutSeconds = timeoutSeconds
         });
         return new OpenAiCompatibleModelClient(httpClient, options, TestModelProviderProfiles.CreateResolver());
     }
