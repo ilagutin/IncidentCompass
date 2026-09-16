@@ -22,6 +22,19 @@ name: dependabot-lockfiles
 # becomes green on its own and `main` keeps its `--locked-mode` guarantee after the merge. It is a
 # no-op (no commit, no push) whenever the committed lock files are already correct.
 #
+# Two jobs, one token
+# --------------------
+# `restore` runs `dotnet restore` against untrusted, Dependabot-controlled project state. It has no
+# permissions and sees no secret, so nothing that restore executes can reach a token. It uploads only
+# the lock files that changed as a build artifact.
+#
+# `push` never runs a `dotnet` command. It downloads that artifact and refuses it outright if any
+# entry is a symlink or a traversal path; for every remaining entry it requires the destination to be
+# an existing tracked regular file (mode 100644) named exactly `packages.lock.json`, with no symlink
+# at the destination itself or at any parent directory component, and requires the content to parse
+# as JSON. Only entries that pass every check are applied, and `push` is the only job with
+# `contents: write` and the push token.
+#
 # Push token
 # ----------
 # Pushing with the default `GITHUB_TOKEN` works, but GitHub suppresses recursive runs: the
@@ -53,7 +66,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  sync:
+  restore:
     # Runs only for Dependabot's own branches in this repository. `github.actor` is the account that
     # produced the head commit, so the job does not re-enter after its own push, whichever token
     # performed that push.
@@ -65,9 +78,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
-    # Only what the push needs, and only used when DEPENDABOT_LOCKFILE_TOKEN is absent.
-    permissions:
-      contents: write
+    # No permission and no secret reach this job: it restores untrusted, Dependabot-controlled
+    # project state and only ever writes to the runner's own workspace and temp directory.
+    permissions: {}
+
+    outputs:
+      changed: ${{ steps.drift.outputs.changed }}
 
     env:
       DOTNET_CLI_TELEMETRY_OPTOUT: "true"
@@ -77,9 +93,7 @@ jobs:
       - name: Checkout Dependabot branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.head_ref }}
-          # `dotnet restore` imports MSBuild logic that ships inside NuGet packages, so no
-          # credential is left in the working tree while it runs. The push step supplies its own.
+          ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
 
       - name: Setup .NET
@@ -97,8 +111,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Only lock files are ever staged and pushed (see the pathspec on `git add` below), so
-          # anything else restore may have touched in the workspace is deliberately ignored here.
+          # Only lock files are ever staged and pushed (see the pathspec on `git add` in the push
+          # job's commit step), so anything else restore may have touched in the workspace is
+          # deliberately ignored here.
           if git diff --quiet -- '*packages.lock.json'; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
             echo 'Lock files already match the project graph. Nothing to push.' >> "$GITHUB_STEP_SUMMARY"
@@ -115,8 +130,159 @@ jobs:
         if: steps.drift.outputs.changed == 'true'
         run: dotnet restore IncidentCompass.slnx --locked-mode
 
-      - name: Commit and push regenerated lock files
+      - name: Stage changed lock files for upload
         if: steps.drift.outputs.changed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          staging_dir="${RUNNER_TEMP}/lockfile-sync"
+          mkdir -p "$staging_dir"
+
+          # `cp --parents` keeps each file's repository-relative directory structure inside the
+          # staging directory, which the push job needs to know where each file belongs.
+          git diff --name-only -z -- '*packages.lock.json' \
+            | xargs -0 cp --parents --target-directory="$staging_dir" --
+
+      - name: Upload changed lock files
+        if: steps.drift.outputs.changed == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: lockfile-sync
+          path: ${{ runner.temp }}/lockfile-sync/
+          if-no-files-found: error
+          retention-days: 1
+
+  push:
+    needs: restore
+    if: >-
+      github.actor == 'dependabot[bot]'
+      && github.event.pull_request.user.login == 'dependabot[bot]'
+      && github.event.pull_request.head.repo.full_name == github.repository
+      && startsWith(github.head_ref, 'dependabot/')
+      && needs.restore.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    # Only what the push needs, and only used when DEPENDABOT_LOCKFILE_TOKEN is absent. No restore
+    # runs in this job, so there is nothing here that a package's build logic could reach.
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Dependabot branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Download synced lock files
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: lockfile-sync
+          path: ${{ runner.temp }}/lockfile-sync
+
+      - name: Validate synced lock file artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          artifact_dir="${RUNNER_TEMP}/lockfile-sync"
+
+          if [ ! -d "$artifact_dir" ]; then
+            echo "::error::Artifact directory $artifact_dir is missing."
+            exit 1
+          fi
+
+          file_count=0
+
+          # Written to a file outside the artifact directory rather than consumed through process
+          # substitution: `find`'s own failure would otherwise be lost since only the `while` loop's
+          # exit status is visible under `set -e`, and this failing directly stops the step.
+          find "$artifact_dir" -mindepth 1 -print0 > "$RUNNER_TEMP/lockfile-sync.list"
+
+          while IFS= read -r -d '' entry; do
+            if [ -L "$entry" ]; then
+              echo "::error::Artifact entry $entry is a symlink, which is not allowed."
+              exit 1
+            fi
+
+            if [ -d "$entry" ]; then
+              continue
+            fi
+
+            if [ ! -f "$entry" ]; then
+              echo "::error::Artifact entry $entry is neither a regular file nor a directory."
+              exit 1
+            fi
+
+            rel_path="${entry#"$artifact_dir"/}"
+
+            case "$rel_path" in
+              /*)
+                echo "::error::Artifact path $rel_path starts with a slash."
+                exit 1
+                ;;
+            esac
+
+            case "/$rel_path/" in
+              */../*)
+                echo "::error::Artifact path $rel_path contains a .. segment."
+                exit 1
+                ;;
+            esac
+
+            base_name="$(basename "$rel_path")"
+            if [ "$base_name" != 'packages.lock.json' ]; then
+              echo "::error::Artifact entry $rel_path is not named packages.lock.json."
+              exit 1
+            fi
+
+            if ! git ls-files --error-unmatch -- ":(literal)$rel_path" >/dev/null 2>&1; then
+              echo "::error::Artifact path $rel_path is not tracked in this checkout."
+              exit 1
+            fi
+
+            tracked_mode="$(git ls-files -s -- ":(literal)$rel_path" | awk '{print $1}')"
+            if [ "$tracked_mode" != '100644' ]; then
+              echo "::error::Tracked path $rel_path is not a regular file (mode $tracked_mode)."
+              exit 1
+            fi
+
+            if [ -L "$rel_path" ]; then
+              echo "::error::Destination path $rel_path is a symlink in the checkout."
+              exit 1
+            fi
+
+            # Refuse to write through a symlinked parent directory too, since `cp` would follow it
+            # outside the checkout.
+            parent_dir="$(dirname "$rel_path")"
+            check_dir="$parent_dir"
+            while [ "$check_dir" != '.' ] && [ "$check_dir" != '/' ]; do
+              if [ -L "$check_dir" ]; then
+                echo "::error::Directory component $check_dir of $rel_path is a symlink in the checkout."
+                exit 1
+              fi
+              check_dir="$(dirname "$check_dir")"
+            done
+
+            if ! jq empty "$entry" >/dev/null 2>&1; then
+              echo "::error::Artifact file $rel_path is not valid JSON."
+              exit 1
+            fi
+
+            cp -- "$entry" "$rel_path"
+            file_count=$((file_count + 1))
+          done < "$RUNNER_TEMP/lockfile-sync.list"
+
+          if [ "$file_count" -eq 0 ]; then
+            echo "::error::Artifact $artifact_dir contains no regular files."
+            exit 1
+          fi
+
+          echo "Validated and applied $file_count lock file(s) from the restore job." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Commit and push regenerated lock files
         shell: bash
         env:
           # Falls back to the job's GITHUB_TOKEN when the Dependabot secret is not configured.
@@ -130,13 +296,22 @@ jobs:
 
           git add -- '*packages.lock.json'
 
+          if git diff --cached --quiet; then
+            echo 'Validated lock files already match the checkout. Nothing to push.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
           # `[dependabot skip]` keeps Dependabot force-pushing over this commit; without it
           # Dependabot stops rebasing a branch that someone else has written to.
           git -c core.hooksPath=/dev/null commit --no-verify \
             -m 'chore(deps): regenerate packages.lock.json for the whole project graph' \
-            -m 'Dependabot regenerates only the lock file of the project it edited. CI restores with --locked-mode, so every project that reaches the changed package through a ProjectReference or a central transitive pin needs its lock file regenerated too. Produced by `dotnet restore IncidentCompass.slnx --force-evaluate`.' \
+            -m 'Dependabot regenerates only the lock file of the project it edited. CI restores with --locked-mode, so every project that reaches the changed package through a ProjectReference or a central transitive pin needs its lock file regenerated too. Produced by dotnet restore IncidentCompass.slnx --force-evaluate.' \
             -m '[dependabot skip]'
 
+          # The checkout is detached at the head SHA, so this is a plain (non-force) push of that
+          # commit onto the branch tip. A rejected non-fast-forward push (Dependabot rebased the
+          # branch in the meantime) simply fails the run; the branch's next `synchronize` event
+          # reruns this workflow against the new head.
           git -c core.hooksPath=/dev/null push \
             "https://x-access-token:${GIT_PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
             "HEAD:refs/heads/${GITHUB_HEAD_REF}"
