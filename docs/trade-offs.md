@@ -56,6 +56,7 @@ Memory, grouping and evidence
 Governance and external actions
 
 - [One Live Tool Policy Path](#one-live-tool-policy-path)
+- [Progress Detection Is Structural, Not Semantic](#progress-detection-is-structural-not-semantic)
 - [Read-Only Cost Rollup Uses Operator-Maintained Pricing](#read-only-cost-rollup-uses-operator-maintained-pricing)
 - [Hand-Edited Prices Are Constrained, Not Replaced By An API](#hand-edited-prices-are-constrained-not-replaced-by-an-api)
 - [Cost Alerting Belongs To The Operator's Own Tooling](#cost-alerting-belongs-to-the-operators-own-tooling)
@@ -705,6 +706,27 @@ from the comments of six scripts (`004`, `006`, `007`, `008`, `009`, `010`). All
 migration version 1, which the ledger records under a single checksum, so that edit changed that one
 checksum on purpose, and it was safe only because no durable database existed yet.
 `docs/versioning.md` records why, and the freeze holds from 0.4.0 forward.
+
+## Progress Detection Is Structural, Not Semantic
+
+Repetition and progress are judged from hashes and one label, not from meaning. An equivalent call is
+the same tool with the same canonical arguments, or the same role with the same task after
+whitespace is collapsed; a task reworded with one different word is a different call. Progress is a
+new result identity or a changed candidate classification. The identity ignores the fresh artifact ids
+a call writes but nothing else, so a new tool result that says nothing new in different bytes (a
+changed score, a reworded worker summary) counts as progress, and a turn that reasons its way to a better question
+without new evidence does not. The heuristic is cheap, deterministic and explainable from the ledger,
+and model prose alone cannot make a run look productive, but it will miss a model that loops through
+paraphrases and it can flag a turn that was useful in ways it cannot see.
+
+Two choices keep the cost of a wrong judgement low. A refused repeat does not fail the attempt; the
+caller is told why and can make a different call. The refusal is sticky for the attempt: data behind
+that exact call that changes later is not re-read, which is the price of not running a call to find
+out whether it would still be a repeat. A run of turns without progress is recorded and the
+attempt continues under the unchanged turn limit, so the worst case is the bound that existed before.
+Fingerprints live in memory for one attempt, so a retried attempt starts with a clean record, and the
+same tool with the same arguments called from two roles is one fingerprint because it asks for the
+same data.
 
 ## Read-Only Cost Rollup Uses Operator-Maintained Pricing
 

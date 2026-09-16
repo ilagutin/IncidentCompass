@@ -36,6 +36,7 @@ internal sealed partial class WorkerRoleRunner(
         TriageRoleSettings role,
         string task,
         DateTimeOffset attemptStartedAtUtc,
+        InvestigationProgressTracker progress,
         CancellationToken cancellationToken)
     {
         if (!configuration.Routes.TryGetValue(role.RouteId, out var route))
@@ -74,7 +75,7 @@ internal sealed partial class WorkerRoleRunner(
             {
                 messages.Add(new AiChatMessage(AiMessageRole.Assistant, response.Content, ToolCalls: [toolCall]));
                 var toolResult = await toolCallExecutor.ExecuteAsync(
-                    job, configuration, context, roleName, toolCall, attemptStartedAtUtc, cancellationToken);
+                    job, configuration, context, roleName, toolCall, attemptStartedAtUtc, progress, cancellationToken);
                 messages.Add(new AiChatMessage(AiMessageRole.Tool, toolResult, toolCall.Id));
                 continue;
             }

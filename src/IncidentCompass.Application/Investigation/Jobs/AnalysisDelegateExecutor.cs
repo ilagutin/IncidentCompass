@@ -8,6 +8,8 @@ using IncidentCompass.Application.Intake.Artifacts;
 using IncidentCompass.Application.Intake.Configuration;
 using IncidentCompass.Domain.Incidents;
 using IncidentCompass.Domain.Incidents.Statuses;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace IncidentCompass.Application.Investigation.Jobs;
 
@@ -16,8 +18,13 @@ internal sealed class AnalysisDelegateExecutor(
     TriageLedgerAppender ledgerAppender,
     ITriageLedgerReader ledgerReader,
     WorkerRoleRunner workerRoleRunner,
-    TimeProvider timeProvider)
+    TimeProvider timeProvider,
+    ILogger<AnalysisDelegateExecutor>? logger = null)
 {
+    private readonly InvestigationNoProgressRecorder noProgressRecorder = new(
+        ledgerAppender,
+        logger ?? NullLogger<AnalysisDelegateExecutor>.Instance);
+
     /// <summary>
     /// The diagnostic an unknown role is refused with. It is one fixed string and it does not name
     /// the value that was rejected.
@@ -85,12 +92,29 @@ internal sealed class AnalysisDelegateExecutor(
         TriageJobInvestigationContext context,
         AiToolCall toolCall,
         DateTimeOffset attemptStartedAtUtc,
+        InvestigationProgressTracker progress,
         CancellationToken cancellationToken)
     {
         var (roleName, task) = ReadDelegateArguments(toolCall.Arguments);
         if (!configuration.Roles.TryGetValue(roleName, out var role))
         {
             throw CreateException(UnknownRoleMessage);
+        }
+
+        // The repetition check runs before the worker budget is read or charged: a refused delegate
+        // runs no worker, so it must not spend a worker slot or write a Delegated entry.
+        var fingerprint = EquivalentCallFingerprint.ForDelegate(roleName, task);
+        if (progress.IsRepeatLimitReached(fingerprint, out var unproductiveRepeats))
+        {
+            await noProgressRecorder.RecordRepeatedCallAsync(
+                job,
+                roleName,
+                OrchestratorToolNames.Delegate,
+                fingerprint,
+                unproductiveRepeats,
+                progress.MaxEquivalentCalls,
+                cancellationToken);
+            throw new RepeatedDelegateRefusedException();
         }
 
         await EnsureWorkerBudgetAsync(job, configuration, roleName, cancellationToken);
@@ -110,6 +134,7 @@ internal sealed class AnalysisDelegateExecutor(
             role,
             task,
             attemptStartedAtUtc,
+            progress,
             cancellationToken);
         var artifact = await InsertWorkerOutputArtifactAsync(job, configuration, roleName, workerContent, cancellationToken);
         // The delegate result is built from the stored payload, not from the worker's raw text: its
@@ -118,6 +143,13 @@ internal sealed class AnalysisDelegateExecutor(
         // Reading it back off the artifact also means the summary the orchestrator sees and the row
         // its artifactId points at are the same bytes.
         var delegateResult = CreateDelegateResult(roleName, artifact);
+        // The worker output echoes the artifact ids of the tool results it read, so its evidence
+        // identity reads those ids as the content they name rather than as fresh values.
+        var identity = progress.IdentityOf(artifact.RedactedPayload);
+        progress.RegisterArtifact(artifact.Id, identity);
+        progress.RecordCallResult(fingerprint, identity);
+        progress.RecordEvidence(identity);
+        progress.RecordCandidateClassification(delegateResult.CandidateClassification);
 
         await ledgerAppender.AppendAsync(
             job,

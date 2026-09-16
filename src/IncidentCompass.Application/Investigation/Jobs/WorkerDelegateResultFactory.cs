@@ -40,7 +40,8 @@ internal static class WorkerDelegateResultFactory
                 candidateClassification = output.CandidateClassification,
                 needsDeeperContext = output.NeedsDeeperContext,
                 artifactId = workerOutputArtifactId
-            }));
+            }),
+            output.CandidateClassification);
     }
 
     /// <summary>

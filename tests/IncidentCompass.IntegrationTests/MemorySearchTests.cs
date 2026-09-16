@@ -21,7 +21,7 @@ using NpgsqlTypes;
 namespace IncidentCompass.IntegrationTests;
 
 [Collection(PostgresRepositoryCollection.CollectionName)]
-public sealed class MemorySearchTests(PostgresRepositoryFixture postgres)
+public sealed partial class MemorySearchTests(PostgresRepositoryFixture postgres)
 {
     private const string MemoryModel = "mock-memory-embedding-v1";
 

@@ -18,7 +18,9 @@ public sealed record OrchestratorBudgetSettings(
     int? MaxWallClockSeconds = null,
     int MaxReprompts = 1,
     int MaxTurns = OrchestratorBudgetSettings.DefaultMaxTurns,
-    int? MaxAttemptDurationSeconds = null)
+    int? MaxAttemptDurationSeconds = null,
+    int MaxEquivalentCalls = OrchestratorBudgetSettings.DefaultMaxEquivalentCalls,
+    int MaxTurnsWithoutProgress = OrchestratorBudgetSettings.DefaultMaxTurnsWithoutProgress)
 {
     /// <summary>
     /// The work-turn allowance used when a configuration does not set one. It is the constant the
@@ -38,6 +40,37 @@ public sealed record OrchestratorBudgetSettings(
     /// long one.
     /// </summary>
     public const int MaximumMaxTurns = 64;
+
+    /// <summary>
+    /// Unproductive equivalent calls allowed per call fingerprint per attempt when a configuration
+    /// does not set one. A repeat is unproductive when its result is identical to the previous result
+    /// of the same call; a repeat whose result changed resets the count, so rechecking data that moves
+    /// is never refused.
+    /// </summary>
+    public const int DefaultMaxEquivalentCalls = 2;
+
+    /// <summary>Below one, the first identical recheck of unchanged data would already be refused.</summary>
+    public const int MinimumMaxEquivalentCalls = 1;
+
+    /// <summary>Past ten identical results in a row a repeat is a loop, not a recheck.</summary>
+    public const int MaximumMaxEquivalentCalls = 10;
+
+    /// <summary>
+    /// Consecutive orchestrator turns without new evidence or a changed candidate classification
+    /// allowed when a configuration does not set one. Time is not an input, so a slow model that
+    /// keeps producing never reaches it.
+    /// </summary>
+    public const int DefaultMaxTurnsWithoutProgress = 4;
+
+    /// <summary>A single turn without progress is ordinary: a turn that corrects a malformed call adds nothing.</summary>
+    public const int MinimumMaxTurnsWithoutProgress = 2;
+
+    /// <summary>Half the largest work-turn allowance; beyond it the turn limit is the only bound left.</summary>
+    public const int MaximumMaxTurnsWithoutProgress = 32;
+
+    public const string MaxEquivalentCallsSettingName = "Orchestrator.Budget.MaxEquivalentCalls";
+
+    public const string MaxTurnsWithoutProgressSettingName = "Orchestrator.Budget.MaxTurnsWithoutProgress";
 
     /// <summary>
     /// The attempt ceiling when neither key is configured: four hours. It is a safety net against a

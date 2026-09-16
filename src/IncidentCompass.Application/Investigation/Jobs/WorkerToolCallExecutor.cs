@@ -32,6 +32,10 @@ internal sealed partial class WorkerToolCallExecutor(
         timeProvider,
         logger ?? NullLogger<WorkerToolCallExecutor>.Instance);
 
+    private readonly InvestigationNoProgressRecorder noProgressRecorder = new(
+        ledgerAppender,
+        logger ?? NullLogger<WorkerToolCallExecutor>.Instance);
+
     public IReadOnlyList<AiToolDefinition> CreateToolSurface(TriageConfiguration configuration, TriageRoleSettings role)
     {
         var granted = role.Tools.ToHashSet(StringComparer.Ordinal);
@@ -49,6 +53,7 @@ internal sealed partial class WorkerToolCallExecutor(
         string roleName,
         AiToolCall toolCall,
         DateTimeOffset attemptStartedAtUtc,
+        InvestigationProgressTracker progress,
         CancellationToken cancellationToken)
     {
         using var toolTelemetry = telemetry?.StartToolCall();
@@ -96,6 +101,22 @@ internal sealed partial class WorkerToolCallExecutor(
                 "Worker tool call validation failed after policy approval.");
         }
 
+        // Governance decides first, so rate_cap and every other rule see the call exactly as before.
+        // Only a call the policy allowed can be refused as an unproductive repeat, and a refused
+        // repeat is not executed, so it writes no ToolResult: its no_progress budget event says why.
+        var fingerprint = EquivalentCallFingerprint.ForWorkerTool(toolCall.Name, validation.SanitizedArguments);
+        if (progress.IsRepeatLimitReached(fingerprint, out var unproductiveRepeats))
+        {
+            telemetry?.RecordToolCall(RuntimeTelemetryOutcome.Refused);
+            await noProgressRecorder.RecordRepeatedCallAsync(
+                job, roleName, toolCall.Name, fingerprint, unproductiveRepeats, progress.MaxEquivalentCalls, cancellationToken);
+            return SerializeToolFailure(
+                ToolExecutionStatus.NotExecuted.ToString(),
+                InvestigationNoProgressRecorder.RepeatedCallErrorCode,
+                InvestigationNoProgressRecorder.RepeatedCallErrorMessage,
+                limitation: InvestigationNoProgressRecorder.RepeatedCallErrorMessage);
+        }
+
         // The limiter owns every way the call can end short of a returned result: a per-tool timeout
         // comes back as an ordinary Failed result and takes the failure path below, while the attempt
         // ceiling, host cancellation and a thrown tool leave this method as exceptions.
@@ -124,8 +145,10 @@ internal sealed partial class WorkerToolCallExecutor(
             var redactedOutput = RedactedToolArtifactFactory.RedactOutput(
                 execution.Output,
                 configuration.Redaction);
-            await CommitSucceededAsync(
-                job, configuration, roleName, toolCall.Name, redactedOutput, execution.Artifacts, cancellationToken);
+            var identity = await CommitSucceededAsync(
+                job, configuration, roleName, toolCall.Name, redactedOutput, execution.Artifacts, progress, cancellationToken);
+            progress.RecordCallResult(fingerprint, identity);
+            progress.RecordEvidence(identity);
             telemetry?.RecordToolCall(RuntimeTelemetryOutcome.Succeeded);
             LogWorkerToolExecuted(logger, job.Id, job.Attempt, roleName, toolCall.Name);
             return redactedOutput.Output.GetRawText();
@@ -148,7 +171,11 @@ internal sealed partial class WorkerToolCallExecutor(
             toolCall.Name,
             execution.Status,
             execution.ErrorCode ?? "unspecified");
-        return SerializeToolFailure(execution.Status.ToString(), execution.ErrorCode, errorReason, limitation: errorReason);
+        var failure = SerializeToolFailure(execution.Status.ToString(), execution.ErrorCode, errorReason, limitation: errorReason);
+
+        // A failure is not evidence, but the same failure again is still no new result for this call.
+        progress.RecordCallResult(fingerprint, progress.IdentityOf(failure));
+        return failure;
     }
 
     private async Task<ToolRulePolicyResult> DecideAsync(
@@ -181,13 +208,19 @@ internal sealed partial class WorkerToolCallExecutor(
         return await ruleEngine.DecideImmediateAsync(job, configuration, roleName, toolCall.Name, cancellationToken);
     }
 
-    private async Task CommitSucceededAsync(
+    /// <summary>
+    /// Commits the result and returns its <see cref="EvidenceResultIdentity"/>: each per-item artifact
+    /// is registered under its content hash first, so the <c>artifactId</c> the output names for it is
+    /// read as that content, and the <c>ToolResult</c> artifact is registered under the identity.
+    /// </summary>
+    private async Task<string> CommitSucceededAsync(
         TriageJob job,
         TriageConfiguration configuration,
         string roleName,
         string toolName,
         RedactedToolOutput redactedOutput,
         IReadOnlyCollection<ToolArtifactDraft>? drafts,
+        InvestigationProgressTracker progress,
         CancellationToken cancellationToken)
     {
         var createdAtUtc = timeProvider.GetUtcNow();
@@ -204,17 +237,26 @@ internal sealed partial class WorkerToolCallExecutor(
         var redactionApplied = redactedOutput.RedactionApplied ||
             Array.Exists(artifacts, artifact => artifact.RedactionApplied == true);
         var canonicalPayload = CanonicalJsonSerializer.Canonicalize(JsonNode.Parse(redactedOutput.Output.GetRawText())!);
-        await toolResultCommitter.CommitSucceededAsync(
+        var contentHash = CanonicalJsonSerializer.ComputeSha256Hex(canonicalPayload);
+        var toolResult = await toolResultCommitter.CommitSucceededAsync(
             new TriageToolResultCommitRequest(
                 job,
                 roleName,
                 toolName,
                 redactedOutput.Output,
-                CanonicalJsonSerializer.ComputeSha256Hex(canonicalPayload),
+                contentHash,
                 "Tool completed successfully.",
                 redactionApplied,
                 artifacts),
             cancellationToken);
+        foreach (var artifact in artifacts)
+        {
+            progress.RegisterArtifact(artifact.Id, artifact.ContentHash);
+        }
+
+        var identity = progress.IdentityOf(redactedOutput.Output);
+        progress.RegisterArtifact(toolResult.Id, identity);
+        return identity;
     }
 
     private async Task AppendExecutedToolFailureAsync(

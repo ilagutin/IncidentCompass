@@ -635,6 +635,44 @@ because immediate tools are read-only, and its eventual exception is observed an
 connector that reports itself `unavailable` is not one of these: that is a successful call whose
 payload says so.
 
+The processor also keeps an in-memory progress record for each attempt; none of it is persisted
+except the events named below.
+
+- **Equivalent calls.** A worker tool call is identified by its tool name and the canonical JSON of its
+  validated, sanitized arguments, a delegate by its role and its task with whitespace collapsed. Only
+  a SHA-256 of that identity is kept. For each identity the record holds the identity of the last
+  result (the redacted tool output, the failure message for a failed call, or the `WorkerOutput`
+  payload) and how many repeats in a row returned that same result. A repeat whose result changed
+  resets the count, so rechecking data that moves is allowed. A repeated failure with the same message
+  counts as the same result too. Once the count reaches
+  `Orchestrator.Budget.MaxEquivalentCalls` (default 2, range 1-10), the next equivalent call is not
+  executed: a worker receives the ordinary tool-failure message with status `NotExecuted` and code
+  `repeated_call_without_new_evidence`, and the orchestrator receives a tool message of the delegate
+  validation shape with the same code. The check runs after the policy decision, so `rate_cap` and
+  every other rule see the call exactly as before, and before a delegate reads or charges the worker
+  budget. The refusal is recorded (a `no_progress: repeated_call` budget event and log event 3404),
+  charges no reprompt and does not fail the attempt. A refused call stays refused for the rest of the
+  attempt, because nothing re-runs it to see whether its data changed: data that changes later in the
+  attempt is not re-read through that exact call.
+- **Result identity.** A stored content hash cannot serve as the result identity, because every
+  artifact gets a fresh id and tools (`memory_search`, `ticket_search`, `source_lookup`) name those ids
+  in their output, as worker outputs do. The identity is the SHA-256 of the canonical redacted payload
+  in which every artifact id created in this attempt, wherever it appears inside a string, is replaced
+  by the identity of the artifact it names: a per-match artifact by the content hash of its redacted
+  payload (which carries no id), a `ToolResult` or `WorkerOutput` artifact by its own identity. Other
+  GUIDs and timestamps in a payload are connector data and stay.
+- **Progress.** An orchestrator turn makes progress when it adds a result identity not seen
+  before in the attempt (a successful tool result or a worker output) or changes the latest candidate
+  classification from an analysis output. No order of roles is prescribed, and time is not an input:
+  a slow model that keeps producing never counts as a turn without progress. When consecutive turns
+  without progress go past `Orchestrator.Budget.MaxTurnsWithoutProgress` (default 4, range 2-32), a
+  `no_progress: turns_without_progress` budget event and log event 3405 are written, the count starts
+  a new window and the attempt continues. The turn limit (`MaxTurns` plus `MaxReprompts`) still bounds
+  it and still dead-letters when spent.
+
+See `docs/observability.md` for the event wording and `docs/trade-offs.md` for what the heuristic can
+and cannot see.
+
 A tool returns its durable payloads as drafts rather than as artifacts. The worker tool executor is
 the only thing that turns a draft into a stored artifact, and it redacts the payload and the
 model-visible tool output on the way, so connector text cannot reach `triage_artifacts` or a later

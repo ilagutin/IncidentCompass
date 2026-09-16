@@ -106,6 +106,8 @@ leased work was abandoned for an unrequested reason and is reported rather than 
 | 3401 | Information | Orchestrator was reprompted, with its specific closed reason, bounded reprompt counter and durable `BudgetEvent` ledger record. The safe diagnostic comes from a closed allowlist; a `documentationFit` mismatch additionally names the backend-derived enum value, which is the only part of that vocabulary that varies. |
 | 3402 | Warning | Worker role output was reprompted, with job, attempt, role, a safe validator diagnostic list, bounded reprompt counter and durable `BudgetEvent` ledger record. |
 | 3403 | Warning | Orchestrator spent its bounded reprompt allowance, with the closed reason and safe diagnostic of the turn it could not correct. The attempt then dead-letters as `triage_budget_orchestrator_reprompt_limit_reached`. |
+| 3404 | Warning | An equivalent call was refused before it ran because the same call had already returned the same result `Orchestrator.Budget.MaxEquivalentCalls` times in a row. Carries job, attempt, role, tool name (`delegate` for a delegate), the 16-character fingerprint hash and the counts; never arguments or task text. Mirrors the `no_progress: repeated_call` budget event. The attempt continues. |
+| 3405 | Warning | Orchestrator turns without progress (no new result identity and no changed candidate classification) went past `Orchestrator.Budget.MaxTurnsWithoutProgress`. Carries job, attempt, the consecutive turn count, the limit and the evidence count. Mirrors the `no_progress: turns_without_progress` budget event. The attempt continues under the turn limit with a fresh window. |
 | 3501 | Debug | Immediate tool policy allowed a worker tool. |
 | 3502 | Warning | Immediate tool policy denied a worker tool. |
 | 3503 | Information | Immediate tool policy requires approval for a worker tool. |
@@ -298,13 +300,28 @@ post-report remediation correction writes the same kind of row under the `remedi
 prefix with the role `remediation`, and carries only the closed outcome code that caused it: never the
 diff the model sent, a path, or a line of a file.
 
+A no-progress intervention also writes one bounded `BudgetEvent`, under the `no_progress:` prefix,
+so it is never confused with a time limit (`wall_clock_limit_reached`, `tool_execution_timeout` or a
+provider stall code, which remain the only signals for something slow):
+
+- `no_progress: repeated_call role=<role> tool=<tool> fingerprint=<hash> unproductive_repeats=<n> max_equivalent_calls=<m>`
+  is written when an equivalent worker tool call or delegate is refused. The row keeps the role and
+  the tool name (`delegate` for a delegate) in their own columns. The fingerprint is the first 16 hex
+  characters of a SHA-256 over the tool name and canonical arguments, or the role and the
+  whitespace-collapsed task; the text itself is never stored. A refused worker tool call has its
+  `ToolProposed` and `PolicyDecision` rows but no `ToolResult`, because it did not run, and counts as
+  `refused` in the tool-call telemetry. "The same result" means the same result identity, which
+  ignores the fresh artifact ids a call writes (see `docs/architecture.md`, Governance Rails).
+- `no_progress: turns_without_progress turns=<n> max_turns_without_progress=<m> evidence=<count>`
+  is written with the role `orchestrator` when consecutive turns without progress go past the limit.
+
 `ModelCall` rows carry a `kind` naming what the call was for. `orchestrator` and `worker` are the
 investigation kinds; `remediation` is the post-report call that asks for a unified diff. The
 remediation call runs on the same bounded caller, so it is admitted, deadlined, charged and accounted
 exactly as the others are, and cost roll-ups can separate what an incident spent producing its report
 from what it spent proposing a change by grouping on that one field.
 
-`ModelCall` rows and token-accounting `BudgetEvent` rows are mirrored by bounded application log events 3201-3206 and 3211-3212 above, while reprompt `BudgetEvent` rows are mirrored by events 3401, 3402 and 3802, so live model observability is readable from logs and auditable from the ledger.
+`ModelCall` rows and token-accounting `BudgetEvent` rows are mirrored by bounded application log events 3201-3206 and 3211-3212 above, while reprompt `BudgetEvent` rows are mirrored by events 3401, 3402 and 3802 and `no_progress:` rows by events 3404 and 3405, so live model observability is readable from logs and auditable from the ledger.
 
 ### Report Model Provenance
 
@@ -513,7 +530,7 @@ Provider failures are normalized at the Application port boundary and recorded t
 
 `IncidentCompass.Runtime` exposes an in-process `ActivitySource` and `Meter` for job claims and attempts, model calls and duration, governed tool calls, PostgreSQL migrations and memory synchronization. It is a source only: the current release does not configure an OTLP runtime exporter, collector endpoint or metrics endpoint. A host may attach a compatible listener or exporter without changing application workflows.
 
-The source uses fixed operation names and a closed `outcome` vocabulary: `claimed`, `succeeded`, `failed`, `cancelled`, `provider_unavailable` and `denied`. It never attaches incident IDs, fault IDs, tenant IDs, user IDs, service names, prompt text, document text, tool arguments, provider responses, credentials or connection strings as telemetry tags. Listener and exporter callback failures are isolated so triage, migrations and memory synchronization continue according to their normal durable-workflow behavior.
+The source uses fixed operation names and a closed `outcome` vocabulary: `claimed`, `succeeded`, `failed`, `cancelled`, `provider_unavailable`, `denied` and `refused` (a tool call the policy allowed but the backend did not run because an equivalent call already returned the same result). It never attaches incident IDs, fault IDs, tenant IDs, user IDs, service names, prompt text, document text, tool arguments, provider responses, credentials or connection strings as telemetry tags. Listener and exporter callback failures are isolated so triage, migrations and memory synchronization continue according to their normal durable-workflow behavior.
 
 ## Later Audit Events
 

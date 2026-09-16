@@ -70,6 +70,7 @@ public sealed class WorkerToolExecutionLimitTests
             harness.Configuration.Roles["analysis"],
             "Look into the timeout.",
             harness.Time.GetUtcNow(),
+            InvestigationProgressTracker.For(harness.Configuration.Orchestrator.Budget),
             TestContext.Current.CancellationToken);
         await harness.Tool.Started.Task.WaitAsync(TestContext.Current.CancellationToken);
         harness.Time.Advance(TimeSpan.FromSeconds(5));
@@ -306,6 +307,7 @@ public sealed class WorkerToolExecutionLimitTests
                 "analysis",
                 new AiToolCall("call-1", ToolName, "v1", EmptyObject()),
                 Time.GetUtcNow(),
+                InvestigationProgressTracker.For(Configuration.Orchestrator.Budget),
                 cancellationToken);
 
         public TriageLedgerAppendRequest[] ToolResults() =>
