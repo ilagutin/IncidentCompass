@@ -24,7 +24,9 @@ internal static class OpenAiModelRequestFactory
                 ? request.Tools.Select(ToOpenAiTool).ToArray()
                 : null,
             ReasoningEffort: CreateReasoningEffort(request.Reasoning, reasoningMode),
-            ChatTemplateKwargs: CreateChatTemplateKwargs(request.Reasoning, reasoningMode));
+            ChatTemplateKwargs: CreateChatTemplateKwargs(request.Reasoning, reasoningMode),
+            Stream: clientOptions.Streaming ? true : null,
+            StreamOptions: clientOptions.Streaming ? new OpenAiStreamOptions(IncludeUsage: true) : null);
 
         return JsonSerializer.Serialize(payload, OpenAiCompatibleJson.Options);
     }

@@ -41,6 +41,55 @@ internal static class OpenAiModelErrorMapper
     }
 
     /// <summary>
+    /// A streamed answer ended before it was complete: the body closed without the <c>[DONE]</c>
+    /// marker and without any finish reason. What was received is not an answer, and whether the
+    /// provider finished generating is unknown, so it is a dispatch whose outcome is unknown.
+    /// </summary>
+    public static AiModelException StreamTruncated()
+    {
+        return new AiModelException(
+            OpenAiModelProvider.Name,
+            "Model provider stream ended before the completion finished.",
+            errorCode: "provider_dispatch_outcome_unknown",
+            failureKind: ProviderFailureKind.AmbiguousInterruption);
+    }
+
+    /// <summary>
+    /// A streamed answer carried an <c>error</c> event after it had started. The request was sent and
+    /// may have been partly generated and billed, so it is a failure after dispatch and is never
+    /// replayed. Only the provider's error code is kept, as for an HTTP failure; its message is not.
+    /// </summary>
+    public static AiModelException StreamError(
+        JsonElement error,
+        AiModelUsage? usage,
+        string? returnedModel)
+    {
+        return new AiModelException(
+            OpenAiModelProvider.Name,
+            "Model provider reported an error in its stream.",
+            errorCode: "provider_dispatch_outcome_unknown",
+            providerErrorCode: ReadProviderErrorCode(error),
+            failureKind: ProviderFailureKind.AmbiguousInterruption,
+            usage: usage,
+            returnedModel: returnedModel);
+    }
+
+    private static string? ReadProviderErrorCode(JsonElement error)
+    {
+        if (error.ValueKind != JsonValueKind.Object || !error.TryGetProperty("code", out var code))
+        {
+            return null;
+        }
+
+        return code.ValueKind switch
+        {
+            JsonValueKind.String => code.GetString(),
+            JsonValueKind.Number => code.GetRawText(),
+            _ => null
+        };
+    }
+
+    /// <summary>
     /// The response body grew past the HTTP client's maximum response content size and was not
     /// read further.
     /// </summary>
@@ -69,27 +118,28 @@ internal static class OpenAiModelErrorMapper
     }
 
     /// <summary>
-    /// The provider accepted the request but its response did not start within the first-output
-    /// limit. Without streaming that is one whole generation.
+    /// The provider accepted the request but produced no output within the first-output limit: no
+    /// response headers for a non-streamed answer, one whole generation, or no data event on a stream.
     /// </summary>
     public static AiModelException FirstOutputTimeout(OperationCanceledException exception)
     {
         return new AiModelException(
             OpenAiModelProvider.Name,
-            "Model provider response did not start within the first-output limit.",
+            "Model provider produced no first output within the first-output limit.",
             errorCode: ProviderErrorCodes.FirstOutputTimeout,
             innerException: exception,
             failureKind: ProviderFailureKind.GenerationTimeout);
     }
 
     /// <summary>
-    /// The response started but its body then delivered nothing for the inactivity limit.
+    /// Output started and then stopped for the inactivity limit: no bytes of a non-streamed body, or
+    /// no data event on a stream.
     /// </summary>
     public static AiModelException StreamInactivityTimeout(OperationCanceledException exception)
     {
         return new AiModelException(
             OpenAiModelProvider.Name,
-            "Model provider response stopped arriving for the inactivity limit.",
+            "Model provider produced no further output within the inactivity limit.",
             errorCode: ProviderErrorCodes.StreamInactivityTimeout,
             innerException: exception,
             failureKind: ProviderFailureKind.GenerationTimeout);

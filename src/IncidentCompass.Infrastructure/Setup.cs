@@ -220,7 +220,10 @@ public static class Setup
         // one without a second factory.
         services
             .AddHttpClient<OpenAiCompatibleModelClient>(client =>
-                client.Timeout = Timeout.InfiniteTimeSpan)
+            {
+                client.Timeout = Timeout.InfiniteTimeSpan;
+                client.MaxResponseContentBufferSize = OpenAiCompatibleModelClient.MaxResponseContentBytes;
+            })
             .ConfigurePrimaryHttpMessageHandler(OpenAiCompatiblePrimaryHandlerFactory.Create);
         services.TryAddScoped<MockAiModelClient>();
 

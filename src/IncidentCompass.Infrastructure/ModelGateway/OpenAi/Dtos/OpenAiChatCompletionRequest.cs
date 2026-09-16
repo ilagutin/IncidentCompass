@@ -9,4 +9,6 @@ internal sealed record OpenAiChatCompletionRequest(
     [property: JsonPropertyName("max_tokens")] int? MaxTokens,
     [property: JsonPropertyName("tools")] IReadOnlyList<OpenAiTool>? Tools,
     [property: JsonPropertyName("reasoning_effort")] string? ReasoningEffort,
-    [property: JsonPropertyName("chat_template_kwargs")] OpenAiChatTemplateKwargs? ChatTemplateKwargs);
+    [property: JsonPropertyName("chat_template_kwargs")] OpenAiChatTemplateKwargs? ChatTemplateKwargs,
+    [property: JsonPropertyName("stream")] bool? Stream = null,
+    [property: JsonPropertyName("stream_options")] OpenAiStreamOptions? StreamOptions = null);

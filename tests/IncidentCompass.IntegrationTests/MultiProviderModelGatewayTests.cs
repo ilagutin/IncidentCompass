@@ -59,6 +59,37 @@ public sealed class MultiProviderModelGatewayTests
         Assert.Equal(1, RequestLogOf(second).Count);
     }
 
+    /// <summary>
+    /// Over real HTTP, a provider that honours <c>stream</c> answers in flushed server-sent events
+    /// with keep-alive comments between them. The streamed answer reaches the caller as content, a
+    /// tool call assembled from fragments and the final usage chunk, from the route's own endpoint.
+    /// </summary>
+    [Fact]
+    public async Task ChatCall_ToAStreamingProvider_AssemblesContentToolCallAndUsage()
+    {
+        await using var server = CreateStreamingChatServer();
+        await server.StartAsync(TestContext.Current.CancellationToken);
+        var address = LoopbackTestServer.GetAddress(server);
+        var providers = new Dictionary<string, TriageProviderSettings>(StringComparer.Ordinal)
+        {
+            ["local-oai"] = new("OpenAICompatible", address, FirstSecretRef)
+        };
+
+        var response = await CreateModelClient(providers).CompleteAsync(
+            CreateChatRequest("local-oai"),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal("streamed answer", response.Content);
+        Assert.Equal("stream-model", response.Model);
+        var toolCall = Assert.Single(response.ProposedToolCalls!);
+        Assert.Equal("call_1", toolCall.Id);
+        Assert.Equal("source_lookup", toolCall.Name);
+        Assert.Equal("src/app.cs", toolCall.Arguments.GetProperty("path").GetString());
+        Assert.Equal(12, response.Usage?.InputTokens);
+        Assert.Equal(5, response.Usage?.OutputTokens);
+        Assert.Equal("Bearer " + FirstApiKey, Assert.Single(RequestLogOf(server).Authorizations));
+    }
+
     [Fact]
     public async Task ChatCall_PresentsOnlyItsOwnProviderCredential()
     {
@@ -333,6 +364,49 @@ public sealed class MultiProviderModelGatewayTests
                 choices = new[] { new { message = new { role = "assistant", content = answer } } },
                 usage = new { prompt_tokens = 1, completion_tokens = 1, total_tokens = 2 }
             });
+        });
+        return app;
+    }
+
+    /// <summary>
+    /// Answers in server-sent events only when the request asked for a stream with usage, so a
+    /// request that lost those fields fails the test instead of silently taking the JSON path.
+    /// </summary>
+    private static WebApplication CreateStreamingChatServer()
+    {
+        var builder = LoopbackTestServer.CreateBuilder();
+        builder.Services.AddSingleton<ProviderRequestLog>();
+        var app = builder.Build();
+        app.MapPost("/v1/chat/completions", async context =>
+        {
+            context.RequestServices.GetRequiredService<ProviderRequestLog>()
+                .Record(context.Request.Headers.Authorization.ToString());
+            using var payload = await System.Text.Json.JsonDocument.ParseAsync(
+                context.Request.Body,
+                cancellationToken: context.RequestAborted);
+            if (!payload.RootElement.TryGetProperty("stream", out var stream) || !stream.GetBoolean() ||
+                !payload.RootElement.GetProperty("stream_options").GetProperty("include_usage").GetBoolean())
+            {
+                context.Response.StatusCode = StatusCodes.Status400BadRequest;
+                return;
+            }
+
+            context.Response.ContentType = "text/event-stream";
+            string[] events =
+            [
+                """data: {"model":"stream-model","choices":[{"index":0,"delta":{"role":"assistant","content":"streamed "}}]}""",
+                ": keep-alive",
+                """data: {"choices":[{"index":0,"delta":{"reasoning_content":"thinking"}}]}""",
+                """data: {"choices":[{"index":0,"delta":{"content":"answer","tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"source_lookup","arguments":"{\"path\""}}]}}]}""",
+                """data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":":\"src/app.cs\"}"}}]},"finish_reason":"tool_calls"}]}""",
+                """data: {"choices":[],"usage":{"prompt_tokens":12,"completion_tokens":5,"total_tokens":17}}""",
+                "data: [DONE]"
+            ];
+            foreach (var serverEvent in events)
+            {
+                await context.Response.WriteAsync(serverEvent + "\n\n", context.RequestAborted);
+                await context.Response.Body.FlushAsync(context.RequestAborted);
+            }
         });
         return app;
     }

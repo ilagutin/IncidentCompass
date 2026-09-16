@@ -47,6 +47,8 @@ public sealed class OpenAiCompatibleHttpClientRegistrationTests
         using var embeddingHttpClient = clientFactory.CreateClient(embeddingClientName);
 
         Assert.Equal(Timeout.InfiniteTimeSpan, modelHttpClient.Timeout);
+        Assert.Equal(OpenAiCompatibleModelClient.MaxResponseContentBytes, modelHttpClient.MaxResponseContentBufferSize);
+        Assert.Equal(32 * 1024 * 1024, modelHttpClient.MaxResponseContentBufferSize);
         Assert.Equal(Timeout.InfiniteTimeSpan, embeddingHttpClient.Timeout);
         Assert.NotEqual(TimeSpan.FromSeconds(100), modelHttpClient.Timeout);
         Assert.NotEqual(TimeSpan.FromSeconds(100), embeddingHttpClient.Timeout);

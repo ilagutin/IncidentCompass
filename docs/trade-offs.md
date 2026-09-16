@@ -364,14 +364,14 @@ limit, as the shipped routes do with 8000.
 ## Local-Safe Ceilings Allow Slower Generation
 
 The shipped configuration uses one local-safe profile. Each chat-provider HTTP attempt gets 30
-seconds to connect, 600 seconds until its response starts and 600 seconds of body inactivity; an
+seconds to connect, 600 seconds until output starts and 600 seconds without output; an
 investigation attempt has a four-hour ceiling; and both `analysis-chat` and `report-chat` allow
 `MaxOutputTokens: 8000`. Their `ContextWindowTokens` remains 8192, and the orchestrator retains
 `MaxTokens: 200000` and `MaxReprompts: 2`.
 
 The call limits are what catch a stalled provider call; the attempt ceiling only catches a run that
-never ends. A 600-second first-output limit accommodates slow local reasoning generation, which today
-arrives in one piece because the adapter does not stream. The earlier 2000-token analysis ceiling cut off a local reasoning-model response before it
+never ends. A 600-second first-output limit accommodates a slow local model's wait before its first
+streamed token, and still a whole generation from a provider that answers without streaming. The earlier 2000-token analysis ceiling cut off a local reasoning-model response before it
 could complete its final answer. The 8000-token ceiling gives `analysis-chat` room for both reasoning
 and the answer; `report-chat` uses the same bound for a consistent shipped profile. On most servers,
 reasoning and final-answer tokens share that output allowance.
@@ -386,20 +386,34 @@ answer or require the provider to consume them.
 
 This profile gives slower local models more time and output allowance. Cloud operators can tighten
 the provider call limits and triage route/budget overrides to match their latency and cost
-requirements. Until streaming is implemented, a non-streaming generation shows nothing before it
-finishes, so the 600-second first-output limit has to cover a whole generation and a real stall can
-take that long to produce a failure. The investigation attempt ceiling (four hours by default,
+requirements. A streamed answer surfaces a stall one inactivity limit after its last output. A
+provider that ignores `stream`, or a host with `Streaming` off, shows nothing before a generation
+finishes, so there the 600-second first-output limit has to cover a whole generation and a real stall
+can take that long to produce a failure. The investigation attempt ceiling (four hours by default,
 optional) still cancels an in-flight model call when it expires; raising a provider call limit does
 not extend it. A provider call limit first consumes the current job attempt and can retry while
 attempts remain. A call canceled by the attempt ceiling instead dead-letters immediately without
 consuming another job attempt. The ceiling is deliberately long so that a slow model that keeps
 answering is not dead-lettered for being slow.
 
-The body inactivity limit bounds silence, not length. A response body that keeps delivering bytes
-more often than every 600 seconds is never cut off by it, however long it takes in total; only the
-attempt ceiling bounds such a trickle, and with the ceiling set to `0` nothing does. That is the
-intended rule for a slow but producing provider, and streaming in a later slice keeps it. The body's
-size stays bounded: it is read up to the HTTP client's maximum response content size, the same limit
+The inactivity limit bounds silence, not length. A stream that delivers a `data` event more often
+than every 600 seconds, or a JSON body that delivers bytes that often, is never cut off by it, however
+long it takes in total; only the attempt ceiling bounds such a trickle, and with the ceiling set to
+`0` nothing does. That is the intended rule for a slow but producing provider.
+
+On a stream, output means a `data` event, and a keep-alive comment is not one. A provider that keeps
+the connection alive with comments while its model produces nothing is cut off at the inactivity
+limit, because a live connection is not a model making progress. The reverse cost is accepted too: a
+model that reasons silently, sending no `data` event for longer than the limit before its next token,
+is cut off even though it may have finished later. Any `data` event counts, including one with an
+empty delta, so a provider that trickles empty events is bounded only by the attempt ceiling.
+
+An `error` event inside a stream is a failure after dispatch, `provider_dispatch_outcome_unknown`,
+even when it arrives before any content: the adapter cannot tell whether generation was billed, so it
+is neither retried nor failed over to another route, unlike an HTTP 429 status that says nothing was
+generated.
+
+The body's size stays bounded, streamed or not: it is read up to the HTTP client's maximum response content size, the same limit
 that applied when the client buffered the whole response, and a larger body ends the call as
 `provider_response_too_large`, an invalid response.
 

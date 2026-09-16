@@ -15,14 +15,19 @@ internal static class OpenAiModelResponseMapper
         var completion = JsonSerializer.Deserialize<OpenAiChatCompletionResponse>(
             responseContent,
             OpenAiCompatibleJson.Options);
+        return Map(completion, request);
+    }
+
+    /// <summary>
+    /// Validates a completion however it arrived: deserialized from one JSON body, or assembled from a
+    /// stream. Content, tool-call and empty-answer rules are this one code path for both shapes.
+    /// </summary>
+    public static AiModelResponse Map(
+        OpenAiChatCompletionResponse? completion,
+        AiModelRequest request)
+    {
         var returnedModel = string.IsNullOrWhiteSpace(completion?.Model) ? null : completion.Model;
-        var usage = completion?.Usage is null
-            ? null
-            : new AiModelUsage(
-                completion.Usage.PromptTokens,
-                completion.Usage.CompletionTokens,
-                completion.Usage.TotalTokens,
-                completion.Usage.CompletionTokensDetails?.ReasoningTokens);
+        var usage = MapUsage(completion?.Usage);
         var choices = completion?.Choices;
         var choice = choices is { Count: > 0 } ? choices[0] : null;
         var message = choice?.Message;
@@ -46,6 +51,17 @@ internal static class OpenAiModelResponseMapper
             Usage: usage,
             CorrelationId: request.CorrelationId,
             ProposedToolCalls: proposedToolCalls);
+    }
+
+    public static AiModelUsage? MapUsage(OpenAiUsage? usage)
+    {
+        return usage is null
+            ? null
+            : new AiModelUsage(
+                usage.PromptTokens,
+                usage.CompletionTokens,
+                usage.TotalTokens,
+                usage.CompletionTokensDetails?.ReasoningTokens);
     }
 
     private static AiToolCall[] MapToolCalls(

@@ -15,6 +15,15 @@ internal sealed class OpenAiCompatibleModelClient(
     TimeProvider? timeProvider = null)
     : IAiModelClient
 {
+    /// <summary>
+    /// The largest chat response body read, streamed or not: 32 MiB, set on the registered typed client
+    /// as its <see cref="HttpClient.MaxResponseContentBufferSize" />. A streamed answer spends a few
+    /// hundred bytes of event framing per token, so even a 64000-token output streamed with its
+    /// reasoning stays below it, while a hostile or runaway body is refused long before the framework default of
+    /// about 2 GB.
+    /// </summary>
+    public const long MaxResponseContentBytes = 32 * 1024 * 1024;
+
     private readonly OpenAiCompatibleRetryPolicy retryPolicy = new();
     private readonly TimeProvider timeProvider = timeProvider ?? TimeProvider.System;
 
@@ -43,13 +52,16 @@ internal sealed class OpenAiCompatibleModelClient(
                 idempotencyKey);
 
             // Each HTTP attempt has its own phases. The connect limit lives on the primary handler;
-            // the first-output limit runs from dispatch until the response starts; the inactivity
-            // limit restarts whenever the body delivers bytes. Both timers use the injected clock.
+            // the first-output limit runs from dispatch until output starts, which is the first data
+            // event of a streamed answer and the response headers of any other; the inactivity limit
+            // then restarts on every data event of a stream, or whenever another body delivers bytes.
+            // Both timers use the injected clock.
             using var firstOutputTimeout = new CancellationTokenSource(
                 TimeSpan.FromSeconds(clientOptions.ResolveFirstOutputTimeoutSeconds()),
                 timeProvider);
             using var inactivityTimeout = new CancellationTokenSource(Timeout.InfiniteTimeSpan, timeProvider);
             var responseStarted = false;
+            var outputStarted = false;
             try
             {
                 using var sendCancellation = CancellationTokenSource.CreateLinkedTokenSource(
@@ -60,6 +72,24 @@ internal sealed class OpenAiCompatibleModelClient(
                     HttpCompletionOption.ResponseHeadersRead,
                     sendCancellation.Token);
                 responseStarted = true;
+
+                // The answer's shape, not the request, picks the parser: a provider that ignores
+                // `stream` answers with one JSON body and is read exactly as before.
+                if (httpResponse.IsSuccessStatusCode &&
+                    OpenAiStreamingResponseReader.IsEventStream(httpResponse.Content))
+                {
+                    var streamedCompletion = await OpenAiStreamingResponseReader.ReadAsync(
+                        httpResponse.Content,
+                        firstOutputTimeout,
+                        inactivityTimeout,
+                        TimeSpan.FromSeconds(clientOptions.StreamInactivityTimeoutSeconds),
+                        httpClient.MaxResponseContentBufferSize,
+                        () => outputStarted = true,
+                        cancellationToken);
+                    return OpenAiModelResponseMapper.Map(streamedCompletion, request);
+                }
+
+                outputStarted = true;
                 var responseContent = await OpenAiResponseBodyReader.ReadAsync(
                     httpResponse.Content,
                     inactivityTimeout,
@@ -96,6 +126,7 @@ internal sealed class OpenAiCompatibleModelClient(
                 throw OpenAiAttemptCancellationClassifier.Map(
                     exception,
                     responseStarted,
+                    outputStarted,
                     firstOutputTimeout.IsCancellationRequested,
                     inactivityTimeout.IsCancellationRequested,
                     httpClient.Timeout != Timeout.InfiniteTimeSpan);
