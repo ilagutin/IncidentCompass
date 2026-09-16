@@ -89,6 +89,18 @@ public sealed class OpenAiCompatibleClientOptionsTests
     }
 
     [Fact]
+    public void RequestFactory_StreamingOnByDefault_AppendsStreamAndUsageRequest()
+    {
+        var payload = OpenAiModelRequestFactory.CreatePayloadJson(
+            CreateReasoningRequest(AiReasoningLevel.High),
+            new OpenAiCompatibleModelClientOptions { ApiKey = "test-api-key" });
+
+        Assert.Equal(
+            "{\"model\":\"reasoning-model\",\"messages\":[{\"role\":\"user\",\"content\":\"hello\"}],\"stream\":true,\"stream_options\":{\"include_usage\":true}}",
+            payload);
+    }
+
+    [Fact]
     public void ModelClientOptions_DefaultsRetryDelayCeilingToFiveSeconds()
     {
         var options = new OpenAiCompatibleModelClientOptions();
@@ -308,6 +320,9 @@ public sealed class OpenAiCompatibleClientOptionsTests
         return new OpenAiCompatibleModelClientOptions
         {
             ApiKey = "test-api-key",
+            // The reasoning payload is asserted exactly, so the stream fields are switched off here and
+            // asserted in a test of their own.
+            Streaming = false,
             ReasoningModes = new Dictionary<string, OpenAiReasoningMode>
             {
                 ["local-oai"] = reasoningMode

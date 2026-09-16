@@ -29,15 +29,18 @@ public sealed class OpenAiCompatibleModelClientOptions
     public int ConnectTimeoutSeconds { get; init; } = DefaultConnectTimeoutSeconds;
 
     /// <summary>
-    /// How long an HTTP attempt may wait from dispatch until the response starts. A non-streaming
-    /// provider starts its response once it has finished generating, so this bounds one generation
-    /// per HTTP attempt. Unset means <see cref="TimeoutSeconds"/> when that deprecated key is set,
+    /// How long an HTTP attempt may wait from dispatch until output starts: the first server-sent
+    /// <c>data</c> event of a streamed answer, or the response headers of any other answer. A
+    /// non-streaming provider starts its response once it has finished generating, so for it this
+    /// bounds one generation per HTTP attempt. Unset means <see cref="TimeoutSeconds"/> when that deprecated key is set,
     /// otherwise <see cref="DefaultFirstOutputTimeoutSeconds"/>.
     /// </summary>
     public int? FirstOutputTimeoutSeconds { get; init; }
 
     /// <summary>
-    /// How long the response body may go without delivering any bytes once it has started.
+    /// How long an answer may go without delivering output once output has started: a streamed
+    /// answer without a new <c>data</c> event (keep-alive comments do not count), any other answer
+    /// without any bytes.
     /// </summary>
     public int StreamInactivityTimeoutSeconds { get; init; } = DefaultStreamInactivityTimeoutSeconds;
 
@@ -46,6 +49,14 @@ public sealed class OpenAiCompatibleModelClientOptions
     /// not, its value is the first-output limit. Setting both is a validation error.
     /// </summary>
     public int? TimeoutSeconds { get; init; }
+
+    /// <summary>
+    /// Whether a chat request asks the provider to stream its answer as server-sent events with a
+    /// final usage chunk. Turn it off only for a provider that rejects <c>stream</c> or
+    /// <c>stream_options</c>; a provider that ignores them and answers with one JSON body still works
+    /// while it is on.
+    /// </summary>
+    public bool Streaming { get; init; } = true;
 
     public int MaxRetryAttempts { get; init; } = 2;
 

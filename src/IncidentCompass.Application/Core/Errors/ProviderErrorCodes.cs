@@ -24,10 +24,16 @@ internal static class ProviderErrorCodes
     /// <summary>The connection to the provider was not established within the connect limit.</summary>
     public const string ConnectTimeout = "provider_connect_timeout";
 
-    /// <summary>The provider's response did not start within the first-output limit.</summary>
+    /// <summary>
+    /// The provider produced no first output within the first-output limit: no data event on a streamed
+    /// answer, no response start otherwise.
+    /// </summary>
     public const string FirstOutputTimeout = "provider_first_output_timeout";
 
-    /// <summary>The provider's response started and then delivered nothing for the inactivity limit.</summary>
+    /// <summary>
+    /// The provider produced output and then nothing more for the inactivity limit: no further data
+    /// event on a streamed answer, no further bytes otherwise.
+    /// </summary>
     public const string StreamInactivityTimeout = "provider_stream_inactivity_timeout";
 
     public static string For(ProviderFailureKind failureKind, Exception exception) =>

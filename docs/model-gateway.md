@@ -79,8 +79,8 @@ The OpenAI-compatible chat adapter bounds each HTTP attempt by phase, under
 | Setting | Default | Range | What it bounds |
 | --- | --- | --- | --- |
 | `ConnectTimeoutSeconds` | 30 | 1-600 | Establishing the connection. It is set on the socket handler and bounds the connection phase only. |
-| `FirstOutputTimeoutSeconds` | 600 | 1-3600 | From dispatch until the response starts. The adapter does not stream yet, and a non-streaming provider starts its response when it has finished generating, so today this bounds one whole generation per HTTP attempt. |
-| `StreamInactivityTimeoutSeconds` | 600 | 1-3600 | How long the response body may deliver no bytes once it has started. The limit restarts every time bytes arrive, so a long body that keeps arriving is not cut off. |
+| `FirstOutputTimeoutSeconds` | 600 | 1-3600 | From dispatch until output starts. On a streamed answer that is the first server-sent `data` event, whatever it carries: often a role-only chunk sent before the first token, so it does not prove a token was generated, and silent reasoning after that event is bounded by the inactivity limit instead. On an answer that arrives as one JSON body it is the response headers, which a non-streaming provider sends when it has finished generating, so there it bounds one whole generation per HTTP attempt. |
+| `StreamInactivityTimeoutSeconds` | 600 | 1-3600 | How long an answer may produce nothing once output has started. On a streamed answer the limit restarts on every `data` event, whatever it carries; keep-alive comments and blank lines do not restart it. On a JSON body it restarts whenever bytes arrive. A long answer that keeps producing is not cut off. |
 
 Each limit that fires ends the call with the `GenerationTimeout` failure kind, as the single timeout
 did, and is not retried inside the adapter. The `ModelCall` row and the job's error code name the
@@ -95,11 +95,64 @@ none of the caller, the adapter's two timers or that shape accounts for is repor
 `provider_dispatch_outcome_unknown` (`AmbiguousInterruption`) rather than as a timeout it may not have
 been.
 
-Once the response has started the request has certainly been sent. A body that then breaks off, as a
+Once the response has started the request has certainly been sent, even while a stream is still
+waiting for its first `data` event. A body that then breaks off, as a
 reset connection or a premature end, is `provider_dispatch_outcome_unknown` as well, and is never
 replayed inside the adapter. The body is read up to the HTTP client's `MaxResponseContentBufferSize`,
-the limit that applied when the client buffered the response itself; a larger body ends the call as
-`provider_response_too_large`, an `InvalidResponse`.
+which the chat client registration sets to 32 MiB rather than leaving at the framework default of
+about 2 GB. A chat answer is small by comparison: even a stream spending a few hundred bytes of event
+framing per token stays below 32 MiB for a 64000-token output with its reasoning, while a runaway or
+hostile body is refused early. A larger body ends the call as `provider_response_too_large`, an
+`InvalidResponse`.
+
+### Streaming
+
+`IncidentCompass:ModelGateway:OpenAiCompatible:Streaming` (default `true`) makes every chat request
+ask for a streamed answer: the payload adds `stream: true` and
+`stream_options: { "include_usage": true }`. Set it to `false` for a provider that rejects either
+field; the payload is then exactly what it was before streaming existed.
+
+The answer's shape, not the request, decides how it is read. A successful response with content type
+`text/event-stream` is read as server-sent events; any other successful response is parsed as one
+JSON body, so a provider that ignores `stream` keeps working with the switch on. A failure status is
+read and mapped as before, whatever its content type, and a retryable one is still retried.
+
+A stream is read as it arrives and assembled into the same completion a JSON body carries, which then
+goes through the same validation: content deltas are appended; tool-call fragments are merged by
+`index`, with the id, type and function name taken from the fragment that first carries them and the
+argument pieces appended; the finish reason, the model and the final usage chunk are kept; reasoning
+deltas count as output for the limits but are not kept. Only choice `0` is read, as on the JSON path.
+Framing follows the server-sent events rules: lines may end in LF, CRLF or CR and may be split
+anywhere across network reads, multi-line `data` fields are joined, `event`, `id` and `retry` fields
+and comment lines are ignored, and a leading byte order mark is dropped.
+
+A stream ends at `data: [DONE]`, and nothing after it is read. It fails closed:
+
+- A body that closes without `[DONE]` and without a finish reason for choice `0` was cut off and is
+  `provider_dispatch_outcome_unknown`; an event the body never finished is discarded, never used.
+- A `data` event carrying an `error` object is `provider_dispatch_outcome_unknown`
+  (`AmbiguousInterruption`) with the provider's error code, never its message, and is not replayed.
+- A `data` event that is not a JSON chunk object is `invalid_json`.
+- A tool-call fragment that cannot belong to a well-formed call is `invalid_response` at once: one
+  without an `index`, an index that skips past the next unstarted call, a new call whose first
+  fragment has no id, or a fragment naming a different id, type or function name than its call
+  already has. Assembled arguments that are not a JSON object are refused as on the JSON path.
+  The `index` rule is deliberate: some OpenAI-compatible layers, historically including some
+  Gemini- and Mistral-compatible ones, stream tool-call fragments without `index`. Their tool calls
+  are refused as `invalid_response`, and such a provider needs `Streaming=false`.
+- `[DONE]` before any choice is `empty_response`; a stream without a usage chunk leaves usage
+  absent rather than invented.
+- `[DONE]` after choice `0` appeared but never reported a finish reason is cut off too, and is
+  `provider_dispatch_outcome_unknown`.
+- A line using a field other than `data`, such as the `error:` field line some llama.cpp-style
+  servers send, is ignored like any unknown field; such a stream carries no finish reason and ends as
+  cut off, `provider_dispatch_outcome_unknown`.
+- The body size limit counts every byte of the stream, keep-alive comments included. In addition, no
+  single line and no single event's joined `data` may exceed 4 MiB characters; a longer one ends the
+  call as `provider_response_too_large` while it is still being buffered, so a hostile line cannot
+  grow toward the whole body limit.
+
+Nothing in the adapter logs, and no part of a stream is kept beyond the fields listed above.
 
 `TimeoutSeconds` on the chat section is deprecated. When it is set and `FirstOutputTimeoutSeconds`
 is not, its value is used as the first-output limit and a warning (event 2801) is logged at host
@@ -228,7 +281,8 @@ provider to bill; see `docs/cost-tracking.md`, "Embedding Calls Are Absent, Not 
 
 - Model name is configurable.
 - The chat-generation limits are configurable per HTTP attempt and per phase: connect (30 seconds),
-  first output (600 seconds) and body inactivity (600 seconds).
+  first output (600 seconds) and output inactivity (600 seconds).
+- Chat generation streams by default and can be switched to single JSON answers per host.
 - The embedding per-HTTP-attempt timeout is separately configurable and defaults to 30 seconds.
 - Chat-generation retries are limited to HTTP 429/503 responses and failures that are positively known
   to occur before dispatch: name resolution, secure-connection establishment, proxy-tunnel
@@ -511,7 +565,7 @@ sends: the request carries the smaller of it and what is left of the attempt tok
 ### Shipped Local-Safe Profile
 
 The shipped profile pairs the chat provider's 30-second connect limit, 600-second first-output limit
-and 600-second body inactivity limit with an orchestrator `MaxAttemptDurationSeconds` of 14400. Both
+and 600-second output inactivity limit with an orchestrator `MaxAttemptDurationSeconds` of 14400. Both
 `analysis-chat` and `report-chat` allow `MaxOutputTokens: 8000` and retain
 `ContextWindowTokens: 8192`; the orchestrator retains `MaxTokens: 200000` and `MaxReprompts: 2`.
 These settings form one local-safe profile for slower local generation. They are ceilings, not
@@ -532,9 +586,10 @@ four-hour ceiling that second outcome is reserved for a run that keeps going far
 investigation; an operator who sets a short ceiling brings it back into reach for ordinary calls.
 
 Cloud operators can tighten the provider call limits, the attempt ceiling and the triage route
-budget for their measured provider latency and cost requirements. Until streaming is implemented, a
-non-streaming generation shows no output before it finishes, so the first-output limit has to cover a
-whole generation and a stalled one takes up to that long to surface as a failure.
+budget for their measured provider latency and cost requirements. With streaming, the first-output
+limit covers only the wait for the first token and a stall surfaces one inactivity limit after the
+last output. A provider that ignores `stream`, or a host with `Streaming` off, still shows no output
+before a generation finishes, so there the first-output limit has to cover a whole generation.
 
 ## Investigation Budget Events
 

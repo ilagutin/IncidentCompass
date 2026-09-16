@@ -212,9 +212,11 @@ A provider call that timed out names the phase that stalled: `provider_connect_t
 `provider_first_output_timeout` or `provider_stream_inactivity_timeout`, with
 `provider_generation_timeout` kept for an HTTP 408 answer. All four share one disposition,
 `RetryPending` while attempts remain, so the code tells an operator where to look without changing
-what the runner does. A cancellation none of those limits accounts for, and a response body that
-breaks off after the response started, are `provider_dispatch_outcome_unknown` instead, which
-dead-letters immediately because the provider may have acted on the request.
+what the runner does. On a streamed answer, first output is the first `data` event and inactivity
+is the time since the last one; keep-alive comments do not count. A cancellation none of those limits
+accounts for, a response body that breaks off after the response started, a stream that closes
+before it finished and a stream that reports an `error` event are `provider_dispatch_outcome_unknown`
+instead, which dead-letters immediately because the provider may have acted on the request.
 
 One code in that vocabulary is about this system rather than about a provider.
 `provider_contract_violation` comes from `AiModelClientContractBreach`, and it says that the model
