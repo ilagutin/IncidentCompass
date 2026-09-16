@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json.Nodes;
 using IncidentCompass.Application.Core.ModelClients;
 using IncidentCompass.Application.Core.Serialization;
@@ -85,9 +86,22 @@ internal static class OrchestratorToolDefinitions
 
         return new AiToolDefinition(
             OrchestratorToolNames.PublishReport,
-            "Publish the final grounded triage report and end this investigation.",
+            CreatePublishReportDescription(),
             "v1",
             CanonicalJsonSerializer.ToElement(schema));
+    }
+
+    /// <summary>
+    /// The report bounds are stated in the description rather than as <c>maxLength</c> or
+    /// <c>maxItems</c> schema keywords: grammar-constrained local runtimes compile those keywords into
+    /// large repetition rules, and the schema stays byte-identical to the one the real-model evaluation
+    /// ran with. The numbers are the parser constants, so the text cannot drift from what is enforced.
+    /// </summary>
+    private static string CreatePublishReportDescription()
+    {
+        return string.Create(
+            CultureInfo.InvariantCulture,
+            $"Publish the final grounded triage report and end this investigation. Limits: summary at most {TriageReportParser.MaxSummaryLength} characters, recommendedNextAction at most {TriageReportParser.MaxRecommendedNextActionLength}, limitations at most {TriageReportParser.MaxLimitationItems} items of at most {TriageReportParser.MaxLimitationLength} characters, evidence at most {TriageReportParser.MaxEvidenceItems} items, quote at most {TriageReportParser.MaxQuoteLength} characters.");
     }
 
     /// <summary>
