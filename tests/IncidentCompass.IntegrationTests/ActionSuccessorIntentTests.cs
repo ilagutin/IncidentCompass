@@ -343,7 +343,7 @@ public sealed class ActionSuccessorIntentTests(PostgresRepositoryFixture postgre
             proposed.Id, "successor-worker", TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         Assert.NotNull(claim);
         await dispatcher.DispatchAsync(
-            claim, TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+            claim, TestContext.Current.CancellationToken);
 
         using var readScope = services.CreateScope();
         var stored = await readScope.ServiceProvider.GetRequiredService<IActionApprovalReviewRepository>()

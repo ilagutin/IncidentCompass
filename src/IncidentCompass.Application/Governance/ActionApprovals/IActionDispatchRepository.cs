@@ -18,10 +18,15 @@ public interface IActionDispatchRepository
         int limit,
         CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Claims an approved action with a deadline chosen for its tool. The resolver receives the
+    /// locked row's tool id and must be pure: the configuration it reads from is loaded before the
+    /// claim transaction opens, so the transaction does no more I/O than a fixed-deadline claim.
+    /// </summary>
     Task<ActionDispatchClaim?> TryClaimAsync(
         Guid actionId,
         string dispatchOwner,
-        TimeSpan timeoutWithRecoveryGrace,
+        Func<string, TimeSpan> timeoutWithRecoveryGraceForTool,
         CancellationToken cancellationToken);
 
     Task<bool> CompleteAsync(

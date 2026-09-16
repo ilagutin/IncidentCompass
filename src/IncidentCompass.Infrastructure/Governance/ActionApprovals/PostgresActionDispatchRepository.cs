@@ -35,18 +35,29 @@ internal sealed class PostgresActionDispatchRepository(
     public Task<ActionDispatchClaim?> TryClaimAsync(
         Guid actionId,
         string dispatchOwner,
-        TimeSpan timeoutWithRecoveryGrace,
+        Func<string, TimeSpan> timeoutWithRecoveryGraceForTool,
         CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(dispatchOwner) || dispatchOwner.Length > 128 || timeoutWithRecoveryGrace <= TimeSpan.Zero)
+        if (string.IsNullOrWhiteSpace(dispatchOwner) || dispatchOwner.Length > 128)
         {
             throw new ArgumentOutOfRangeException(nameof(dispatchOwner), "Dispatch claim identity or deadline is invalid.");
         }
 
+        ArgumentNullException.ThrowIfNull(timeoutWithRecoveryGraceForTool);
         return RunAsync(
             actionId,
-            (connection, transaction, action, token) => transitions.TryClaimAsync(
-                connection, transaction, action, dispatchOwner, timeoutWithRecoveryGrace, token),
+            (connection, transaction, action, token) =>
+            {
+                var timeoutWithRecoveryGrace = timeoutWithRecoveryGraceForTool(action.ToolId);
+                if (timeoutWithRecoveryGrace <= TimeSpan.Zero)
+                {
+                    throw new ArgumentOutOfRangeException(
+                        nameof(timeoutWithRecoveryGraceForTool), "Dispatch claim identity or deadline is invalid.");
+                }
+
+                return transitions.TryClaimAsync(
+                    connection, transaction, action, dispatchOwner, timeoutWithRecoveryGrace, token);
+            },
             cancellationToken);
     }
 

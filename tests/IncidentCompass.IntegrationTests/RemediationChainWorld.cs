@@ -294,7 +294,7 @@ internal sealed class RemediationChainWorld : IAsyncDisposable
             actionId, workerId, TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
         Assert.NotNull(claim);
         await dispatcher.DispatchAsync(
-            claim, TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+            claim, TestContext.Current.CancellationToken);
     }
 
     /// <summary>Whether a second dispatch of the same action can even be claimed.</summary>
@@ -359,6 +359,7 @@ internal sealed class RemediationChainWorld : IAsyncDisposable
             investigation,
             role,
             new AiToolCall(toolName + "-call", toolName, "v1", EmptyArguments()),
+            DateTimeOffset.UtcNow,
             TestContext.Current.CancellationToken);
         using var document = JsonDocument.Parse(output);
         return Assert.Single(document.RootElement.GetProperty("items").EnumerateArray())

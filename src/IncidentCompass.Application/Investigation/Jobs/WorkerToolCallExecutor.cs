@@ -27,6 +27,11 @@ internal sealed partial class WorkerToolCallExecutor(
 
     private readonly ILogger logger = logger ?? NullLogger<WorkerToolCallExecutor>.Instance;
 
+    private readonly WorkerToolExecutionLimiter limiter = new(
+        ledgerAppender,
+        timeProvider,
+        logger ?? NullLogger<WorkerToolCallExecutor>.Instance);
+
     public IReadOnlyList<AiToolDefinition> CreateToolSurface(TriageConfiguration configuration, TriageRoleSettings role)
     {
         var granted = role.Tools.ToHashSet(StringComparer.Ordinal);
@@ -43,6 +48,7 @@ internal sealed partial class WorkerToolCallExecutor(
         TriageJobInvestigationContext investigationContext,
         string roleName,
         AiToolCall toolCall,
+        DateTimeOffset attemptStartedAtUtc,
         CancellationToken cancellationToken)
     {
         using var toolTelemetry = telemetry?.StartToolCall();
@@ -90,7 +96,11 @@ internal sealed partial class WorkerToolCallExecutor(
                 "Worker tool call validation failed after policy approval.");
         }
 
-        var execution = await tool!.ExecuteAsync(
+        // The limiter owns every way the call can end short of a returned result: a per-tool timeout
+        // comes back as an ordinary Failed result and takes the failure path below, while the attempt
+        // ceiling, host cancellation and a thrown tool leave this method as exceptions.
+        var execution = await limiter.ExecuteAsync(
+            tool!,
             new AgentToolExecutionContext(
                 job,
                 configuration,
@@ -103,6 +113,7 @@ internal sealed partial class WorkerToolCallExecutor(
                 FaultFingerprint = investigationContext.Fault.Fingerprint
             },
             validation.SanitizedArguments,
+            attemptStartedAtUtc,
             cancellationToken);
         if (execution.Status == ToolExecutionStatus.Succeeded)
         {

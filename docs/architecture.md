@@ -613,6 +613,28 @@ Follow `docs/code-organization.md` for maintainability guardrails. In short: kee
 
 Worker tools execute within the layered monolith under backend governance. Worker roles receive only registered backend tools that are both configured and granted to that role. Proposed worker calls are recorded as `ToolProposed`, evaluated by the single live `ToolRuleEngine` over current-attempt ledger state by default, recorded as `PolicyDecision`, and successful executions commit a `ToolResult` artifact plus `ToolResult` ledger event atomically. `ToolResult` status and `BudgetEvent` deltas are stored in first-class ledger state, not parsed from rationale text. Configured rule scopes are limited to `attempt` and `job` for the MVP; `fault` scope remains deferred. The shipped immediate read tools are `memory_search`, `source_lookup` and `ticket_search`; synthetic `tool_x`/`tool_y` exist only in integration-test composition for cross-tool governance cases.
 
+An approved immediate tool call runs under three bounds at once: the host token (shutdown or a lost
+lease), the tool's own execution limit and the time left before the attempt duration ceiling. The
+limit is the optional `Tools.<id>.TimeoutSeconds` from the job's frozen configuration snapshot, 1
+through 3600, and 120 seconds when it is absent. Both timers run on the injected `TimeProvider`. The
+four ways a call can end without a result are kept apart. The tool's own limit records a `Failed`
+`ToolResult` whose rationale leads with `tool_execution_timeout` and names the tool and the limit;
+the worker receives the ordinary tool-failure message (status `Failed`, the code and a limitation)
+and continues, because immediate tools are read-only and nothing is left uncertain. The attempt
+ceiling writes the `wall_clock_limit_reached` budget event and ends the attempt with
+`triage_budget_wall_clock_reached_during_call`, as it does during a model call. Host cancellation
+propagates as cancellation with no `ToolResult`. Any other exception records a `Failed` `ToolResult`
+with `tool_execution_failed`, the tool id and the exception type, then propagates unchanged, so retry
+classification does not move and the ledger still names the tool that failed. The outcome follows the
+bound that fired, not the exception the tool threw, in the order host, attempt ceiling, per-tool
+limit: a tool that turns its cancellation into another exception still ends as the bound that stopped
+it, and when the per-tool limit and the ceiling fall due at the same instant the ceiling wins. The
+executor stops waiting as soon as a bound fires, even for a tool that ignores its token; such a tool
+is abandoned and may keep running in the background until it returns, which is acceptable only
+because immediate tools are read-only, and its eventual exception is observed and discarded. A
+connector that reports itself `unavailable` is not one of these: that is a successful call whose
+payload says so.
+
 A tool returns its durable payloads as drafts rather than as artifacts. The worker tool executor is
 the only thing that turns a draft into a stored artifact, and it redacts the payload and the
 model-visible tool output on the way, so connector text cannot reach `triage_artifacts` or a later
@@ -743,8 +765,22 @@ lookup accepts only an exact paired kind/id under the authenticated tenant. The 
 that tenant/kind/id lookup. Detailed canonical provider results remain in `ActionResult`; no arbitrary
 JSON index or second audit ledger is introduced.
 
-The dispatcher never automatically invokes an action again after claim. An exception, timeout,
-cancellation or process loss after invocation leaves either an immediate outcome-unknown result or an
-in-doubt row that deadline recovery closes as `dispatch_outcome_unknown`. A late completion cannot
-cross the fence/deadline transition. Telegram and GitHub HTTP tests use deterministic in-process
-handlers; the automated suite never calls a real provider.
+Each action runs under its tool's own limit: `Tools.<id>.TimeoutSeconds` from the current
+configuration, or the Worker's `IncidentCompass:ActionDispatch:AdapterTimeoutSeconds` (30 by
+default) when the tool sets none. The dispatcher reads the current configuration before it claims,
+outside the claim transaction, so the adapter deadline and the claim's `dispatch_deadline_at` (the
+limit plus a 30-second recovery grace) come from the same value. When that read fails, the claim is
+taken with the host value and log event 3521 records it; dispatch then reads the configuration
+again, records `action_configuration_unavailable` only if that read fails too, and otherwise runs the
+adapter under the host value the claim was taken with. The adapter timer runs on the injected
+`TimeProvider`, and dispatch refuses a claim that does not carry the limit it was taken with.
+
+The dispatcher never automatically invokes an action again after claim. Anything that stops dispatch
+after the claim but before the adapter is invoked, cancellation included, closes the row as
+`dispatch_not_invoked` unless a more specific pre-invocation code applies (`action_tool_unavailable`,
+`action_configuration_unavailable`, a policy code or `adapter_binding_changed`): nothing was sent, and
+the row is terminal like any other failure. An exception, timeout, cancellation or process loss after
+invocation leaves either an immediate outcome-unknown result or an in-doubt row that deadline recovery
+closes as `dispatch_outcome_unknown`. A late completion cannot cross the fence/deadline transition.
+Telegram and GitHub HTTP tests use deterministic in-process handlers; the automated suite never calls
+a real provider.

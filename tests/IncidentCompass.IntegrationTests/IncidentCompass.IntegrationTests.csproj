@@ -36,6 +36,7 @@
     <Compile Include="..\Shared\RepositoryRootLocator.cs" Link="Support\RepositoryRootLocator.cs" />
     <Compile Include="..\Shared\TriageConfigurationFileLocator.cs" Link="Support\TriageConfigurationFileLocator.cs" />
     <Compile Include="..\Shared\TestModelProviderProfiles.cs" Link="Support\TestModelProviderProfiles.cs" />
+    <Compile Include="..\Shared\ManualTimerTimeProvider.cs" Link="Support\ManualTimerTimeProvider.cs" />
   </ItemGroup>
 
   <ItemGroup>

@@ -97,7 +97,12 @@ leased work was abandoned for an unrequested reason and is reported rather than 
 | 3301 | Warning | Worker tool call was denied, with its bounded denial token. |
 | 3302 | Information | Worker tool call was not executed because it requires approval. |
 | 3303 | Debug | Worker tool call executed successfully. |
-| 3304 | Warning | Worker tool call ended in a non-success status with a bounded error code. |
+| 3304 | Warning | Worker tool call ended in a non-success status with a bounded error code, including `tool_execution_timeout` when the tool's own execution limit fired. |
+| 3305 | Warning | Worker tool call exceeded its execution limit (`Tools.<id>.TimeoutSeconds`, 120 seconds when unset); the call is cancelled and no longer waited for, even if the tool ignores cancellation. Carries the limit in seconds. The call is recorded as a `Failed` `ToolResult` with `tool_execution_timeout` and the worker continues. |
+| 3306 | Warning | Worker tool call was cancelled because the attempt duration ceiling ran out; raised instead of 3305 when both fall due at the same instant; the attempt ends as `triage_budget_wall_clock_reached_during_call`. |
+| 3307 | Warning | Worker tool call threw; carries the exception type only. A `Failed` `ToolResult` with `tool_execution_failed` is recorded and the exception propagates unchanged. |
+| 3308 | Warning | Worker tool call threw and its `tool_execution_failed` result could not be recorded; carries the exception type of the failed append only. The tool's own exception still propagates. |
+| 3309 | Warning | Worker tool call reached the attempt duration ceiling but its `wall_clock_limit_reached` budget event could not be recorded; carries the exception type of the failed append only. The attempt still ends as `triage_budget_wall_clock_reached_during_call`. |
 | 3401 | Information | Orchestrator was reprompted, with its specific closed reason, bounded reprompt counter and durable `BudgetEvent` ledger record. The safe diagnostic comes from a closed allowlist; a `documentationFit` mismatch additionally names the backend-derived enum value, which is the only part of that vocabulary that varies. |
 | 3402 | Warning | Worker role output was reprompted, with job, attempt, role, a safe validator diagnostic list, bounded reprompt counter and durable `BudgetEvent` ledger record. |
 | 3403 | Warning | Orchestrator spent its bounded reprompt allowance, with the closed reason and safe diagnostic of the turn it could not correct. The attempt then dead-letters as `triage_budget_orchestrator_reprompt_limit_reached`. |
@@ -107,6 +112,7 @@ leased work was abandoned for an unrequested reason and is reported rather than 
 | 3511 | Information | Post-report action policy allowed a proposal in its effective mode. |
 | 3512 | Warning | Post-report action policy denied a proposal. |
 | 3513 | Information | Post-report action policy requires approval for a proposal. |
+| 3521 | Warning | The current triage configuration could not be read before claiming an approved action; carries the action id, the host adapter limit the claim uses and the exception type only. |
 | 3601 | Error | A configured redaction pattern exceeded its match timeout; the field was replaced with the timeout marker. Carries the pattern name and field path only, never the field value. |
 | 3701 | Information | Signal payload compaction emptied a bounded number of raw payloads received before its cutoff. |
 | 3702 | Information | Attempt artifact retention reaped a bounded number of artifacts created before its cutoff. |
@@ -461,8 +467,12 @@ evidence bodies, prompts, provider responses, credentials or adapter routes.
 
 Approved dispatch writes `ActionDispatchStarted` in the same transaction as its durable owner/fence
 claim. Definitive success or failure writes one bounded `ActionResult` and `ActionCompleted` atomically
-with terminal state. Dry-run uses the same terminal evidence with zero adapter calls. Exceptions,
-timeouts, cancellation and expired in-doubt claims use the closed `dispatch_outcome_unknown` failure;
+with terminal state. Dry-run uses the same terminal evidence with zero adapter calls. A dispatch that
+stops after the claim but before the adapter is invoked, cancellation included, uses the closed
+`dispatch_not_invoked` failure unless a more specific pre-invocation code applies. Exceptions,
+timeouts and cancellation after invocation, and expired in-doubt claims, use the closed
+`dispatch_outcome_unknown` failure. The adapter limit and the claim deadline both come from the tool's
+`Tools.<id>.TimeoutSeconds`, or the Worker's `ActionDispatch:AdapterTimeoutSeconds` when it is unset;
 logs and ledger rows do not contain frozen payload bytes, provider bodies, credentials or routes.
 Confirmed live Telegram and GitHub success additionally stores a compact typed projection in that
 same terminal transaction. It contains only external resource kind/id and one closed state change:

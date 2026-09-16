@@ -196,7 +196,7 @@ public sealed class RemediationProposalTests(PostgresRepositoryFixture postgres)
         var claim = await dispatcher.TryClaimAsync(
             action.Id, "remediation-dispatcher", TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         Assert.NotNull(claim);
-        await dispatcher.DispatchAsync(claim!, TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        await dispatcher.DispatchAsync(claim!, TestContext.Current.CancellationToken);
 
         var completed = await ReadSingleActionAsync(database.ConnectionString, origin.ReportId);
         Assert.Equal("failed", completed.State);
@@ -227,7 +227,7 @@ public sealed class RemediationProposalTests(PostgresRepositoryFixture postgres)
         var dispatcher = scope.ServiceProvider.GetRequiredService<IApprovedActionDispatcher>();
         var claim = await dispatcher.TryClaimAsync(
             action.Id, "remediation-dispatcher", TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
-        await dispatcher.DispatchAsync(claim!, TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        await dispatcher.DispatchAsync(claim!, TestContext.Current.CancellationToken);
 
         var completed = await ReadSingleActionAsync(database.ConnectionString, origin.ReportId);
         Assert.Equal("executed", completed.State);

@@ -80,7 +80,7 @@ internal sealed class WorkerActionPump(
             cancellationToken);
         if (claim is not null)
         {
-            await dispatcher.DispatchAsync(claim, adapterTimeout, cancellationToken);
+            await dispatcher.DispatchAsync(claim, cancellationToken);
         }
     }
 }
