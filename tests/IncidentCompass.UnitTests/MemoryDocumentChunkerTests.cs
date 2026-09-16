@@ -1,6 +1,8 @@
 using System.Globalization;
+using IncidentCompass.Infrastructure.EmbeddingModels;
 using IncidentCompass.Infrastructure.Embeddings.LocalOnnx;
 using IncidentCompass.Infrastructure.Memory;
+using Microsoft.Extensions.Options;
 
 namespace IncidentCompass.UnitTests;
 
@@ -56,6 +58,49 @@ public sealed class MemoryDocumentChunkerTests
         }
     }
 
+    [Fact]
+    public async Task Chunk_LocalTokenizerOverlapsTheConfiguredTextBudgetWithoutChargingPassageFraming()
+    {
+        using var fixture = await LocalOnnxFixtureModel.InstallAsync(TestContext.Current.CancellationToken);
+        using var runtime = new LocalOnnxModelRuntime(Options.Create(fixture.Options));
+        var state = new LocalOnnxModelInstallState();
+        state.RecordInstalled(fixture.Installed);
+        var localCounter = new LocalOnnxChunkTokenCounter(LocalModelTestSupport.Reader(state), runtime);
+        var encoder = LocalOnnxInputEncoder.Load(fixture.Installed.TokenizerFilePath, fixture.FixtureManifest);
+        var lines = Enumerable.Range(0, 12)
+            .Select(index => index.ToString("00", CultureInfo.InvariantCulture)).ToArray();
+        var overlapText = string.Join('\n', lines[2..4]);
+        var overlapTokens = encoder.Tokenizer.EncodeToIds(
+            overlapText, addBeginningOfSentence: false, addEndOfSentence: false).Count;
+        var options = new MemoryChunkingOptions
+        {
+            MaxTokens = LocalOnnxChunkTokenCounter.CountTokens(encoder, "R\n\n" + string.Join('\n', lines[..4])),
+            OverlapTokens = overlapTokens,
+            MinTokens = 1
+        };
+        // The fixture model's window is 48 tokens, and the counter refuses a cap that leaves no room
+        // for the passage prefix and markers, so the lines stay short enough to fit four of them.
+        Assert.InRange(
+            options.MaxTokens + LocalOnnxChunkTokenCounter.CountTokens(encoder, string.Empty), 1, fixture.FixtureManifest.MaxTokens);
+        await localCounter.InitializeAsync(options, TestContext.Current.CancellationToken);
+
+        var chunks = new MemoryDocumentChunker(localCounter, options).Chunk("R", string.Join('\n', lines));
+
+        Assert.True(chunks.Count > 1);
+        Assert.Equal(lines[..4], Body(chunks[0]).Split('\n'));
+        Assert.Equal(overlapTokens, localCounter.CountOverlapTokens(overlapText));
+        Assert.True(localCounter.CountTokens(overlapText) > overlapTokens);
+        for (var index = 1; index < chunks.Count; index++)
+        {
+            var previous = Body(chunks[index - 1]).Split('\n');
+            var current = Body(chunks[index]).Split('\n');
+            Assert.Equal(previous[^2..], current[..2]);
+            Assert.Equal(overlapTokens, localCounter.CountOverlapTokens(string.Join('\n', current[..2])));
+        }
+
+        Assert.All(chunks, chunk => Assert.InRange(localCounter.CountTokens(chunk.Text), 1, options.MaxTokens));
+    }
+
     [Theory]
     [InlineData("# Parent\n## Empty\n### Child\nBody", "Parent > Empty > Child", "Body")]
     [InlineData("Plain text only", "File title", "Plain text only")]
@@ -68,6 +113,31 @@ public sealed class MemoryDocumentChunkerTests
         Assert.Equal(0, chunk.Position);
         Assert.Equal(path, chunk.HeadingPath);
         Assert.Equal(path + "\n\n" + body, chunk.Text);
+    }
+
+    [Theory]
+    [InlineData("# Parent\n## Child\n\n", "Parent > Child")]
+    [InlineData("# Parent\n## Sibling\n## Child", "Parent > Child")]
+    [InlineData("#", "File title")]
+    public void Chunk_ADocumentOfHeadingsAloneBecomesOneChunkOfItsFoldedHeadingPath(string content, string path)
+    {
+        var chunk = Assert.Single(new MemoryDocumentChunker(counter, new MemoryChunkingOptions()).Chunk("File title", content));
+
+        Assert.Equal(0, chunk.Position);
+        Assert.Equal(path, chunk.HeadingPath);
+        Assert.Equal(path, chunk.Text);
+    }
+
+    [Fact]
+    public void Chunk_RefusesAHeadingPathAloneThatExceedsTheCap()
+    {
+        var options = new MemoryChunkingOptions { MaxTokens = 16, OverlapTokens = 0, MinTokens = 4 };
+
+        var exception = Assert.Throws<MemoryDocumentChunkRefusedException>(
+            () => new MemoryDocumentChunker(counter, options).Chunk("R", "# " + new string('h', 200)));
+
+        Assert.Contains("heading path exceeds", exception.Message);
+        Assert.DoesNotContain(new string('h', 20), exception.Message);
     }
 
     [Fact]
@@ -121,7 +191,7 @@ public sealed class MemoryDocumentChunkerTests
     {
         var chunker = new MemoryDocumentChunker(counter, new MemoryChunkingOptions());
 
-        var exception = Assert.Throws<InvalidOperationException>(() => chunker.Chunk("R", new string('z', 3000)));
+        var exception = Assert.Throws<MemoryDocumentChunkRefusedException>(() => chunker.Chunk("R", new string('z', 3000)));
 
         Assert.Contains("complete line exceed", exception.Message);
         Assert.DoesNotContain(new string('z', 20), exception.Message);

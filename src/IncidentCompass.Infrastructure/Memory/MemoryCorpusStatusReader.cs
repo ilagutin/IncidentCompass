@@ -57,7 +57,7 @@ internal sealed class MemoryCorpusStatusReader(
         MemorySeedOptions settings,
         MemoryEmbeddingRoute route,
         MemoryCorpusInventory inventory,
-        string counterKind = "estimate") =>
+        string counterKind) =>
         Compose(settings, route, inventory, MemoryCorpusStateEvaluator.Evaluate(
             route.ProviderId, route.Model, inventory, settings.Chunking.Describe(counterKind)));
 

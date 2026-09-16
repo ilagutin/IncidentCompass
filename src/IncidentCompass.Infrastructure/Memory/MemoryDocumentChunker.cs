@@ -11,18 +11,34 @@ internal sealed partial class MemoryDocumentChunker(IMemoryChunkTokenCounter cou
         var chunks = new List<MemoryDocumentChunk>();
         foreach (var section in ReadSections(title, content))
         {
+            if (section.Lines.Count == 0)
+            {
+                chunks.Add(HeadingOnlyChunk(section.HeadingPath));
+                continue;
+            }
+
             foreach (var text in Split(section))
             {
                 chunks.Add(new MemoryDocumentChunk(chunks.Count, section.HeadingPath, text));
             }
         }
 
-        if (chunks.Count == 0)
+        return chunks;
+    }
+
+    /// <summary>
+    /// A document of headings alone still says what it is about, so it is published as its folded
+    /// heading path rather than refused or dropped.
+    /// </summary>
+    private MemoryDocumentChunk HeadingOnlyChunk(string headingPath)
+    {
+        if (!Fits(headingPath))
         {
-            throw new InvalidOperationException("Memory document has no section body to embed.");
+            throw new MemoryDocumentChunkRefusedException(
+                "Memory document heading path exceeds the chunk token limit. Shorten the headings.");
         }
 
-        return chunks;
+        return new MemoryDocumentChunk(0, headingPath, headingPath);
     }
 
     private IEnumerable<string> Split(MemoryDocumentSection section)
@@ -45,7 +61,7 @@ internal sealed partial class MemoryDocumentChunker(IMemoryChunkTokenCounter cou
 
             if (end == start)
             {
-                throw new InvalidOperationException(
+                throw new MemoryDocumentChunkRefusedException(
                     "Memory section heading and one complete line exceed the chunk token limit. Shorten the line or heading.");
             }
 
@@ -94,7 +110,7 @@ internal sealed partial class MemoryDocumentChunker(IMemoryChunkTokenCounter cou
     {
         var next = end;
         while (next > start + 1 &&
-            counter.CountTokens(string.Join('\n', section.Lines.Skip(next - 1).Take(end - next + 1))) <= options.OverlapTokens &&
+            counter.CountOverlapTokens(string.Join('\n', section.Lines.Skip(next - 1).Take(end - next + 1))) <= options.OverlapTokens &&
             Fits(Render(section, next - 1, Math.Min(end + 1, section.Lines.Count))))
         {
             next--;
@@ -112,6 +128,7 @@ internal sealed partial class MemoryDocumentChunker(IMemoryChunkTokenCounter cou
     {
         var headings = new SortedDictionary<int, string>();
         var path = title;
+        var emitted = false;
         var lines = new List<string>();
         char? fence = null;
         var fenceLength = 0;
@@ -144,6 +161,7 @@ internal sealed partial class MemoryDocumentChunker(IMemoryChunkTokenCounter cou
 
             if (lines.Any(static text => !string.IsNullOrWhiteSpace(text)))
             {
+                emitted = true;
                 yield return new MemoryDocumentSection(path, lines.ToArray());
             }
 
@@ -166,6 +184,11 @@ internal sealed partial class MemoryDocumentChunker(IMemoryChunkTokenCounter cou
         if (lines.Any(static text => !string.IsNullOrWhiteSpace(text)))
         {
             yield return new MemoryDocumentSection(path, lines.ToArray());
+        }
+        else if (!emitted)
+        {
+            // No section has a body: the empty section carries the folded path of every heading.
+            yield return new MemoryDocumentSection(path, []);
         }
     }
 
