@@ -52,12 +52,21 @@ arrive with the downstream projects stale, and `ci` fails on them with two `NU10
 `CentralTransitive` requested-version mismatch, and "the project references incidentcompass.api
 whose dependencies has changed".
 
-`.github/workflows/dependabot-lockfiles.yml` repairs that without a maintainer. On a Dependabot pull
-request it runs the `--force-evaluate` restore above, verifies the result restores in locked mode,
-and pushes only the changed `packages.lock.json` files back onto the Dependabot branch. It commits
-nothing when the lock files are already correct, so it never creates an empty commit, and its commit
-message carries `[dependabot skip]` so Dependabot keeps rebasing the branch instead of stopping
-because the branch was modified.
+`.github/workflows/dependabot-lockfiles.yml` repairs that without a maintainer, split across two
+jobs so no token is reachable from the job that runs `dotnet restore`:
+
+- `restore` has no permissions and sees no secret. On a Dependabot pull request it runs the
+  `--force-evaluate` restore above, verifies the result restores in locked mode, and uploads only
+  the changed `packages.lock.json` files as a build artifact. It commits and pushes nothing.
+- `push` runs no `dotnet` command at all. It checks out the pull request head fresh, downloads that
+  artifact, validates every entry against a strict allow-list (must be an existing tracked path in
+  the checkout, named exactly `packages.lock.json`, and parse as valid JSON; no traversal segments
+  and no symlinks), applies only what passes, and pushes the commit back onto the Dependabot branch.
+  It commits nothing when the validated files already match the checkout, so it never creates an
+  empty commit, and its commit message carries `[dependabot skip]` so Dependabot keeps rebasing the
+  branch instead of stopping because the branch was modified. A push rejected because Dependabot
+  rebased the branch in the meantime simply fails the run; the branch's next `synchronize` event
+  reruns the workflow against the new head.
 
 `--locked-mode` is never relaxed. The `ci` re-run on the synced branch, `main` after the merge and
 the release gate all still verify the committed lock files.
@@ -66,14 +75,22 @@ Security constraints on the workflow, which is the only one in this repository w
 
 - It is a `pull_request` workflow, not `pull_request_target`, so it never runs base-branch logic
   against a writable base-repository context.
-- The job runs only when `github.actor`, the pull request author and the head branch are all
-  Dependabot's and the head branch lives in this repository.
-- Job permissions are `contents: write` and nothing else; the workflow default is `permissions: {}`.
-- Checkout uses `persist-credentials: false`, so no token sits in the workspace while
-  `dotnet restore` executes MSBuild logic supplied by NuGet packages.
+- Both jobs run only when `github.actor`, the pull request author and the head branch are all
+  Dependabot's and the head branch lives in this repository; `push` additionally requires `restore`
+  to report changed lock files.
+- The `restore` job has no permissions at all. Only the `push` job has `contents: write`, and it has
+  no other permission.
+- `dotnet restore` downloads and unpacks untrusted packages, but it does not execute their build
+  logic: NuGet restores with `ExcludeRestorePackageImports=true`, and no project in this repository
+  resolves an MSBuild SDK from NuGet. The job split exists for a narrower reason: no token is
+  reachable from any job that runs restore at all, because a process started during restore could
+  otherwise write to `$GITHUB_ENV`, `$GITHUB_PATH` or `.git/config` and affect a later step in the
+  same job. Keeping restore and push in separate jobs means there is no later step, and no token, for
+  such a write to reach.
 - The commit and push run with `core.hooksPath=/dev/null` and `--no-verify`, so a package that
   planted a git hook cannot run during the push.
-- Only `packages.lock.json` paths are staged, and no secret other than the push token is exposed.
+- Only validated `packages.lock.json` paths are staged, and no secret other than the push token is
+  exposed.
 
 #### One-time setup: `DEPENDABOT_LOCKFILE_TOKEN`
 
