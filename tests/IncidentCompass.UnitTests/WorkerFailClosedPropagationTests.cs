@@ -353,6 +353,7 @@ public sealed class WorkerFailClosedPropagationTests
                 configuration.Roles["analysis"],
                 "Investigate the probe.",
                 DateTimeOffset.UtcNow,
+                InvestigationProgressTracker.For(configuration.Orchestrator.Budget),
                 TestContext.Current.CancellationToken);
         }
 
@@ -366,6 +367,7 @@ public sealed class WorkerFailClosedPropagationTests
                 CreateContext(job.FaultId),
                 new AiToolCall("call-delegate", "delegate", "v1", arguments.RootElement.Clone()),
                 DateTimeOffset.UtcNow,
+                InvestigationProgressTracker.For(configuration.Orchestrator.Budget),
                 TestContext.Current.CancellationToken);
         }
     }

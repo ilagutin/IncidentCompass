@@ -17,6 +17,13 @@ internal enum OrchestratorTurnDisposition
     /// <summary>The proposed delegate call was invalid and was reprompted for a corrected call.</summary>
     DelegateRepromptIssued,
 
+    /// <summary>
+    /// The proposed delegate repeated an equivalent delegate that had already returned the same worker
+    /// output past <c>Orchestrator.Budget.MaxEquivalentCalls</c>; it was refused without running a
+    /// worker and without charging a reprompt.
+    /// </summary>
+    DelegateRefusedAsRepeated,
+
     /// <summary>The grounded report was published; the investigation is finished.</summary>
     ReportPublished,
 

@@ -111,6 +111,7 @@ public sealed class WorkerRoleOutputSchemaPathTests(PostgresRepositoryFixture po
             role,
             "Return the bounded " + roleName + " context for this fault.",
             DateTimeOffset.UtcNow,
+            InvestigationProgressTracker.For(claimed.Configuration.Orchestrator.Budget),
             TestContext.Current.CancellationToken);
         return JsonDocument.Parse(validatedOutput);
     }

@@ -133,7 +133,19 @@
               "minimum": 1
             },
             "MaxReprompts": { "type": "integer", "minimum": 0 },
-            "MaxTurns": { "type": "integer", "minimum": 1, "maximum": 64 }
+            "MaxTurns": { "type": "integer", "minimum": 1, "maximum": 64 },
+            "MaxEquivalentCalls": {
+              "description": "Unproductive equivalent calls (same tool and arguments, or same role and task, with an unchanged result) allowed per attempt before the next one is refused. Absent means 2.",
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10
+            },
+            "MaxTurnsWithoutProgress": {
+              "description": "Consecutive orchestrator turns without new evidence or a changed candidate classification before a no-progress event is recorded. Absent means 4.",
+              "type": "integer",
+              "minimum": 2,
+              "maximum": 32
+            }
           }
         }
       }

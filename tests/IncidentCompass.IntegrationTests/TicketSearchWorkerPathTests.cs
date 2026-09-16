@@ -32,6 +32,7 @@ public sealed class TicketSearchWorkerPathTests(PostgresRepositoryFixture postgr
             job, configuration, investigation, "tickets",
             new AiToolCall("ticket-call", "ticket_search", "v1", Json("{}")),
             DateTimeOffset.UtcNow,
+            InvestigationProgressTracker.For(configuration.Orchestrator.Budget),
             TestContext.Current.CancellationToken);
         using var output = JsonDocument.Parse(outputJson);
         var artifactId = Assert.Single(output.RootElement.GetProperty("items").EnumerateArray())
@@ -80,6 +81,7 @@ public sealed class TicketSearchWorkerPathTests(PostgresRepositoryFixture postgr
                 job, configuration, investigation, "tickets",
                 new AiToolCall("ticket-call", "ticket_search", "v1", Json("{}")),
                 DateTimeOffset.UtcNow,
+                InvestigationProgressTracker.For(configuration.Orchestrator.Budget),
                 TestContext.Current.CancellationToken);
             using var output = JsonDocument.Parse(outputJson);
             Assert.False(output.RootElement.GetProperty("matched").GetBoolean());

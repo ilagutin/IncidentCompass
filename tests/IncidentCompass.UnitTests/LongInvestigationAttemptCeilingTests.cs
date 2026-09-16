@@ -50,14 +50,20 @@ public sealed class LongInvestigationAttemptCeilingTests
         var startedAt = time.GetUtcNow();
         var model = new SlowProducingModel(time);
         var reports = new RecordingReportRepository();
+        var ledger = new RecordingLedgerWriter();
 
-        await CreateProcessor(model, time, reports).ProcessAsync(
+        await CreateProcessor(model, time, reports, ledger).ProcessAsync(
             CreateJob(), CreateConfiguration(new OrchestratorBudgetSettings(MaxWorkers: 16, MaxTokens: 1_000_000)),
             "worker-test", TestContext.Current.CancellationToken);
 
         Assert.Equal((Delegations * 2) + 1, model.Calls);
         Assert.True(time.GetUtcNow() - startedAt > TimeSpan.FromSeconds(600));
         Assert.Equal(TriageReportStatus.Completed, Assert.Single(reports.Published).Status);
+
+        // A slow run that keeps producing is never a no-progress event: time is not a progress input.
+        Assert.DoesNotContain(
+            ledger.Requests,
+            request => (request.Rationale ?? string.Empty).StartsWith("no_progress:", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -70,7 +76,7 @@ public sealed class LongInvestigationAttemptCeilingTests
             new OrchestratorBudgetSettings(MaxWorkers: 16, MaxTokens: 1_000_000, MaxWallClockSeconds: 600));
 
         var exception = await Assert.ThrowsAsync<TriageBudgetExhaustedException>(() =>
-            CreateProcessor(model, time, reports).ProcessAsync(
+            CreateProcessor(model, time, reports, new RecordingLedgerWriter()).ProcessAsync(
                 CreateJob(), configuration, "worker-test", TestContext.Current.CancellationToken));
 
         Assert.Equal(TriageBudgetExhaustedException.WallClockReachedBeforeCallCode, exception.ErrorCode);
@@ -82,10 +88,11 @@ public sealed class LongInvestigationAttemptCeilingTests
     private static GovernedTriageInvestigationProcessor CreateProcessor(
         IAiModelClient model,
         TimeProvider timeProvider,
-        RecordingReportRepository reports)
+        RecordingReportRepository reports,
+        RecordingLedgerWriter ledger)
     {
         var ledgerReader = new EmptyLedgerReader();
-        var appender = new TriageLedgerAppender(new RecordingLedgerWriter());
+        var appender = new TriageLedgerAppender(ledger);
         var modelCaller = new InvestigationModelCaller(model, ledgerReader, appender, timeProvider);
         var delegateExecutor = new AnalysisDelegateExecutor(
             new DiscardingArtifactRepository(),
@@ -142,6 +149,8 @@ public sealed class LongInvestigationAttemptCeilingTests
     /// <summary>
     /// Every call costs sixty seconds of clock time before it answers. The orchestrator delegates
     /// <see cref="Delegations"/> times and then publishes; every worker turn answers with valid output.
+    /// Each delegation asks a different question and each worker answer names a new fact, so the run
+    /// is a producing one: no delegate is an unproductive repeat and every turn makes progress.
     /// </summary>
     private sealed class SlowProducingModel(ManualTimerTimeProvider time) : IAiModelClient
     {
@@ -155,9 +164,9 @@ public sealed class LongInvestigationAttemptCeilingTests
             time.Advance(PerCall);
             if (request.Tools is not { Count: > 0 })
             {
-                return Task.FromResult(Response("""
-                    {"keyFacts":["The checkout service timed out."],"candidateClassification":"SimpleKnownError","needsDeeperContext":false,"rationale":"Bounded known-error failure."}
-                    """, []));
+                return Task.FromResult(Response(
+                    "{\"keyFacts\":[\"Checkout fact " + Calls + ".\"],\"candidateClassification\":\"SimpleKnownError\",\"needsDeeperContext\":false,\"rationale\":\"Bounded known-error failure.\"}",
+                    []));
             }
 
             orchestratorCalls++;
@@ -167,7 +176,7 @@ public sealed class LongInvestigationAttemptCeilingTests
                     "call-delegate-" + orchestratorCalls,
                     OrchestratorToolNames.Delegate,
                     "v1",
-                    Json("""{"role":"analysis","task":"Analyze the checkout timeout."}"""))]));
+                    Json("{\"role\":\"analysis\",\"task\":\"Analyze checkout timeout step " + orchestratorCalls + ".\"}"))]));
             }
 
             return Task.FromResult(Response("Publish the report.", [new AiToolCall(
@@ -269,12 +278,17 @@ public sealed class LongInvestigationAttemptCeilingTests
     {
         private long nextId;
 
-        public Task<TriageLedgerEntry> AppendAsync(TriageLedgerAppendRequest request, CancellationToken cancellationToken) =>
-            Task.FromResult(new TriageLedgerEntry(
+        public List<TriageLedgerAppendRequest> Requests { get; } = [];
+
+        public Task<TriageLedgerEntry> AppendAsync(TriageLedgerAppendRequest request, CancellationToken cancellationToken)
+        {
+            Requests.Add(request);
+            return Task.FromResult(new TriageLedgerEntry(
                 ++nextId, request.FaultId, request.JobId, request.Attempt, request.EventType,
                 request.Role, request.ToolName, request.Rationale, request.Decision, request.DecisionReason,
                 request.PayloadRef, request.ConfigHash, DateTimeOffset.UtcNow, request.ToolStatus,
                 request.TokensDelta, request.WorkersDelta));
+        }
 
         public async Task<IReadOnlyList<TriageLedgerEntry>> AppendBatchAsync(
             IReadOnlyList<TriageLedgerAppendRequest> requests,

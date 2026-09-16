@@ -7,5 +7,11 @@ public enum RuntimeTelemetryOutcome
     Failed,
     Cancelled,
     ProviderUnavailable,
-    Denied
+    Denied,
+
+    /// <summary>
+    /// Allowed by policy but not executed, because an equivalent call already returned the same result
+    /// in this attempt.
+    /// </summary>
+    Refused
 }

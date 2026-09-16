@@ -138,6 +138,33 @@ internal sealed class TriageLedgerAppender(ITriageLedgerWriter ledgerWriter)
             cancellationToken);
     }
 
+    /// <summary>
+    /// Appends a <c>no_progress:</c> <c>BudgetEvent</c> that keeps the role and, for a refused
+    /// equivalent call, the tool name in their own columns. The rationale is metadata the caller
+    /// composes from names, a short hash and counts, and it is bounded like a reprompt rationale.
+    /// </summary>
+    public Task AppendNoProgressBudgetEventAsync(
+        TriageJob job,
+        string role,
+        string? toolName,
+        string rationale,
+        CancellationToken cancellationToken)
+    {
+        return AppendCoreAsync(
+            job,
+            TriageLedgerEventType.BudgetEvent,
+            role,
+            toolName,
+            TextTruncator.Truncate(rationale, MaxRepromptRationaleLength),
+            decision: null,
+            decisionReason: null,
+            payloadRef: null,
+            toolStatus: null,
+            tokensDelta: null,
+            workersDelta: null,
+            cancellationToken);
+    }
+
     public async Task AppendModelCallAccountingAsync(
         TriageJob job,
         InvestigationModelCallAccounting accounting,

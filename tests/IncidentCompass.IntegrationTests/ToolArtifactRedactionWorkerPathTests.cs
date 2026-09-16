@@ -186,6 +186,7 @@ public sealed class ToolArtifactRedactionWorkerPathTests(PostgresRepositoryFixtu
                     roleName,
                     new AiToolCall("redaction-call", toolName, "v1", Json(argumentsJson)),
                     DateTimeOffset.UtcNow,
+                    InvestigationProgressTracker.For(configuration.Orchestrator.Budget),
                     TestContext.Current.CancellationToken);
 
             // Finishing the same claimed attempt is what turns the stored artifacts back into prompt

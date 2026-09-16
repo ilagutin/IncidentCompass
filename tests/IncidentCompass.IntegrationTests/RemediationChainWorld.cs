@@ -360,6 +360,7 @@ internal sealed class RemediationChainWorld : IAsyncDisposable
             role,
             new AiToolCall(toolName + "-call", toolName, "v1", EmptyArguments()),
             DateTimeOffset.UtcNow,
+            InvestigationProgressTracker.For(configuration.Orchestrator.Budget),
             TestContext.Current.CancellationToken);
         using var document = JsonDocument.Parse(output);
         return Assert.Single(document.RootElement.GetProperty("items").EnumerateArray())

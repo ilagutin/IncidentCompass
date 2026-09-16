@@ -31,6 +31,7 @@ internal sealed partial class GovernedTriageInvestigationProcessor : IClaimedTri
     private readonly TriageLedgerAppender ledgerAppender;
     private readonly TimeProvider timeProvider;
     private readonly ILogger logger;
+    private readonly InvestigationNoProgressRecorder noProgressRecorder;
 
     public GovernedTriageInvestigationProcessor(
         ITriageJobInvestigationContextRepository contextRepository,
@@ -48,6 +49,7 @@ internal sealed partial class GovernedTriageInvestigationProcessor : IClaimedTri
         this.ledgerAppender = ledgerAppender;
         this.timeProvider = timeProvider;
         this.logger = logger ?? NullLogger<GovernedTriageInvestigationProcessor>.Instance;
+        noProgressRecorder = new InvestigationNoProgressRecorder(ledgerAppender, this.logger);
     }
 
     public async Task ProcessAsync(
@@ -69,12 +71,19 @@ internal sealed partial class GovernedTriageInvestigationProcessor : IClaimedTri
         var budget = configuration.Orchestrator.Budget;
         var maxTurns = budget.MaxTurns + budget.MaxReprompts;
         var reprompts = 0;
+        var progress = InvestigationProgressTracker.For(budget);
         for (var turn = 0; turn < maxTurns; turn++)
         {
             var outcome = await RunTurnAsync(
-                job, configuration, context, workerId, attemptStartedAtUtc, messages, reprompts, cancellationToken);
+                job, configuration, context, workerId, attemptStartedAtUtc, messages, reprompts, progress, cancellationToken);
             reprompts = outcome.Reprompts;
             if (outcome.InvestigationFinished)
+            {
+                return;
+            }
+
+            if (progress.CompleteTurn().LimitExceeded &&
+                await OnNoProgressLimitExceededAsync(job, progress, cancellationToken))
             {
                 return;
             }
@@ -93,6 +102,7 @@ internal sealed partial class GovernedTriageInvestigationProcessor : IClaimedTri
         DateTimeOffset attemptStartedAtUtc,
         List<AiChatMessage> messages,
         int reprompts,
+        InvestigationProgressTracker progress,
         CancellationToken cancellationToken)
     {
         var response = await CompleteOrchestratorAsync(job, configuration, attemptStartedAtUtc, messages, cancellationToken);
@@ -120,7 +130,8 @@ internal sealed partial class GovernedTriageInvestigationProcessor : IClaimedTri
         messages.Add(new AiChatMessage(AiMessageRole.Assistant, response.Content, ToolCalls: [toolCall]));
         if (string.Equals(toolCall.Name, OrchestratorToolNames.Delegate, StringComparison.Ordinal))
         {
-            return await TryDelegateAsync(job, configuration, context, toolCall, attemptStartedAtUtc, messages, reprompts, cancellationToken);
+            return await TryDelegateAsync(
+                job, configuration, context, toolCall, attemptStartedAtUtc, messages, reprompts, progress, cancellationToken);
         }
 
         if (string.Equals(toolCall.Name, OrchestratorToolNames.PublishReport, StringComparison.Ordinal))
@@ -189,6 +200,7 @@ internal sealed partial class GovernedTriageInvestigationProcessor : IClaimedTri
         DateTimeOffset attemptStartedAtUtc,
         List<AiChatMessage> messages,
         int reprompts,
+        InvestigationProgressTracker progress,
         CancellationToken cancellationToken)
     {
         try
@@ -199,9 +211,22 @@ internal sealed partial class GovernedTriageInvestigationProcessor : IClaimedTri
                 context,
                 toolCall,
                 attemptStartedAtUtc,
+                progress,
                 cancellationToken);
             messages.Add(new AiChatMessage(AiMessageRole.Tool, toolResult, toolCall.Id));
             return new OrchestratorTurnOutcome(OrchestratorTurnDisposition.Delegated, reprompts);
+        }
+        catch (RepeatedDelegateRefusedException)
+        {
+            // Same shape as a delegate validation result, but no reprompt is charged: the call was
+            // well formed, it only asked again for what the attempt already has.
+            var refusal = JsonSerializer.Serialize(new
+            {
+                errorCode = InvestigationNoProgressRecorder.RepeatedCallErrorCode,
+                errorMessage = InvestigationNoProgressRecorder.RepeatedCallErrorMessage
+            });
+            messages.Add(new AiChatMessage(AiMessageRole.Tool, refusal, toolCall.Id));
+            return new OrchestratorTurnOutcome(OrchestratorTurnDisposition.DelegateRefusedAsRepeated, reprompts);
         }
         catch (DelegateToolCallValidationException exception)
         {
@@ -314,6 +339,24 @@ internal sealed partial class GovernedTriageInvestigationProcessor : IClaimedTri
             safeDiagnostic,
             cancellationToken);
         return chargedReprompts;
+    }
+
+    /// <summary>
+    /// Acts on consecutive orchestrator turns without progress past
+    /// <c>Orchestrator.Budget.MaxTurnsWithoutProgress</c> and returns whether that ended the
+    /// investigation. The stall is recorded as a <c>no_progress: turns_without_progress</c> budget
+    /// event and log event 3405. Until bounded recovery exists the attempt then continues under the
+    /// turn limit with a fresh window, so one stall is reported once; recovery or honest termination
+    /// replaces the continuation here without changing the tracker.
+    /// </summary>
+    private async Task<bool> OnNoProgressLimitExceededAsync(
+        TriageJob job,
+        InvestigationProgressTracker progress,
+        CancellationToken cancellationToken)
+    {
+        await noProgressRecorder.RecordTurnsWithoutProgressAsync(job, progress, cancellationToken);
+        progress.ResetTurnsWithoutProgress();
+        return false;
     }
 
     private static string UnknownToolResult(string toolName)

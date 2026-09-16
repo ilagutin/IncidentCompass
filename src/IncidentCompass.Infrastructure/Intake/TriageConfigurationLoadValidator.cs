@@ -210,6 +210,28 @@ internal sealed class TriageConfigurationLoadValidator(
                 FormattableString.Invariant(
                     $"an integer between {OrchestratorBudgetSettings.MinimumMaxTurns} and {OrchestratorBudgetSettings.MaximumMaxTurns}"));
         }
+
+        RequireBudgetInRange(
+            OrchestratorBudgetSettings.MaxEquivalentCallsSettingName,
+            orchestrator.Budget.MaxEquivalentCalls,
+            OrchestratorBudgetSettings.MinimumMaxEquivalentCalls,
+            OrchestratorBudgetSettings.MaximumMaxEquivalentCalls);
+        RequireBudgetInRange(
+            OrchestratorBudgetSettings.MaxTurnsWithoutProgressSettingName,
+            orchestrator.Budget.MaxTurnsWithoutProgress,
+            OrchestratorBudgetSettings.MinimumMaxTurnsWithoutProgress,
+            OrchestratorBudgetSettings.MaximumMaxTurnsWithoutProgress);
+    }
+
+    private static void RequireBudgetInRange(string settingName, int value, int minimum, int maximum)
+    {
+        if (value < minimum || value > maximum)
+        {
+            throw Invalid(
+                settingName,
+                value.ToString(CultureInfo.InvariantCulture),
+                FormattableString.Invariant($"an integer between {minimum} and {maximum}"));
+        }
     }
 
     /// <summary>
