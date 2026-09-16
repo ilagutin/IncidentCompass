@@ -254,6 +254,19 @@ asks PostgreSQL for a bounded vector candidate set of `min(100, TopK * 4)`. Exac
 provider, embedding model, embedding dimension and active-item filters apply before vector ordering
 and the candidate limit.
 
+Candidates whose vector score is below `Tools.memory_search.MinScore` are dropped before reranking;
+when the setting is omitted the tool also uses 0.25. The shipped value is 0.25. On the shipped local
+model it is effectively inert: on the retrieval benchmark every top-ten candidate scored 0.76 or
+higher and every relevant match 0.77 or higher, while unrelated chunks scored about 0.76 to 0.91. It
+is a floor for other embedding routes and the mock embedder, not a relevance judgement on this model.
+The configuration file is shared by the default and the mock profiles, which is why the floor is not
+raised. What removes unrelated matches is the reranker's lexical coverage, which requires at least
+half of the query's words to appear in the chunk text, so a query written in a different language
+than the corpus usually finds nothing, even when its vector is close, unless enough words from the
+corpus language, such as error types or service names, appear in it. Cosine scales differ between
+models, so an operator who routes `memory-embed` to another model, such as one behind the
+OpenAI-compatible adapter, should measure before raising the floor.
+
 Ranking is Application-owned rather than delegated to the database. It applies lexical coverage and
 fixed metadata rules, then returns the configured final `TopK`. Current evidence for the fault
 service and its snapshotted `CurrentReleases` marker ranks before stale or wrong-service evidence.

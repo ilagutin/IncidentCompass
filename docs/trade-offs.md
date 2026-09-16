@@ -574,6 +574,11 @@ only exact normalized query matches against stored metadata and code-owned alias
 
 This is a bounded reference implementation, not a general hybrid-search engine. Its fixed lexical rules
 may need revision for multilingual or much larger corpora, and overfetch adds query and application work.
+The coverage rule keeps a candidate only when at least half of the query's words appear in the chunk
+text. That is what keeps unrelated chunks out, because vector scores alone do not separate them, but it
+also means a query in another language than the corpus, such as a Polish or Russian query over English
+runbooks, usually returns no match even when the multilingual embedding ranks the right chunk near the
+top, unless enough English identifiers such as error types or service names appear in the query.
 PostgreSQL full-text search, reciprocal-rank fusion, adaptive retries and caller-configurable ranking
 weights remain deferred. Each execution makes exactly one embedding request and one repository search.
 

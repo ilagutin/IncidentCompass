@@ -38,10 +38,49 @@ public sealed record MemoryRetrievalBenchmarkCorpus(
         return corpus;
     }
 
-    internal async Task SeedAsync(
+    internal Task SeedAsync(
         string connectionString,
         IEmbeddingClient embeddingClient,
         IMemoryRepository repository,
+        CancellationToken cancellationToken) =>
+        SeedCoreAsync(
+            connectionString,
+            embeddingClient,
+            repository,
+            EmbeddingModel,
+            new MemoryCorpusIdentity("memory-embed", "benchmark", "mock", EmbeddingModel, EmbeddingDimensions),
+            cancellationToken);
+
+    /// <summary>
+    /// Seeds the corpus with vectors from a real embedding identity, such as the local model. Every
+    /// passage vector must report exactly <paramref name="identity" />'s provider, model and width, so
+    /// a corpus is never published under an identity its vectors do not have. The mock-only
+    /// <see cref="SeedAsync" /> is what the versioned baseline uses and is unchanged.
+    /// </summary>
+    internal Task SeedWithEmbeddingIdentityAsync(
+        string connectionString,
+        IEmbeddingClient embeddingClient,
+        IMemoryRepository repository,
+        string requestModel,
+        MemoryCorpusIdentity identity,
+        CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(requestModel);
+        ArgumentNullException.ThrowIfNull(identity);
+        if (identity.EmbeddingProvider == "mock")
+        {
+            throw new ArgumentException("Mock corpora are seeded through SeedAsync.", nameof(identity));
+        }
+
+        return SeedCoreAsync(connectionString, embeddingClient, repository, requestModel, identity, cancellationToken);
+    }
+
+    private async Task SeedCoreAsync(
+        string connectionString,
+        IEmbeddingClient embeddingClient,
+        IMemoryRepository repository,
+        string requestModel,
+        MemoryCorpusIdentity identity,
         CancellationToken cancellationToken)
     {
         await ClearAsync(connectionString, cancellationToken);
@@ -52,11 +91,21 @@ public sealed record MemoryRetrievalBenchmarkCorpus(
             foreach (var fixtureChunk in fixtureItem.Chunks.OrderBy(static chunk => chunk.Position))
             {
                 var embedding = await embeddingClient.CreateEmbeddingAsync(
-                    new EmbeddingRequest(fixtureChunk.Text, EmbeddingModel, "memory-benchmark-seed", EmbeddingInputKind.Passage),
+                    new EmbeddingRequest(fixtureChunk.Text, requestModel, "memory-benchmark-seed", EmbeddingInputKind.Passage),
                     cancellationToken);
-                if (embedding.Provider != "mock" || embedding.Vector.Count != EmbeddingDimensions)
+                if (identity.EmbeddingProvider == "mock")
                 {
-                    throw new InvalidOperationException("Benchmark seeding requires the configured mock embedding route.");
+                    if (embedding.Provider != "mock" || embedding.Vector.Count != EmbeddingDimensions)
+                    {
+                        throw new InvalidOperationException("Benchmark seeding requires the configured mock embedding route.");
+                    }
+                }
+                else if (embedding.Provider != identity.EmbeddingProvider ||
+                         embedding.Model != identity.EmbeddingModel ||
+                         embedding.Vector.Count != identity.EmbeddingDimensions)
+                {
+                    throw new InvalidOperationException(
+                        "Benchmark seeding received a vector from another embedding identity than the corpus records.");
                 }
 
                 chunks.Add(new MemorySeedChunk(
@@ -92,8 +141,7 @@ public sealed record MemoryRetrievalBenchmarkCorpus(
                 TenantId,
                 SeedOwner,
                 GenerationId,
-                new MemoryCorpusIdentity(
-                    "memory-embed", "benchmark", "mock", EmbeddingModel, EmbeddingDimensions),
+                identity,
                 new HashSet<string>(StringComparer.Ordinal) { "benchmark" },
                 entries),
             cancellationToken);

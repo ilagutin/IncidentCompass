@@ -36,6 +36,54 @@ public sealed class MemoryRetrievalBenchmarkContractTests
     }
 
     [Fact]
+    public void MultilingualQueries_RenderEveryCorpusQueryOnceInPolishAndRussian()
+    {
+        var repoRoot = FindRepoRoot();
+        var corpus = MemoryRetrievalBenchmarkCorpus.Load(repoRoot);
+        var multilingual = MemoryRetrievalMultilingualQueries.Load(repoRoot);
+        var sourceIds = corpus.Queries.Select(static query => query.Id).ToHashSet(StringComparer.Ordinal);
+
+        Assert.Equal(1, multilingual.SchemaVersion);
+        Assert.Equal("memory-retrieval-multilingual-queries-v1", multilingual.Version);
+        Assert.Equal(corpus.CorpusVersion, multilingual.CorpusVersion);
+        Assert.All(multilingual.Queries, entry =>
+        {
+            Assert.Contains(entry.SourceQueryId, sourceIds);
+            Assert.Equal(entry.SourceQueryId + "-" + entry.Language, entry.Id);
+            Assert.False(string.IsNullOrWhiteSpace(entry.Text));
+        });
+        Assert.Equal(
+            multilingual.Queries.Count,
+            multilingual.Queries.Select(static entry => entry.Id).Distinct(StringComparer.Ordinal).Count());
+        Assert.Equal(
+            new[] { MemoryRetrievalMultilingualQueries.Polish, MemoryRetrievalMultilingualQueries.Russian },
+            multilingual.Queries.Select(static entry => entry.Language).Distinct().Order(StringComparer.Ordinal));
+        foreach (var language in new[] { MemoryRetrievalMultilingualQueries.Polish, MemoryRetrievalMultilingualQueries.Russian })
+        {
+            var covered = multilingual.Queries
+                .Where(entry => entry.Language == language)
+                .Select(static entry => entry.SourceQueryId)
+                .ToArray();
+            Assert.Equal(sourceIds.Count, covered.Length);
+            Assert.True(sourceIds.SetEquals(covered), language + " does not cover every corpus query exactly once.");
+        }
+
+        var pooled = multilingual.ToCorpus(
+            corpus,
+            MemoryRetrievalMultilingualQueries.Polish,
+            MemoryRetrievalMultilingualQueries.Russian);
+        Assert.Equal(corpus.Queries.Count * 2, pooled.Queries.Count);
+        Assert.All(pooled.Queries, query =>
+        {
+            var source = corpus.Queries.Single(candidate => query.Id.StartsWith(candidate.Id + "-", StringComparison.Ordinal) &&
+                query.Id.Length == candidate.Id.Length + 3);
+            Assert.Equal(source.RelevantChunkIds, query.RelevantChunkIds);
+            Assert.Equal(source.RelevantItemIds, query.RelevantItemIds);
+            Assert.Equal(source.ServiceName, query.ServiceName);
+        });
+    }
+
+    [Fact]
     public void VersionedBaseline_SeparatesDeterministicOutcomesFromLatencyDiagnostics()
     {
         var repoRoot = FindRepoRoot();

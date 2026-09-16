@@ -1,0 +1,103 @@
+{
+  "schemaVersion": 1,
+  "version": "memory-retrieval-multilingual-queries-v1",
+  "corpusVersion": "memory-retrieval-corpus-v1",
+  "queries": [
+    {
+      "id": "false-empty-checkout-timeout-pl",
+      "sourceQueryId": "false-empty-checkout-timeout",
+      "language": "pl",
+      "text": "timeout przy finalizacji zamówienia przez magazyn"
+    },
+    {
+      "id": "false-empty-checkout-timeout-ru",
+      "sourceQueryId": "false-empty-checkout-timeout",
+      "language": "ru",
+      "text": "таймаут оформления заказа из-за склада"
+    },
+    {
+      "id": "current-inventory-mitigation-pl",
+      "sourceQueryId": "current-inventory-mitigation",
+      "language": "pl",
+      "text": "circuit breaker przy opóźnieniach magazynu"
+    },
+    {
+      "id": "current-inventory-mitigation-ru",
+      "sourceQueryId": "current-inventory-mitigation",
+      "language": "ru",
+      "text": "circuit breaker при задержках склада"
+    },
+    {
+      "id": "payments-component-variant-pl",
+      "sourceQueryId": "payments-component-variant",
+      "language": "pl",
+      "text": "ograniczenie ponownych prób płatności"
+    },
+    {
+      "id": "payments-component-variant-ru",
+      "sourceQueryId": "payments-component-variant",
+      "language": "ru",
+      "text": "ограничение повторных попыток платежей"
+    },
+    {
+      "id": "known-incident-pool-pl",
+      "sourceQueryId": "known-incident-pool",
+      "language": "pl",
+      "text": "wyczerpanie puli połączeń"
+    },
+    {
+      "id": "known-incident-pool-ru",
+      "sourceQueryId": "known-incident-pool",
+      "language": "ru",
+      "text": "исчерпание пула соединений"
+    },
+    {
+      "id": "stock-reservation-query-variant-pl",
+      "sourceQueryId": "stock-reservation-query-variant",
+      "language": "pl",
+      "text": "opóźnienie rezerwacji towaru w magazynie"
+    },
+    {
+      "id": "stock-reservation-query-variant-ru",
+      "sourceQueryId": "stock-reservation-query-variant",
+      "language": "ru",
+      "text": "задержка резервирования товара на складе"
+    },
+    {
+      "id": "stale-only-procedure-pl",
+      "sourceQueryId": "stale-only-procedure",
+      "language": "pl",
+      "text": "procedura wycofania starej wersji"
+    },
+    {
+      "id": "stale-only-procedure-ru",
+      "sourceQueryId": "stale-only-procedure",
+      "language": "ru",
+      "text": "процедура отката старой версии"
+    },
+    {
+      "id": "explicit-no-match-pl",
+      "sourceQueryId": "explicit-no-match",
+      "language": "pl",
+      "text": "handshake przy rotacji certyfikatu"
+    },
+    {
+      "id": "explicit-no-match-ru",
+      "sourceQueryId": "explicit-no-match",
+      "language": "ru",
+      "text": "handshake при ротации сертификата"
+    },
+    {
+      "id": "inactive-item-no-match-pl",
+      "sourceQueryId": "inactive-item-no-match",
+      "language": "pl",
+      "text": "dokładna wycofana procedura awaryjna magazynu"
+    },
+    {
+      "id": "inactive-item-no-match-ru",
+      "sourceQueryId": "inactive-item-no-match",
+      "language": "ru",
+      "text": "точная устаревшая аварийная процедура склада"
+    }
+  ]
+}
