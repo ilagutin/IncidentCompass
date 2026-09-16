@@ -9,20 +9,13 @@ A .NET 10 backend that turns an incident signal into a reviewable, evidence-back
 The model chooses investigation steps and proposes tool calls. The backend owns credentials, tool
 grants, budgets, evidence checks, approvals and external actions.
 
-Version **0.4.0** adds a governed remediation chain from a report to a prepared diff, a human-approved
-code write, a branch, a pull request and a ticket backlink; per-provider endpoints and credentials
-with one-hop route fail-over; scheduled payload retention; working cost accounting; and an opt-in
-evaluation harness with one measured run committed to this repository. Every external write is
-separately approved, nothing merges, no test command is executed and the whole chain ships disabled.
-
-Version **0.4.1** is a patch. It adds no capability and makes four things 0.4.0 already claimed hold
-on their own terms: the first database connection waits inside a budget the configuration states, a
-model client that breaks its port contract is recorded instead of escaping unaccounted, a tool's
-domain reference is bounded and redacted like the payload beside it, and a spend figure now says that
-it cannot contain an embedding call. It also tightens two configuration values, so a release id or
-role key that cannot be an artifact domain reference now stops the host at start rather than failing
-later; read [the notes](docs/release-notes-v0.4.1.md) before upgrading. Earlier releases:
-[0.4.0](docs/release-notes-v0.4.0.md).
+Version **0.5.0** runs memory embeddings on an in-process multilingual model the Worker installs and
+verifies itself, chunks memory documents by section, bounds each provider call by connect,
+first-output and stream-inactivity limits under a four-hour attempt ceiling, and streams chat
+completions by default. The first Worker start downloads the embedding model unless it is placed
+offline, two configuration keys are deprecated, and an existing corpus keeps its whole-file chunks
+until `memory rebuild`; read [the notes](docs/release-notes-v0.5.0.md) before upgrading. Earlier
+releases: [0.4.1](docs/release-notes-v0.4.1.md), [0.4.0](docs/release-notes-v0.4.0.md).
 
 ## One investigation
 
@@ -210,8 +203,8 @@ it, judge it. The direct routes are:
   [Versioning and release flow](docs/versioning.md), [Contributing](CONTRIBUTING.md) and the
   [security policy](SECURITY.md)
 - Reference: [Changelog](CHANGELOG.md) and release notes
-  [0.4.1](docs/release-notes-v0.4.1.md), [0.4.0](docs/release-notes-v0.4.0.md),
-  [0.3.0](docs/release-notes-v0.3.0.md),
+  [0.5.0](docs/release-notes-v0.5.0.md), [0.4.1](docs/release-notes-v0.4.1.md),
+  [0.4.0](docs/release-notes-v0.4.0.md), [0.3.0](docs/release-notes-v0.3.0.md),
   [0.2.0](docs/release-notes-v0.2.0.md), [0.1.1](docs/release-notes-v0.1.1.md) and
   [0.1.0](docs/release-notes-v0.1.0.md)
 

@@ -469,7 +469,10 @@ That boundary favors audit honesty over a guessed cost: unknown failed usage can
 cost rollup below the provider's eventual invoice. Success accounting still estimates missing or
 incomplete usage. When both ledger rows exist, model-call accounting is atomic as a pair, but it is
 not an exactly-once distributed billing system beyond the database lock and call-id deduplication
-boundary. Streaming idle detection and progress recovery remain separate design work.
+boundary. Stream stall detection ships: a streamed answer is bounded by the first-output limit until
+its first `data` event and by the inactivity limit between events, see "Local-Safe Ceilings Allow
+Slower Generation" above. Per-tool execution limits, and detection of repetition or lack of progress
+in a model's output with recovery from it, remain separate design work.
 
 A call that fails over is charged twice, once per provider call, and that is the intended answer
 rather than an oversight: both calls happened, and a provider invoices for a generation it failed

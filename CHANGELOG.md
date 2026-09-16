@@ -4,6 +4,145 @@
 
 - No unreleased changes.
 
+## 0.5.0 - 2026-09-16
+
+Memory embeddings run inside the Worker by default, seed documents are chunked by section, and a slow
+model is bounded by per-phase provider limits and a long attempt ceiling instead of a short total
+deadline, with chat completions streamed by default.
+
+### Added
+
+- An in-process local embedding model, `LocalOnnx`, as the shipped default for memory embeddings. The
+  Worker runs `intfloat/multilingual-e5-small` (int8 ONNX file and SentencePiece tokenizer) with ONNX
+  Runtime, pinned to one Hugging Face revision and to each file's SHA-256. On start it installs or
+  verifies the model in the `embedding-models` volume at `/app/models`: an installed manifest is
+  re-verified and kept, files placed offline are verified and never fetched over, and missing files
+  are downloaded over HTTPS within a size limit and renamed into place only when the digest matches.
+  A failed install does not stop the Worker; it records a named code and every local embedding call is
+  refused until a later start installs the model. `THIRD-PARTY-NOTICES.md` lists the model and the
+  runtime packages, and a test fails on a shipped license other than MIT or Apache-2.0.
+- A locally embedded corpus records its model as `<model id>@sha256:<first 16 hex of the model file
+  digest>`, so a model file replaced under the same id is a detected embedding route change. The
+  Worker reports `memory_embedding_model_mismatch` when the installed id is not the route's model and
+  `memory_embedding_model_unavailable` when no usable model is installed; both publish nothing and
+  keep the previous corpus current.
+- `memory model status` and `memory model install` Worker commands. Status prints the installed
+  model's id, revision, license, encoded identity and digests beside the configured route and the
+  corpus model, and exits 1 on any mismatch. Install places the configured model beside the current
+  one within the install timeout, keeps the replaced manifest as `manifest.previous.json` for
+  rollback and never deletes an installed file.
+- Structural chunking of memory seed documents. Each file is split on ATX headings and then capped by
+  tokens on whole lines with a small overlap (`IncidentCompass:Memory:Seed:Chunking`, defaults
+  `MaxTokens` 448, `OverlapTokens` 48, `MinTokens` 32). Token counts come from the installed model's
+  tokenizer for the local adapter and from a character estimate for the OpenAI-compatible and mock
+  adapters. Every chunk starts with its heading path, which is stored in `memory_chunks.heading_path`
+  and returned as `headingPath` by `memory_search`. A heading path or line that cannot fit is refused,
+  naming the seed file.
+- Each corpus generation records its chunk policy in `memory_corpus_generations.chunk_policy`. A
+  changed policy publishes nothing, keeps the previous corpus current and reports
+  `memory_chunk_policy_changed` until `memory rebuild`. Migration `036-memory-chunk-structure.sql` adds
+  both nullable columns and rewrites no existing row.
+- Per-phase limits for one OpenAI-compatible chat HTTP attempt under
+  `IncidentCompass:ModelGateway:OpenAiCompatible`: `ConnectTimeoutSeconds` (30),
+  `FirstOutputTimeoutSeconds` (600) and `StreamInactivityTimeoutSeconds` (600). Each retry gets fresh
+  limits, and a stall is recorded as `provider_connect_timeout`, `provider_first_output_timeout` or
+  `provider_stream_inactivity_timeout`.
+- `Orchestrator.Budget.MaxAttemptDurationSeconds`, an optional ceiling on one investigation attempt.
+  Absent means 14400 seconds, `0` disables it.
+- Streamed chat completions. The chat client requests `stream: true` with usage by default and
+  assembles content, tool calls, finish reason and usage from server-sent events into the same
+  completion a JSON answer produces. `IncidentCompass:ModelGateway:OpenAiCompatible:Streaming=false`
+  restores the previous request, and a provider that ignores `stream` and answers with JSON still
+  works.
+- An opt-in retrieval benchmark for the local embedding models, run only when
+  `INCIDENTCOMPASS_EMBEDDING_BENCHMARK` is set. It measures `multilingual-e5-small` and
+  `multilingual-e5-base` on the retrieval corpus with English queries and Polish and Russian
+  renderings that reuse the same relevance labels.
+
+### Changed
+
+- The Worker is the only process composed with an embedding client. The memory seed and resync pass,
+  `memory status`, `memory rebuild` and the `memory model` commands run on the Worker; the API keeps
+  the corpus status and health readers, which need no model. An architecture test fails if API
+  source names the embedding adapters or the corpus command.
+- The shipped configuration routes `memory-embed` to a `local-embed` provider of kind `LocalOnnx`, and
+  both Compose files select the `LocalOnnx` host provider unless `INCIDENTCOMPASS_EMBEDDINGS_PROVIDER`
+  says otherwise. The OpenAI-compatible embedding adapter stays an operator choice, which production
+  preflight checks only when it is selected. The evaluation stack keeps the OpenAI-compatible
+  embedding provider.
+- Every embedding request states whether its input is a query or a passage. The local adapter applies
+  the model's prefixes; the OpenAI-compatible and mock adapters ignore it.
+- The shipped attempt ceiling is 14400 seconds, where the shipped `MaxWallClockSeconds` was 600, so a
+  slow model that keeps producing is no longer failed at a short total deadline. A call canceled by
+  the ceiling still dead-letters.
+- Each model call asks the provider for at most the smaller of the route's `MaxOutputTokens` and the
+  tokens left in the attempt budget after the estimated prompt. A call with nothing left is refused
+  before dispatch, and a fallback skipped for that reason is recorded as a
+  `max_tokens_reached_before_call` budget event.
+- A chat stream fails closed. An `error` event, a stream that ends without a finish reason and a
+  response that breaks off after it started are `provider_dispatch_outcome_unknown` and are never
+  replayed; only the provider error code of an error event is kept, never its message. A malformed or
+  inconsistent tool-call fragment is `invalid_response`. A chat response is capped at 32 MiB and a
+  single event line at 4 MiB characters, both ending the call as `provider_response_too_large`.
+  Providers that stream tool-call fragments without `index` need `Streaming=false`;
+  `docs/model-gateway.md` lists the known incompatibilities.
+- `publish_report` accepts exactly one argument shape per call (`report_json` alone, `report` alone or
+  a bare report) instead of silently taking the first wrapper it found. `summary` (4000 characters),
+  `recommendedNextAction` (2000), `limitations` (20 items of 1000), `evidence` (50 items) and `quote`
+  (1000) are refused rather than truncated past their limit, with a reprompt that names it, and the
+  tool description states the limits.
+- Production Compose gives the API and the Worker the same memory seed tenant and owner, and the API
+  image no longer carries the sample runbooks or sets a seed source directory.
+- The Dependabot lock-file workflow runs `dotnet restore` in a job with no permissions and no secret,
+  and a separate push job that runs no `dotnet` command validates the uploaded lock files against an
+  allow-list before pushing. The push job uses a short-lived GitHub App installation token when
+  `DEPENDABOT_LOCKFILE_APP_ID` and `DEPENDABOT_LOCKFILE_APP_PRIVATE_KEY` are set.
+- The Tester reads either attempt ceiling key, and its evaluation result adds
+  `maxAttemptDurationSeconds` with `attemptDurationSetting` naming its source.
+- New log events 2701 and 2801 for deprecated configuration keys, and 3213 for a skipped fallback
+  whose budget event could not be recorded.
+
+### Deprecated
+
+- `Orchestrator.Budget.MaxWallClockSeconds` is replaced by `MaxAttemptDurationSeconds`. A
+  configuration file or stored snapshot that sets only the old key keeps its value; loading such a
+  configuration file logs a warning, while rehydrating a stored snapshot does not. Setting both is a
+  load error for a configuration file and for a rehydrated snapshot alike.
+- Chat `IncidentCompass:ModelGateway:OpenAiCompatible:TimeoutSeconds` is replaced by
+  `FirstOutputTimeoutSeconds`. When only the old key is set its value is the first-output limit, with
+  a warning at host start; setting both fails validation at start. Both checks run only when the chat
+  provider is OpenAI-compatible. The embedding section's `TimeoutSeconds` is not deprecated.
+- The `DEPENDABOT_LOCKFILE_TOKEN` personal access token still works as a fallback push credential
+  when the GitHub App secrets are not set, and the job summary says when it was used.
+
+### Fixed
+
+- A `memory_search` call refused because the installed local model does not match the route or no
+  usable model is installed is a configuration failure, not a provider outage. The attempt stores
+  `memory_embedding_model_mismatch` or `memory_embedding_model_unavailable`, spends the ordinary
+  attempt budget and dead-letters when it runs out, and never pauses job claims. A model that is
+  installed but fails to load still counts as an outage.
+- The production API read memory health under a seed scope the Worker never wrote, so the
+  memory-sync and memory-corpus health endpoints reported a corpus nothing maintained.
+- A role output schema that typed a secret-named property as an object, number or boolean passed
+  validation and then failed to parse on every attempt, because redaction replaces that value with a
+  string. The configuration now refuses such a schema at load and in `config validate`, naming the
+  role, the schema path and the rule that matched, and a kind mismatch the load check cannot see ends
+  the delegate as a non-retryable invalid worker output.
+- A remediation pass whose model call was answered but whose ledger accounting failed was
+  dead-lettered as `remediation_model_call_failed`. It now writes the owed row and dead-letters as
+  `remediation_answer_unrecorded`, with the answer discarded and no diff kept, and is not retried.
+- A chunk overlap no longer spends part of its budget on the passage prefix and sequence markers, and
+  a document made only of headings becomes one chunk carrying its heading path.
+
+### Security
+
+- No token is reachable from the Dependabot workflow job that runs `dotnet restore`, so a process
+  started during restore cannot affect the push through `$GITHUB_ENV`, `$GITHUB_PATH` or
+  `.git/config`, and the pushed files are limited to validated tracked `packages.lock.json` paths.
+- The local embedding model is fetched only from HTTPS locations and accepted only when both files
+  match their pinned SHA-256; a mismatch is refused and never repaired.
+
 ## 0.4.1 - 2026-09-12
 
 A patch release. Every fix in it makes something 0.4.0 already claims in public true, and none of it

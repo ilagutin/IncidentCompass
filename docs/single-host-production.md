@@ -319,6 +319,15 @@ volume ends by restarting the Worker:
    model's encoded identity and publishes one new generation.
 4. `docker @compose up --detach --force-recreate worker`.
 
+**Known limitation: steps 2 to 4 are a window in which memory searches dead-letter.** After step 2
+changes `INCIDENTCOMPASS_EMBEDDINGS_MODEL`, a `docker @compose run --rm worker memory status` or the
+`memory rebuild` of step 3 recreates the running API with the new route model, while the running Worker
+keeps the model it verified at start until step 4 restarts it. Every triage job that reaches
+`memory_search` in that window has its embedding call refused, spends its attempts and is dead-lettered
+with `memory_embedding_model_mismatch`. Step 1 alone leaves the previous corpus retrievable. Run steps 2
+to 4 back to back, or stop the long-running Worker until step 4 so it claims nothing, and expect any
+job that reaches `memory_search` in between to dead-letter.
+
 The restart in step 4 is also what updates the reported state: a `memory rebuild` run as a command does
 not update the synchronization status the API reads, so the API keeps reporting the old state until the
 restarted Worker's start pass records the new one.
