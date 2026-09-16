@@ -40,11 +40,17 @@ name: dependabot-lockfiles
 # Pushing with the default `GITHUB_TOKEN` works, but GitHub suppresses recursive runs: the
 # resulting `pull_request` re-run is created in an "approval required" state, so the pull request
 # would sit pending until someone clicks "Approve workflows to run". To get a genuinely hands-off
-# green pull request, store a fine-grained PAT limited to this repository with only
-# `Contents: Read and write` as the *Dependabot* secret `DEPENDABOT_LOCKFILE_TOKEN`. Actions
-# secrets are not visible to Dependabot-triggered runs, so it must be a Dependabot secret. Without
-# it this workflow still fixes the lock files, it just costs one approval click. See
-# `docs/versioning.md` for the full setup and the security reasoning.
+# green pull request, the `push` job uses a short-lived installation token minted from a GitHub App
+# installed on this repository with only `Contents: Read and write`, configured through the
+# *Dependabot* secrets `DEPENDABOT_LOCKFILE_APP_ID` and `DEPENDABOT_LOCKFILE_APP_PRIVATE_KEY`. This
+# path is fail-closed: once those secrets are configured, a broken App (bad credentials, App
+# uninstalled, and so on) fails the token-minting step and the job, rather than silently falling back
+# to the PAT. A fine-grained PAT stored as the Dependabot secret `DEPENDABOT_LOCKFILE_TOKEN` still
+# works as a deprecated fallback only when the App secrets are not configured at all. Actions secrets
+# are not visible to Dependabot-triggered runs, so all of these must be Dependabot secrets. Without
+# either, this workflow still fixes the lock files with
+# `GITHUB_TOKEN`, it just costs one approval click. See `docs/versioning.md` for the full setup and
+# the security reasoning.
 
 on:
   pull_request:
@@ -164,10 +170,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
-    # Only what the push needs, and only used when DEPENDABOT_LOCKFILE_TOKEN is absent. No restore
-    # runs in this job, so there is nothing here that a package's build logic could reach.
+    # Only what the push needs, and only used when neither the GitHub App secrets nor the deprecated
+    # DEPENDABOT_LOCKFILE_TOKEN are configured. No restore runs in this job, so there is nothing here
+    # that a package's build logic could reach.
     permissions:
       contents: write
+
+    env:
+      HAS_LOCKFILE_APP: ${{ secrets.DEPENDABOT_LOCKFILE_APP_ID != '' && secrets.DEPENDABOT_LOCKFILE_APP_PRIVATE_KEY != '' }}
 
     steps:
       - name: Checkout Dependabot branch
@@ -282,12 +292,24 @@ jobs:
 
           echo "Validated and applied $file_count lock file(s) from the restore job." >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Mint a GitHub App installation token
+        id: app-token
+        if: env.HAS_LOCKFILE_APP == 'true'
+        uses: actions/create-github-app-token@df432ceedc7162793a195dd1713ff69aefc7379e # v2.0.6
+        with:
+          app-id: ${{ secrets.DEPENDABOT_LOCKFILE_APP_ID }}
+          private-key: ${{ secrets.DEPENDABOT_LOCKFILE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+
       - name: Commit and push regenerated lock files
         shell: bash
         env:
-          # Falls back to the job's GITHUB_TOKEN when the Dependabot secret is not configured.
-          GIT_PUSH_TOKEN: ${{ secrets.DEPENDABOT_LOCKFILE_TOKEN || github.token }}
-          HAS_PUSH_PAT: ${{ secrets.DEPENDABOT_LOCKFILE_TOKEN != '' }}
+          # Falls back through: the GitHub App installation token, then the deprecated
+          # DEPENDABOT_LOCKFILE_TOKEN PAT, then the job's GITHUB_TOKEN.
+          GIT_PUSH_TOKEN: ${{ steps.app-token.outputs.token || secrets.DEPENDABOT_LOCKFILE_TOKEN || github.token }}
+          PUSH_TOKEN_SOURCE: ${{ steps.app-token.outputs.token != '' && 'app' || secrets.DEPENDABOT_LOCKFILE_TOKEN != '' && 'pat' || 'github-token' }}
         run: |
           set -euo pipefail
 
@@ -316,9 +338,16 @@ jobs:
             "https://x-access-token:${GIT_PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
             "HEAD:refs/heads/${GITHUB_HEAD_REF}"
 
-          if [ "${HAS_PUSH_PAT}" = 'true' ]; then
-            echo 'Pushed with DEPENDABOT_LOCKFILE_TOKEN; ci re-runs automatically.' >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "::warning::Pushed with GITHUB_TOKEN because the Dependabot secret DEPENDABOT_LOCKFILE_TOKEN is not configured. The follow-up ci run needs one 'Approve workflows to run' click. See docs/versioning.md."
-            echo 'Pushed with GITHUB_TOKEN. The follow-up ci run needs one approval click; configure the Dependabot secret DEPENDABOT_LOCKFILE_TOKEN to remove it.' >> "$GITHUB_STEP_SUMMARY"
-          fi
+          case "${PUSH_TOKEN_SOURCE}" in
+            app)
+              echo 'Pushed with the GitHub App installation token; ci re-runs automatically.' >> "$GITHUB_STEP_SUMMARY"
+              ;;
+            pat)
+              echo '::notice::DEPENDABOT_LOCKFILE_TOKEN is deprecated. Configure the DEPENDABOT_LOCKFILE_APP_ID and DEPENDABOT_LOCKFILE_APP_PRIVATE_KEY Dependabot secrets instead. See docs/versioning.md.'
+              echo 'Pushed with the deprecated DEPENDABOT_LOCKFILE_TOKEN PAT; ci re-runs automatically. Configure the GitHub App secrets to replace it; see docs/versioning.md.' >> "$GITHUB_STEP_SUMMARY"
+              ;;
+            github-token)
+              echo "::warning::Pushed with GITHUB_TOKEN because neither the DEPENDABOT_LOCKFILE_APP_ID/DEPENDABOT_LOCKFILE_APP_PRIVATE_KEY Dependabot secrets nor the deprecated DEPENDABOT_LOCKFILE_TOKEN are configured. The follow-up ci run needs one 'Approve workflows to run' click. See docs/versioning.md."
+              echo 'Pushed with GITHUB_TOKEN. The follow-up ci run needs one approval click; configure the DEPENDABOT_LOCKFILE_APP_ID and DEPENDABOT_LOCKFILE_APP_PRIVATE_KEY Dependabot secrets to remove it.' >> "$GITHUB_STEP_SUMMARY"
+              ;;
+          esac

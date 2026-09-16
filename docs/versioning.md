@@ -89,25 +89,31 @@ Security constraints on the workflow, which is the only one in this repository w
   such a write to reach.
 - The commit and push run with `core.hooksPath=/dev/null` and `--no-verify`, so a package that
   planted a git hook cannot run during the push.
-- Only validated `packages.lock.json` paths are staged, and no secret other than the push token is
-  exposed.
+- Only validated `packages.lock.json` paths are staged, and no secret other than the push credential
+  (the App ID and private key, or the deprecated token) is exposed.
 
-#### One-time setup: `DEPENDABOT_LOCKFILE_TOKEN`
+#### One-time setup: push credential
 
 GitHub does not create ordinary workflow runs for events caused by `GITHUB_TOKEN`. A `pull_request`
 re-run caused by such a push is created in an "approval required" state, so a push made with the
 default token fixes the lock files but leaves the pull request waiting for one
 "Approve workflows to run" click.
 
-To remove that click, add a **Dependabot** secret (Settings, Secrets and variables, Dependabot; not
-Actions, because Actions secrets are not exposed to Dependabot-triggered runs) named
-`DEPENDABOT_LOCKFILE_TOKEN`. Store a fine-grained personal access token scoped to this repository
-only, with `Contents: Read and write` and no other permission. The workflow then pushes with that
-token, the push is an ordinary push, and `ci` re-runs and reports green on its own.
+The primary way to remove that click is a GitHub App. Create a GitHub App owned by the repository
+owner with only the repository permission `Contents: Read and write`, no webhook, and install it on
+this repository only. Store its App ID and a private key as the **Dependabot** secrets (Settings,
+Secrets and variables, Dependabot; not Actions, because Actions secrets are not exposed to
+Dependabot-triggered runs) `DEPENDABOT_LOCKFILE_APP_ID` and `DEPENDABOT_LOCKFILE_APP_PRIVATE_KEY`.
+The `push` job then mints a short-lived installation token scoped to this repository on every run,
+the push it makes with that token is an ordinary push, and `ci` re-runs and reports green on its own.
 
-The token is a long-lived credential. Keep it single-repository and single-permission and track its
-expiry; a GitHub App installation token minted with `actions/create-github-app-token` is the
-alternative when a non-expiring credential is preferred. Without the secret the workflow still works
+A fine-grained personal access token stored as the Dependabot secret `DEPENDABOT_LOCKFILE_TOKEN`,
+scoped to this repository only with `Contents: Read and write` and no other permission, still works
+as a deprecated fallback when the GitHub App secrets are not configured. Remove it from use once the
+App is in place; the job summary reports which credential pushed on every run, including a notice
+when the deprecated PAT was the one used.
+
+Without either credential, the workflow falls back to `GITHUB_TOKEN`: it still fixes the lock files
 and warns in the job summary, it just costs that one approval click per pull request.
 
 ## Embedding Model
