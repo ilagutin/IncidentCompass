@@ -192,14 +192,58 @@ public sealed class WorkerFailClosedPropagationTests
             request => request.EventType == TriageLedgerEventType.Delegated);
     }
 
+    [Fact]
+    public async Task ExecuteAsync_KindMismatchAfterRedactionLeavesAsNonRetryableWorkerOutputFailure()
+    {
+        // The schema accepts the raw output, then redaction flattens a value the delegate parser reads
+        // as a boolean into the string [REDACTED]. This configuration never passed the load check,
+        // which is the point: it stands in for a schema shape the load walk does not follow. The same
+        // output fails the same way on every attempt, so it must not be classified as retryable, and
+        // the model-authored value must not ride out on the exception.
+        const string modelAuthoredFact = "MODEL_AUTHORED_FACT_MUST_NOT_ESCAPE";
+        const string schema = """
+            {
+              "type": "object",
+              "properties": {
+                "keyFacts": { "type": "array", "items": { "type": "string" } },
+                "candidateClassification": { "type": "string" },
+                "needsDeeperContext": { "type": "boolean" }
+              },
+              "required": ["keyFacts", "candidateClassification", "needsDeeperContext"]
+            }
+            """;
+        var model = new ScriptedModelClient(_ => ContentResponse(
+            "{\"keyFacts\":[\"" + modelAuthoredFact + "\"],\"candidateClassification\":\"Unknown\",\"needsDeeperContext\":true}"));
+        var harness = CreateHarness(
+            model,
+            outputSchema: schema,
+            redaction: new RedactionSettings(["needsDeeperContext"], [], []));
+
+        var exception = await Assert.ThrowsAsync<WorkerOutputInvalidException>(
+            () => harness.DelegateAsync());
+
+        Assert.Equal(1, model.CallCount);
+        Assert.Equal(
+            WorkerOutputInvalidException.ErrorCode,
+            TriageNonRetryableFailureClassifier.TryGetErrorCode(exception));
+        var validation = Assert.IsType<WorkerOutputValidationException>(exception.InnerException);
+        Assert.Equal([AnalysisDelegateExecutor.RedactedOutputUnparsableViolation], validation.Violations);
+        Assert.DoesNotContain(modelAuthoredFact, exception.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            harness.LedgerWriter.Requests,
+            request => request.EventType == TriageLedgerEventType.WorkerCompleted);
+    }
+
     private static WorkerHarness CreateHarness(
         IAiModelClient model,
         int spentTokens = 0,
         int workerCalls = 0,
         int maxWorkers = 4,
-        int maxReprompts = 1)
+        int maxReprompts = 1,
+        string outputSchema = OutputSchema,
+        RedactionSettings? redaction = null)
     {
-        var configuration = CreateConfiguration(maxWorkers, maxReprompts);
+        var configuration = CreateConfiguration(maxWorkers, maxReprompts, outputSchema, redaction ?? RedactionSettings.Default);
         var ledgerWriter = new RecordingLedgerWriter();
         var ledgerReader = new StaticLedgerReader(spentTokens, workerCalls);
         var appender = new TriageLedgerAppender(ledgerWriter);
@@ -224,7 +268,11 @@ public sealed class WorkerFailClosedPropagationTests
         return new WorkerHarness(configuration, runner, delegateExecutor, ledgerWriter, logger);
     }
 
-    private static TriageConfiguration CreateConfiguration(int maxWorkers, int maxReprompts) =>
+    private static TriageConfiguration CreateConfiguration(
+        int maxWorkers,
+        int maxReprompts,
+        string outputSchema,
+        RedactionSettings redaction) =>
         TestTriageConfiguration.Create() with
         {
             Orchestrator = new OrchestratorSettings(
@@ -234,12 +282,13 @@ public sealed class WorkerFailClosedPropagationTests
                 new OrchestratorBudgetSettings(maxWorkers, 100000, 120, maxReprompts)),
             Roles = new Dictionary<string, TriageRoleSettings>(StringComparer.Ordinal)
             {
-                ["analysis"] = new("analysis-chat", "analysis instructions", [ProbeToolName], OutputSchema)
+                ["analysis"] = new("analysis-chat", "analysis instructions", [ProbeToolName], outputSchema)
             },
             Tools = new Dictionary<string, TriageToolSettings>(StringComparer.Ordinal)
             {
                 [ProbeToolName] = new("internal", null, null, null)
-            }
+            },
+            Redaction = redaction
         };
 
     private static AiModelResponse ContentResponse(string content) =>

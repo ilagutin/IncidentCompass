@@ -73,6 +73,12 @@ internal sealed class AnalysisDelegateExecutor(
     /// </remarks>
     private const string UnrepresentableRoleSegment = "unrepresentable_role";
 
+    /// <summary>
+    /// The one violation a delegate parse failure on the redacted worker output is reported with.
+    /// </summary>
+    internal const string RedactedOutputUnparsableViolation =
+        "Worker output passed its schema but its redacted form does not parse as a delegate result.";
+
     public async Task<string> ExecuteAsync(
         TriageJob job,
         TriageConfiguration configuration,
@@ -111,8 +117,7 @@ internal sealed class AnalysisDelegateExecutor(
         // state, so leaving it raw would hand both surfaces exactly what the artifact row hides.
         // Reading it back off the artifact also means the summary the orchestrator sees and the row
         // its artifactId points at are the same bytes.
-        var delegateResult = WorkerDelegateResultFactory.Create(
-            roleName, artifact.RedactedPayload.GetRawText(), artifact.Id);
+        var delegateResult = CreateDelegateResult(roleName, artifact);
 
         await ledgerAppender.AppendAsync(
             job,
@@ -157,13 +162,9 @@ internal sealed class AnalysisDelegateExecutor(
     /// <para>
     /// Order matters here: the role's output schema was validated against the raw text before this
     /// runs, and redaction can still change a value afterwards - it rewrites strings, and it replaces
-    /// a value of any kind whose property name looks like a secret holder. No shipped role schema
-    /// names such a property, and the parsers downstream read only <c>keyFacts</c>,
-    /// <c>candidateClassification</c>, <c>needsDeeperContext</c>, <c>matched</c>, <c>items</c>,
-    /// <c>artifactId</c>, <c>title</c>, <c>quote</c>, <c>score</c> and <c>documentationStatus</c>,
-    /// none of which the denylist matches. A role schema that did
-    /// name one would make the redacted document fail the delegate parse, which fails the attempt
-    /// rather than leaking anything.
+    /// a value of any kind whose property name looks like a secret holder. The configuration load
+    /// refuses a role schema that declares such a property with a non-string type, and
+    /// <see cref="CreateDelegateResult" /> is the second line for what that walk does not follow.
     /// </para>
     /// </summary>
     private async Task<TriageArtifact> InsertWorkerOutputArtifactAsync(
@@ -184,6 +185,34 @@ internal sealed class AnalysisDelegateExecutor(
 
         await artifactRepository.InsertAsync(artifact, cancellationToken);
         return artifact;
+    }
+
+    /// <summary>
+    /// Parses the delegate result from the stored, redacted payload.
+    /// <para>
+    /// A parse failure here is deterministic for this worker output: the schema already accepted the
+    /// raw text, so what the parser rejects is what redaction made of it, typically a value whose
+    /// property name redaction treats as secret replaced by the string <c>[REDACTED]</c> where the
+    /// parser reads another kind. That reaches here only through a schema shape the load check does
+    /// not follow, such as a <c>$ref</c>. Retrying spends the attempt budget on the same result, so it
+    /// leaves as <see cref="WorkerOutputInvalidException" />, which the runner already dead-letters,
+    /// rather than as a bare <see cref="InvalidOperationException" /> it would retry. The parser's own
+    /// message is not carried: it can quote a model-authored value, so the violation is one fixed
+    /// sentence.
+    /// </para>
+    /// </summary>
+    private static WorkerDelegateResult CreateDelegateResult(string roleName, TriageArtifact artifact)
+    {
+        try
+        {
+            return WorkerDelegateResultFactory.Create(roleName, artifact.RedactedPayload.GetRawText(), artifact.Id);
+        }
+        catch (InvalidOperationException)
+        {
+            throw new WorkerOutputInvalidException(new WorkerOutputValidationException(
+                [RedactedOutputUnparsableViolation],
+                violationsTruncated: false));
+        }
     }
 
     private static (string Role, string Task) ReadDelegateArguments(JsonElement arguments)

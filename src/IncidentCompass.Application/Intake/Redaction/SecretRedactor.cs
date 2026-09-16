@@ -162,7 +162,15 @@ internal static partial class SecretRedactor
         return JsonValue.Create(RedactText(text, context, path)!)!;
     }
 
-    private static bool IsSensitiveProperty(string key, string path, RedactionSettings settings) =>
+    /// <summary>
+    /// The one rule that decides whether a JSON property's value is replaced whatever its kind: the
+    /// built-in <see cref="SecretPropertyNameMatcher"/>, or a configured
+    /// <see cref="RedactionSettings.AttributeKeys"/> entry equal to the property name or to its
+    /// dot-joined path from the redacted document's root (array elements add no segment). It is
+    /// reachable outside this class so the configuration load check on role output schemas applies
+    /// exactly this rule instead of a copy of it.
+    /// </summary>
+    public static bool IsSensitiveProperty(string key, string path, RedactionSettings settings) =>
         SecretPropertyNameMatcher.IsSensitive(key) ||
         settings.AttributeKeys.Any(candidate =>
             string.Equals(candidate, key, StringComparison.OrdinalIgnoreCase) ||

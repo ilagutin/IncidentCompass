@@ -29,7 +29,7 @@ internal sealed class TriageConfigurationLoadValidator(
         TriageProviderSettingsLoadValidator.Validate(configuration.Providers, secretReader);
         ValidateRoutes(configuration.Providers, configuration.Routes);
         ValidateOrchestrator(configuration.Routes, configuration.Orchestrator);
-        ValidateRoles(configuration.Routes, configuration.Tools, configuration.Roles);
+        ValidateRoles(configuration.Routes, configuration.Tools, configuration.Roles, configuration.Redaction);
         toolValidator.Validate(configuration.Routes, configuration.Tools, configuration.Actions);
         TriageRuleLoadValidator.Validate(configuration.Tools, configuration.Rules);
     }
@@ -250,7 +250,8 @@ internal sealed class TriageConfigurationLoadValidator(
     private static void ValidateRoles(
         IReadOnlyDictionary<string, TriageRouteSettings> routes,
         IReadOnlyDictionary<string, TriageToolSettings> tools,
-        IReadOnlyDictionary<string, TriageRoleSettings> roles)
+        IReadOnlyDictionary<string, TriageRoleSettings> roles,
+        RedactionSettings redaction)
     {
         foreach (var (roleName, role) in roles)
         {
@@ -259,7 +260,7 @@ internal sealed class TriageConfigurationLoadValidator(
             RequireChatRoute(routes, role.RouteId, "Roles." + roleName + ".RouteId");
             RequireNonBlank("Roles." + roleName + ".Instructions", role.Instructions);
             RequireNonBlank("Roles." + roleName + ".OutputSchema", role.OutputSchema);
-            ValidateOutputSchema(roleName, role.OutputSchema);
+            ValidateOutputSchema(roleName, role.OutputSchema, redaction);
             foreach (var toolName in role.Tools)
             {
                 if (!tools.ContainsKey(toolName))
@@ -289,7 +290,7 @@ internal sealed class TriageConfigurationLoadValidator(
         }
     }
 
-    private static void ValidateOutputSchema(string roleName, string outputSchema)
+    private static void ValidateOutputSchema(string roleName, string outputSchema, RedactionSettings redaction)
     {
         try
         {
@@ -298,6 +299,8 @@ internal sealed class TriageConfigurationLoadValidator(
             {
                 throw Invalid("Roles." + roleName + ".OutputSchema", "non-object", "a JSON object schema");
             }
+
+            RoleOutputSchemaSecretPropertyLoadValidator.Validate(roleName, document.RootElement, redaction);
         }
         catch (JsonException exception)
         {
