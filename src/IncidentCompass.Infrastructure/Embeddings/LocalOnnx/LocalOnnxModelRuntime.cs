@@ -46,14 +46,23 @@ internal sealed class LocalOnnxModelRuntime(IOptions<LocalOnnxEmbeddingOptions> 
         gate.Dispose();
     }
 
-    internal int CountPassageTokens(LocalOnnxInstalledModel installed, string text, CancellationToken cancellationToken)
+    internal int CountPassageTokens(LocalOnnxInstalledModel installed, string text, CancellationToken cancellationToken) =>
+        CountTokens(installed, text, includePassageFraming: true, cancellationToken);
+
+    internal int CountOverlapTokens(LocalOnnxInstalledModel installed, string text, CancellationToken cancellationToken) =>
+        CountTokens(installed, text, includePassageFraming: false, cancellationToken);
+
+    private int CountTokens(
+        LocalOnnxInstalledModel installed, string text, bool includePassageFraming, CancellationToken cancellationToken)
     {
         gate.Wait(cancellationToken);
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
             var encoder = GetOrLoad(installed).Encoder;
-            return LocalOnnxChunkTokenCounter.CountTokens(encoder, text);
+            return includePassageFraming
+                ? LocalOnnxChunkTokenCounter.CountTokens(encoder, text)
+                : LocalOnnxChunkTokenCounter.CountOverlapTokens(encoder, text);
         }
         finally
         {

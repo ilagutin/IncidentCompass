@@ -39,6 +39,83 @@ public sealed class MemorySeedEntryBuilderInputKindTests
         Assert.Equal("intfloat/multilingual-e5-small", request.Model);
     }
 
+    [Fact]
+    public async Task BuildAsync_ALineThatCannotFitIsRefusedNamingTheSeedSourceWithoutItsText()
+    {
+        var embeddingClient = new RecordingEmbeddingClient();
+        var builder = new MemorySeedEntryBuilder(
+            embeddingClient, new UnreadMemoryRepository(),
+            new MemoryDocumentChunker(
+                new CharacterEstimateChunkTokenCounter(),
+                new MemoryChunkingOptions { MaxTokens = 40, OverlapTokens = 0, MinTokens = 4 }));
+        var secretLine = "payment-token-" + new string('q', 400);
+
+        var exception = await Assert.ThrowsAsync<MemorySeedDocumentRefusedException>(() => builder.BuildAsync(
+            new MemorySeedFile(
+                "runbook",
+                "runbooks/oversized-line.md",
+                "Oversized line",
+                "# Oversized line\n" + secretLine,
+                [],
+                ServiceName: null,
+                Component: null,
+                ReleaseName: null),
+            new MemorySeedOptions(),
+            new MemoryEmbeddingRoute("memory-embed", "local-embed", "intfloat/multilingual-e5-small"),
+            forceEmbedding: true,
+            TestContext.Current.CancellationToken));
+
+        Assert.IsAssignableFrom<InvalidOperationException>(exception);
+        Assert.Equal("runbooks/oversized-line.md", exception.SeedSource);
+        Assert.Contains("'runbooks/oversized-line.md'", exception.Message);
+        Assert.Contains("complete line exceed", exception.Message);
+        Assert.DoesNotContain("payment-token", exception.Message);
+        Assert.DoesNotContain("qqqq", exception.Message);
+        Assert.Empty(embeddingClient.Requests);
+    }
+
+    [Fact]
+    public async Task BuildAsync_ACounterFailureIsNotReportedAsANamedFileRefusal()
+    {
+        var embeddingClient = new RecordingEmbeddingClient();
+        var builder = new MemorySeedEntryBuilder(
+            embeddingClient, new UnreadMemoryRepository(),
+            new MemoryDocumentChunker(new UnavailableChunkTokenCounter(), new MemoryChunkingOptions()));
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => builder.BuildAsync(
+            new MemorySeedFile(
+                "runbook",
+                "runbooks/checkout-timeouts.md",
+                "Checkout timeouts",
+                "Checkout timeouts: check the payment service latency first.",
+                [],
+                ServiceName: null,
+                Component: null,
+                ReleaseName: null),
+            new MemorySeedOptions(),
+            new MemoryEmbeddingRoute("memory-embed", "local-embed", "intfloat/multilingual-e5-small"),
+            forceEmbedding: true,
+            TestContext.Current.CancellationToken));
+
+        Assert.Equal(UnavailableChunkTokenCounter.Message, exception.Message);
+        Assert.Null(exception.InnerException);
+        Assert.Empty(embeddingClient.Requests);
+    }
+
+    private sealed class UnavailableChunkTokenCounter : IMemoryChunkTokenCounter
+    {
+        public const string Message = "The memory chunk tokenizer is not available.";
+
+        public string Kind => "exact";
+
+        public Task InitializeAsync(MemoryChunkingOptions options, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
+
+        public int CountTokens(string text) => throw new InvalidOperationException(Message);
+
+        public int CountOverlapTokens(string text) => throw new InvalidOperationException(Message);
+    }
+
     private sealed class RecordingEmbeddingClient : IEmbeddingClient
     {
         public List<EmbeddingRequest> Requests { get; } = [];

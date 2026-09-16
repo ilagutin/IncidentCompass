@@ -36,8 +36,18 @@ internal sealed class MemorySeedEntryBuilder(
             return new MemorySeedEntry(item, []);
         }
 
+        IReadOnlyList<MemoryDocumentChunk> parts;
+        try
+        {
+            parts = chunker.Chunk(file.Title, file.Content);
+        }
+        catch (MemoryDocumentChunkRefusedException exception)
+        {
+            throw new MemorySeedDocumentRefusedException(file.Source, exception);
+        }
+
         var chunks = new List<MemorySeedChunk>();
-        foreach (var part in chunker.Chunk(file.Title, file.Content))
+        foreach (var part in parts)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var embedding = await embeddingClient.CreateEmbeddingAsync(

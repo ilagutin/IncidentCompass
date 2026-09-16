@@ -7,4 +7,6 @@ internal interface IMemoryChunkTokenCounter
     Task InitializeAsync(MemoryChunkingOptions options, CancellationToken cancellationToken);
 
     int CountTokens(string text);
+
+    int CountOverlapTokens(string text);
 }

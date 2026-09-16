@@ -15,4 +15,6 @@ internal sealed class CharacterEstimateChunkTokenCounter : IMemoryChunkTokenCoun
     }
 
     public int CountTokens(string text) => (int)((text.Length + (long)CharactersPerToken - 1) / CharactersPerToken);
+
+    public int CountOverlapTokens(string text) => CountTokens(text);
 }

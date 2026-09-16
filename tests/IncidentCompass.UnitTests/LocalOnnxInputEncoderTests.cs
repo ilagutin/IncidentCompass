@@ -53,6 +53,19 @@ public sealed class LocalOnnxInputEncoderTests
     }
 
     [Fact]
+    public async Task OverlapCounter_CountsOnlyTheRepeatedTextWithoutPassagePrefixOrMarkers()
+    {
+        var encoder = await LoadFixtureEncoderAsync();
+        const string text = "  checkout timeout\npayment service  ";
+        var expected = encoder.Tokenizer.EncodeToIds(
+            text.Trim(), addBeginningOfSentence: false, addEndOfSentence: false).Count;
+
+        Assert.Equal(expected, LocalOnnxChunkTokenCounter.CountOverlapTokens(encoder, text));
+        Assert.True(LocalOnnxChunkTokenCounter.CountTokens(encoder, text) > expected);
+        Assert.Equal(0, LocalOnnxChunkTokenCounter.CountOverlapTokens(encoder, string.Empty));
+    }
+
+    [Fact]
     public async Task Encode_QueryAndPassagePrefixesProduceDifferentIdsForTheSameInput()
     {
         var encoder = await LoadFixtureEncoderAsync();

@@ -22,17 +22,19 @@ internal sealed partial class MemorySeedHostedService(
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         var settings = options.Value;
+        syncStatus.Configure(settings.Enabled, settings.RuntimeResyncEnabled);
+        if (!settings.Enabled)
+        {
+            return;
+        }
+
+        // Only a host that seeds needs a chunk budget or a tokenizer; the corpus commands run the
+        // synchronizer, which initializes the counter itself, and status reads only its kind.
         MemorySeedOptionsValidator.Validate(settings);
         using (var scope = scopeFactory.CreateScope())
         {
             await scope.ServiceProvider.GetRequiredService<IMemoryChunkTokenCounter>()
                 .InitializeAsync(settings.Chunking, cancellationToken);
-        }
-
-        syncStatus.Configure(settings.Enabled, settings.RuntimeResyncEnabled);
-        if (!settings.Enabled)
-        {
-            return;
         }
 
         await statusPersistence.SaveAsync(syncStatus.Snapshot, cancellationToken);
@@ -88,6 +90,10 @@ internal sealed partial class MemorySeedHostedService(
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
                 throw;
+            }
+            catch (MemorySeedDocumentRefusedException exception)
+            {
+                LogRuntimeSyncDocumentRefused(logger, exception.SeedSource);
             }
             catch (Exception exception)
             {
@@ -178,6 +184,15 @@ internal sealed partial class MemorySeedHostedService(
 
     [LoggerMessage(2301, LogLevel.Warning, "Memory seed runtime synchronization failed with {FailureType}.")]
     private static partial void LogRuntimeSyncFailed(ILogger logger, string failureType);
+
+    [LoggerMessage(
+        2305,
+        LogLevel.Warning,
+        "Memory seed runtime synchronization published nothing because seed {SeedSource} has a heading path, or a " +
+        "line together with its heading path, that exceeds the chunk token limit; the previous corpus remains " +
+        "current. Such a line is refused, never split or truncated: shorten it, or raise the chunking MaxTokens " +
+        "where the embedding window allows and run the memory rebuild command.")]
+    private static partial void LogRuntimeSyncDocumentRefused(ILogger logger, string seedSource);
 
     [LoggerMessage(
         2303,

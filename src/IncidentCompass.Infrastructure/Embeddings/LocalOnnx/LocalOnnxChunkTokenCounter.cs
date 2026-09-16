@@ -29,11 +29,20 @@ internal sealed class LocalOnnxChunkTokenCounter(
     public int CountTokens(string text) => runtime.CountPassageTokens(
         installed ?? throw new InvalidOperationException("The memory chunk tokenizer is not available."), text, countingCancellation);
 
+    public int CountOverlapTokens(string text) => runtime.CountOverlapTokens(
+        installed ?? throw new InvalidOperationException("The memory chunk tokenizer is not available."), text, countingCancellation);
+
     internal static int CountTokens(LocalOnnxInputEncoder encoder, string text) =>
         encoder.Tokenizer.EncodeToIds(
             encoder.PassagePrefix + text.Trim(),
             addBeginningOfSentence: false,
             addEndOfSentence: false).Count + 2;
+
+    internal static int CountOverlapTokens(LocalOnnxInputEncoder encoder, string text) =>
+        encoder.Tokenizer.EncodeToIds(
+            text.Trim(),
+            addBeginningOfSentence: false,
+            addEndOfSentence: false).Count;
 
     internal static void ValidateWindow(MemoryChunkingOptions options, int modelMaxTokens, int prefixAndMarkers)
     {
