@@ -16,13 +16,34 @@ internal static partial class EvaluationConfigurationSnapshotLoader
         var routes = routesNode.Select(property => ReadRoute(property.Key, property.Value)).ToArray();
         var budget = root["Orchestrator"]?["Budget"]?.AsObject()
             ?? throw new InvalidOperationException("Evaluation configuration has no orchestrator budget.");
+        var (attemptDurationSeconds, attemptDurationSetting) = ReadAttemptDuration(budget);
         return new EvaluationConfigurationSnapshot(
             routes,
             new EvaluationOrchestratorBudgetResult(
                 ReadInt32(budget, "MaxWorkers"),
                 ReadInt32(budget, "MaxTokens"),
-                ReadInt32(budget, "MaxWallClockSeconds"),
-                ReadOptionalInt32(budget, "MaxReprompts")));
+                ReadOptionalInt32(budget, EvaluationOrchestratorBudgetResult.DeprecatedAttemptDurationSetting),
+                ReadOptionalInt32(budget, "MaxReprompts"),
+                attemptDurationSeconds,
+                attemptDurationSetting));
+    }
+
+    /// <summary>
+    /// Resolves the attempt ceiling the way the backend does: the current key when present, the
+    /// deprecated one otherwise, the backend default when neither is set. The Tester only reports
+    /// the value; the backend rejects a configuration that sets both.
+    /// </summary>
+    private static (int Seconds, string Setting) ReadAttemptDuration(JsonObject budget)
+    {
+        if (ReadOptionalInt32(budget, EvaluationOrchestratorBudgetResult.CurrentAttemptDurationSetting) is { } current)
+        {
+            return (current, EvaluationOrchestratorBudgetResult.CurrentAttemptDurationSetting);
+        }
+
+        return ReadOptionalInt32(budget, EvaluationOrchestratorBudgetResult.DeprecatedAttemptDurationSetting) is { } deprecated
+            ? (deprecated, EvaluationOrchestratorBudgetResult.DeprecatedAttemptDurationSetting)
+            : (EvaluationOrchestratorBudgetResult.DefaultMaxAttemptDurationSeconds,
+                EvaluationOrchestratorBudgetResult.DefaultAttemptDurationSetting);
     }
 
     private static EvaluationRouteSettingsResult ReadRoute(string routeId, JsonNode? value)

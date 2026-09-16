@@ -343,19 +343,35 @@ Tool policy evaluates `rate_cap`, `precondition` and budget state by reading the
 
 ## Token Budget Overshoot
 
-`MaxTokens` means the backend will not start a new model call once the current-attempt budget is already reached. A single in-flight call can still overshoot the limit because final usage is known only after the provider responds. The overshoot is recorded as a `BudgetEvent` instead of hidden.
+Before each model call the backend computes what is left of `MaxTokens`: the budget, minus what the
+attempt has already been charged, minus an estimate of the prompt. With nothing left the call is not
+started. Otherwise the provider's `max_tokens` is the smaller of the route's `MaxOutputTokens` and
+that remainder, so one call cannot ask for more output than the attempt can pay for. A fallback hop
+recomputes the remainder after the failed call's charge, and a fallback with nothing left is not
+taken; that skip is recorded as a `max_tokens_reached_before_call` `BudgetEvent` naming the fallback
+route.
+
+The limit is still not exact. Charged tokens are the provider's total, prompt and completion, and the
+prompt side is a character-count estimate that can be low, so a single call can still overshoot. The
+overshoot is recorded as a `BudgetEvent` instead of hidden.
+
+A route without `MaxOutputTokens` sends the whole remainder, which early in an attempt is close to
+`MaxTokens` itself (about 200000 in the shipped profile). Some providers reject a `max_tokens` above
+the model's own output limit. That is accepted rather than guessed around, because the backend does
+not know each model's limit: operators should set `Routes.*.MaxOutputTokens` to the model's output
+limit, as the shipped routes do with 8000.
 
 ## Local-Safe Ceilings Allow Slower Generation
 
-The shipped configuration uses one local-safe profile: 300 seconds per chat-provider HTTP attempt,
-600 seconds per investigation attempt, and `MaxOutputTokens: 8000` for both `analysis-chat` and
-`report-chat`. Their `ContextWindowTokens` remains 8192, and the orchestrator retains
+The shipped configuration uses one local-safe profile. Each chat-provider HTTP attempt gets 30
+seconds to connect, 600 seconds until its response starts and 600 seconds of body inactivity; an
+investigation attempt has a four-hour ceiling; and both `analysis-chat` and `report-chat` allow
+`MaxOutputTokens: 8000`. Their `ContextWindowTokens` remains 8192, and the orchestrator retains
 `MaxTokens: 200000` and `MaxReprompts: 2`.
 
-The 300-second provider deadline accommodates slower local reasoning generation while keeping one
-call noticeably below the 600-second investigation budget. That separation leaves time for other
-investigation work and keeps a provider-owned generation timeout reachable before the whole attempt
-expires. The earlier 2000-token analysis ceiling cut off a local reasoning-model response before it
+The call limits are what catch a stalled provider call; the attempt ceiling only catches a run that
+never ends. A 600-second first-output limit accommodates slow local reasoning generation, which today
+arrives in one piece because the adapter does not stream. The earlier 2000-token analysis ceiling cut off a local reasoning-model response before it
 could complete its final answer. The 8000-token ceiling gives `analysis-chat` room for both reasoning
 and the answer; `report-chat` uses the same bound for a consistent shipped profile. On most servers,
 reasoning and final-answer tokens share that output allowance.
@@ -369,12 +385,23 @@ run can finish far below them, and raising an output ceiling does not reserve to
 answer or require the provider to consume them.
 
 This profile gives slower local models more time and output allowance. Cloud operators can tighten
-host timeout and triage route/budget overrides to match their latency and cost requirements.
-Until streaming stall detection is implemented, a real stall can take longer to produce a failure.
-The investigation's remaining wall-clock budget still cancels an in-flight model call; increasing
-the provider timeout does not extend that budget. A provider-owned timeout first consumes the current
-job attempt and can retry while attempts remain. A later call canceled by the remaining investigation
-wall clock instead dead-letters immediately without consuming another job attempt.
+the provider call limits and triage route/budget overrides to match their latency and cost
+requirements. Until streaming is implemented, a non-streaming generation shows nothing before it
+finishes, so the 600-second first-output limit has to cover a whole generation and a real stall can
+take that long to produce a failure. The investigation attempt ceiling (four hours by default,
+optional) still cancels an in-flight model call when it expires; raising a provider call limit does
+not extend it. A provider call limit first consumes the current job attempt and can retry while
+attempts remain. A call canceled by the attempt ceiling instead dead-letters immediately without
+consuming another job attempt. The ceiling is deliberately long so that a slow model that keeps
+answering is not dead-lettered for being slow.
+
+The body inactivity limit bounds silence, not length. A response body that keeps delivering bytes
+more often than every 600 seconds is never cut off by it, however long it takes in total; only the
+attempt ceiling bounds such a trickle, and with the ceiling set to `0` nothing does. That is the
+intended rule for a slow but producing provider, and streaming in a later slice keeps it. The body's
+size stays bounded: it is read up to the HTTP client's maximum response content size, the same limit
+that applied when the client buffered the whole response, and a larger body ends the call as
+`provider_response_too_large`, an invalid response.
 
 ## Provider Retries Prefer Bounded Uncertainty
 

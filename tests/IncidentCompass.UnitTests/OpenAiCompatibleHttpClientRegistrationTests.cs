@@ -18,7 +18,7 @@ public sealed class OpenAiCompatibleHttpClientRegistrationTests
             {
                 ["IncidentCompass:ModelGateway:Provider"] = "OpenAiCompatible",
                 ["IncidentCompass:ModelGateway:OpenAiCompatible:ApiKey"] = "test-model-key",
-                ["IncidentCompass:ModelGateway:OpenAiCompatible:TimeoutSeconds"] = "600",
+                ["IncidentCompass:ModelGateway:OpenAiCompatible:FirstOutputTimeoutSeconds"] = "600",
                 ["IncidentCompass:Embeddings:Provider"] = "OpenAiCompatible",
                 ["IncidentCompass:Embeddings:OpenAiCompatible:ApiKey"] = "test-embedding-key",
                 ["IncidentCompass:Embeddings:OpenAiCompatible:TimeoutSeconds"] = "600"
@@ -34,7 +34,7 @@ public sealed class OpenAiCompatibleHttpClientRegistrationTests
 
         Assert.Equal(
             600,
-            provider.GetRequiredService<IOptions<OpenAiCompatibleModelClientOptions>>().Value.TimeoutSeconds);
+            provider.GetRequiredService<IOptions<OpenAiCompatibleModelClientOptions>>().Value.ResolveFirstOutputTimeoutSeconds());
         Assert.Equal(
             600,
             provider.GetRequiredService<IOptions<OpenAiCompatibleEmbeddingClientOptions>>().Value.TimeoutSeconds);

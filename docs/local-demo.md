@@ -227,12 +227,14 @@ and are not written into the result.
 This evaluator script requires PowerShell 7 or later and must be launched with `pwsh`. Windows
 PowerShell 5.1 is rejected before artifact directories, Compose projects or containers are created.
 The script separates two deadlines. `ProviderTimeoutSeconds` defaults to 420 seconds and supplies
-the per-HTTP-attempt timeout for the evaluation stack's chat and embedding providers. It remains
-below the Worker's 600-second investigation budget. `AttemptTimeoutSeconds` defaults to 660 seconds
-and bounds the evaluator's outer attempt across intake, terminal polling and transient HTTP retries,
-leaving 60 seconds beyond the Worker budget for terminal observation. The normal demo's chat
-provider timeout remains 300 seconds, and its embedding timeout remains 30 seconds; the 420-second
-embedding override is limited to the evaluation stack.
+the chat provider's first-output limit and the embedding provider's per-HTTP-attempt timeout for the
+evaluation stack. It remains below the evaluation configuration's 600-second investigation attempt
+ceiling, which that configuration still sets through the deprecated `MaxWallClockSeconds` key on
+purpose; the script resolves either key and refuses a disabled ceiling. `AttemptTimeoutSeconds`
+defaults to 660 seconds and bounds the evaluator's outer attempt across intake, terminal polling and
+transient HTTP retries, leaving 60 seconds beyond the Worker ceiling for terminal observation. The
+normal demo's chat provider keeps its 600-second first-output limit, and its embedding timeout
+remains 30 seconds; the 420-second overrides are limited to the evaluation stack.
 
 A failed attempt receives a separate five-second bounded recovery readback, is checkpointed,
 and does not prevent the remaining attempts from running. Ctrl+C and container termination request a
@@ -243,7 +245,8 @@ The result contract contains:
 - result `schemaVersion` 3, `corpusVersion`, the evaluated Git HEAD revision, a dirty flag, a Git tree or
   dirty-content hash, and a typed snapshot of every configured route: route id, kind, provider id,
   expanded model, temperature, output-token limit and context-window limit. The snapshot also stores
-  the configured orchestrator worker, token, wall-clock and reprompt budgets. Endpoint and API
+  the configured orchestrator worker, token and reprompt budgets, the deprecated wall-clock key's
+  value when set, and the resolved attempt ceiling with the key that supplied it. Endpoint and API
   key values are deliberately excluded.
 - Every requested attempt, including failures, with fault/job/config identifiers when intake reached
   them, bounded failure detail, terminal completion, observed report fields and the four pre-authored

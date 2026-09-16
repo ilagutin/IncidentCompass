@@ -134,6 +134,36 @@ release that changes the model id the shipped route names, while the installed m
 id, leaves the Worker reporting `memory_embedding_model_mismatch` until the operator installs the new
 model or sets the route's model back.
 
+## Deprecated Configuration Keys
+
+A renamed setting keeps loading under its old name until a release that states its removal. The old
+value is honoured, a warning names the new key, and setting both names at once is an error, so an
+upgrade never silently changes a configured bound.
+
+| Deprecated key | Replacement | Old value is used as | Warning | Both set |
+| --- | --- | --- | --- | --- |
+| Triage configuration `Orchestrator.Budget.MaxWallClockSeconds` | `Orchestrator.Budget.MaxAttemptDurationSeconds` | The attempt duration ceiling, with its explicit value | Event 2701 when the Api or Worker loads the file | Load error naming both keys |
+| Host setting `IncidentCompass:ModelGateway:OpenAiCompatible:TimeoutSeconds` | `IncidentCompass:ModelGateway:OpenAiCompatible:FirstOutputTimeoutSeconds` | The first-output limit | Event 2801 at host start | Options validation fails at start |
+
+Migration:
+
+- A configuration that sets neither ceiling key now gets a four-hour ceiling. `MaxWallClockSeconds`
+  was required before, so only a newly written configuration can be in that state.
+- A configuration on `MaxWallClockSeconds` keeps its ceiling. Rename the key to
+  `MaxAttemptDurationSeconds` to clear the warning, and raise the value if the old one was a short
+  total deadline chosen before the provider call limits existed; `0` removes the ceiling.
+- Configuration snapshots are stored as they were loaded and rehydrated by hash for queued jobs. A
+  snapshot written before the rename loads unchanged with its old key and its explicit value, and
+  does not log the warning. Renaming the key in the file produces a new configuration hash, as any
+  edit does.
+- `TimeoutSeconds` on the chat section used to bound one whole HTTP attempt, connection and body
+  read included. As a first-output limit it no longer covers reading the body, which is bounded by
+  `StreamInactivityTimeoutSeconds` instead, and connecting is bounded by `ConnectTimeoutSeconds`.
+  The embedding section's `TimeoutSeconds` is not deprecated and keeps its meaning.
+- The Tester's evaluation result adds the resolved ceiling as `maxAttemptDurationSeconds`, with
+  `attemptDurationSetting` naming its source. `maxWallClockSeconds` stays in the result and carries
+  the deprecated key's configured value, or `null` when the configuration does not set it.
+
 ## API
 
 - Use `/api/v1/...` from the start.

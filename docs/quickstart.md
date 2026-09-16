@@ -99,9 +99,12 @@ you point it at.
   wait for it, so the Tester can start before the corpus is seeded.
 - The Tester bounds itself at 13 minutes per scenario and 75 minutes for the whole run, which covers
   the OTLP export plus the five table scenarios.
-- Inside a scenario, one investigation attempt is bounded by the shipped 600-second
-  `Orchestrator.Budget.MaxWallClockSeconds`, and one chat HTTP attempt by the 300-second provider
-  timeout.
+- Inside a scenario, one chat HTTP attempt is bounded by the provider call limits: 30 seconds to
+  connect, 600 seconds until the response starts and 600 seconds of body inactivity. One
+  investigation attempt is bounded by the shipped four-hour
+  `Orchestrator.Budget.MaxAttemptDurationSeconds`, which is longer than the Tester's own scenario
+  bound: an investigation still running when the Tester's bound expires is reported by the Tester as
+  timed out while the Worker carries on with it.
 
 `-Mock` swaps in deterministic in-process model and embedding providers, so no model server is
 called and none of the provider latency is present. What remains is image build, PostgreSQL
@@ -158,10 +161,12 @@ The shipped local-safe profile uses these ceilings:
 
 | Setting | Default |
 |---|---|
-| Chat `ModelGateway:OpenAiCompatible:TimeoutSeconds`, per HTTP attempt | 300 seconds |
+| Chat `ModelGateway:OpenAiCompatible:ConnectTimeoutSeconds`, per HTTP attempt | 30 seconds |
+| Chat `ModelGateway:OpenAiCompatible:FirstOutputTimeoutSeconds`, per HTTP attempt | 600 seconds |
+| Chat `ModelGateway:OpenAiCompatible:StreamInactivityTimeoutSeconds`, per HTTP attempt | 600 seconds |
 | Embedding `Embeddings:OpenAiCompatible:TimeoutSeconds`, per HTTP attempt | 30 seconds |
 | Local embedding model `Embeddings:LocalOnnx:InstallTimeoutSeconds`, per install | 900 seconds |
-| `Orchestrator.Budget.MaxWallClockSeconds`, per investigation attempt | 600 seconds |
+| `Orchestrator.Budget.MaxAttemptDurationSeconds`, per investigation attempt | 14400 seconds (`0` disables it) |
 | `analysis-chat` and `report-chat` `MaxOutputTokens`, per call | 8000 each |
 | `analysis-chat` and `report-chat` `ContextWindowTokens` | 8192 each |
 | `Orchestrator.Budget.MaxWorkers` | 6 |
@@ -172,11 +177,17 @@ The shipped local-safe profile uses these ceilings:
 This is one profile for slower local generation, not a target spend or expected run duration.
 `ContextWindowTokens` limits the backend's estimate of prompt size for a route; it does not reserve
 or subtract the route's output-token allowance.
-The remaining investigation wall clock can cancel a call before its provider timeout. Cloud
-operators can tighten `IncidentCompass__ModelGateway__OpenAiCompatible__TimeoutSeconds` through
-normal host configuration and lower the route and orchestrator ceilings in their triage config.
-Until streaming stall detection is available, allowing longer generation also delays detection of
-a real stall.
+An investigation call asks the provider for at most what is left of `MaxTokens` after the tokens
+already spent and the estimated prompt, so a route's `MaxOutputTokens` is an upper bound rather than
+what every call requests.
+The attempt ceiling is a safety net for a run that never ends; a stalled provider call is caught by
+the call limit of the phase it stalled in. Cloud operators can tighten
+`IncidentCompass__ModelGateway__OpenAiCompatible__FirstOutputTimeoutSeconds` and the other call limits
+through normal host configuration, and lower the route ceilings and
+`Orchestrator.Budget.MaxAttemptDurationSeconds` in their triage config. Until streaming is available,
+the first-output limit has to cover a whole generation, so allowing longer generation also delays
+detection of a real stall. The older `TimeoutSeconds` and `MaxWallClockSeconds` keys still load with
+a warning; see `docs/versioning.md`, "Deprecated Configuration Keys".
 
 Chat routes can optionally include `"Reasoning": "off"`, `"low"`, `"medium"` or `"high"`. If
 the value is absent, no reasoning-specific provider field is sent and existing routes keep their

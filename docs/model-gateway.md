@@ -65,12 +65,62 @@ errors are `RejectedRequest`; other exhausted transport failures, including conn
 response-ended failures, are `TransportFailure` with `transport_error`; and invalid JSON or an empty
 vector is `InvalidResponse`. Caller cancellation propagates unchanged.
 
-For both OpenAI-compatible adapters, `TimeoutSeconds` bounds one HTTP attempt. The adapter owns that
-deadline through its linked cancellation token, including configured values up to 3600 seconds. The
-typed `HttpClient` has no separate deadline, so its framework default cannot end a valid long-running
-attempt early. `MaxWallClockSeconds` is a distinct investigation-attempt budget:
-`InvestigationModelCaller` checks it before each model call and passes the remaining attempt budget
-into that call through linked cancellation.
+The embedding adapter's `TimeoutSeconds` bounds one HTTP attempt. The chat adapter separates the
+phases of one HTTP attempt instead, see "Provider Call Limits" below. Neither typed `HttpClient` has
+a deadline of its own, so its framework default cannot end a valid long-running attempt early. The
+orchestrator's attempt duration ceiling is a distinct investigation-attempt bound, see "Investigation
+Attempt Ceiling" below.
+
+### Provider Call Limits
+
+The OpenAI-compatible chat adapter bounds each HTTP attempt by phase, under
+`IncidentCompass:ModelGateway:OpenAiCompatible`:
+
+| Setting | Default | Range | What it bounds |
+| --- | --- | --- | --- |
+| `ConnectTimeoutSeconds` | 30 | 1-600 | Establishing the connection. It is set on the socket handler and bounds the connection phase only. |
+| `FirstOutputTimeoutSeconds` | 600 | 1-3600 | From dispatch until the response starts. The adapter does not stream yet, and a non-streaming provider starts its response when it has finished generating, so today this bounds one whole generation per HTTP attempt. |
+| `StreamInactivityTimeoutSeconds` | 600 | 1-3600 | How long the response body may deliver no bytes once it has started. The limit restarts every time bytes arrive, so a long body that keeps arriving is not cut off. |
+
+Each limit that fires ends the call with the `GenerationTimeout` failure kind, as the single timeout
+did, and is not retried inside the adapter. The `ModelCall` row and the job's error code name the
+phase: `provider_connect_timeout`, `provider_first_output_timeout` or
+`provider_stream_inactivity_timeout`. `provider_generation_timeout` remains for an HTTP 408 answer.
+
+The connect limit lives on the socket handler, so it is recognized by the shape of what the handler
+raises: a cancellation whose direct inner exception is a `TimeoutException`. `HttpClient` produces the
+same shape when its own `Timeout` elapses, so the shape counts as a connect timeout only while the
+client has no timeout of its own, which is how the chat client is registered. A cancellation that
+none of the caller, the adapter's two timers or that shape accounts for is reported as
+`provider_dispatch_outcome_unknown` (`AmbiguousInterruption`) rather than as a timeout it may not have
+been.
+
+Once the response has started the request has certainly been sent. A body that then breaks off, as a
+reset connection or a premature end, is `provider_dispatch_outcome_unknown` as well, and is never
+replayed inside the adapter. The body is read up to the HTTP client's `MaxResponseContentBufferSize`,
+the limit that applied when the client buffered the response itself; a larger body ends the call as
+`provider_response_too_large`, an `InvalidResponse`.
+
+`TimeoutSeconds` on the chat section is deprecated. When it is set and `FirstOutputTimeoutSeconds`
+is not, its value is used as the first-output limit and a warning (event 2801) is logged at host
+start naming the new key. Setting both fails options validation at start.
+
+### Investigation Attempt Ceiling
+
+`Orchestrator.Budget.MaxAttemptDurationSeconds` in the triage configuration is an optional ceiling on
+one investigation attempt. Absent means 14400 seconds (four hours); `0` disables the ceiling; any
+other value is 1 through 604800. It is a safety net against a run that never ends, not the control
+that decides whether a slow model is still making progress: the provider call limits above are what
+catch a stalled call. `InvestigationModelCaller` checks the ceiling before each model call and, when
+one is configured, passes the time left into that call through linked cancellation. With the ceiling
+disabled no attempt-level timer is armed.
+
+`Orchestrator.Budget.MaxWallClockSeconds` is the deprecated spelling. A configuration, or a stored
+configuration snapshot, that sets only the old key keeps its explicit value as the ceiling, and the
+Api and Worker log a warning (event 2701) when they load such a file. Setting both keys is a load
+error that names both. The budget error codes are unchanged
+(`triage_budget_wall_clock_reached_before_call` and `triage_budget_wall_clock_reached_during_call`),
+and their messages name whichever key supplied the ceiling.
 
 ## Local Embedding Model
 
@@ -177,7 +227,8 @@ provider to bill; see `docs/cost-tracking.md`, "Embedding Calls Are Absent, Not 
 ## Requirements
 
 - Model name is configurable.
-- The chat-generation per-HTTP-attempt timeout is configurable and defaults to 300 seconds.
+- The chat-generation limits are configurable per HTTP attempt and per phase: connect (30 seconds),
+  first output (600 seconds) and body inactivity (600 seconds).
 - The embedding per-HTTP-attempt timeout is separately configurable and defaults to 30 seconds.
 - Chat-generation retries are limited to HTTP 429/503 responses and failures that are positively known
   to occur before dispatch: name resolution, secure-connection establishment, proxy-tunnel
@@ -221,8 +272,10 @@ tool call must contain its provider-issued id, use the `function` type, name a f
 arguments that parse as a JSON object. The adapter does not fabricate an id, discard a malformed
 tool call or wrap unparsable arguments as a string.
 
-Caller cancellation propagates unchanged. A provider-owned deadline becomes
-`provider_generation_timeout`. The positively safe pre-dispatch failures listed above become
+Caller cancellation propagates unchanged. A provider call limit becomes the code of the phase it
+bounds (`provider_connect_timeout`, `provider_first_output_timeout` or
+`provider_stream_inactivity_timeout`), and an HTTP 408 answer becomes `provider_generation_timeout`;
+all four are the `GenerationTimeout` kind. The positively safe pre-dispatch failures listed above become
 `provider_unavailable`; a generation interruption whose dispatch outcome is not known becomes
 `provider_dispatch_outcome_unknown`. Automatic redirects are disabled so a redirected POST is not
 silently replayed outside this boundary.
@@ -323,7 +376,7 @@ What is per-provider and what is host-wide:
 | Endpoint base URL | per provider, falling back to the host-wide `BaseUrl` |
 | API credential | per provider, falling back to the host-wide `ApiKey` |
 | `ChatCompletionsPath` / `EmbeddingsPath` | host-wide |
-| `TimeoutSeconds`, retry counts and delays | host-wide |
+| Call limits (`ConnectTimeoutSeconds`, `FirstOutputTimeoutSeconds`, `StreamInactivityTimeoutSeconds`; the embedding `TimeoutSeconds`), retry counts and delays | host-wide |
 | `ReasoningModes` | host-wide, keyed by provider id |
 | `AllowInsecureHttpForLoopback` | host-wide |
 | `Organization` | host-wide |
@@ -398,10 +451,13 @@ exactly why it dead-letters rather than being replayed; `Unknown` is unclassifie
 **What fail-over does not change.**
 
 - *The deadline.* Both calls share the single cancellation the attempt-budget gate created for the
-  first one, so `MaxWallClockSeconds` bounds the pair and no configured bound doubles. The provider's
-  own per-HTTP-attempt `TimeoutSeconds` still bounds each call, and a fallback that runs into the
-  attempt deadline ends as a budget exhaustion, because the attempt really did run out of time. A
-  call that is already cancelled is not failed over at all.
+  first one, so the attempt ceiling bounds the pair and no configured bound doubles. The provider
+  call limits still bound each call, and a fallback that runs into the attempt ceiling ends as a
+  budget exhaustion, because the attempt really did run out of time. A call that is already
+  cancelled is not failed over at all.
+- *The token budget.* The fallback's output limit is recomputed from the attempt usage that already
+  includes the failed call's charge. When nothing is left, the fallback is not taken and the
+  primary's failure stands, before the failed call is charged, so nothing is charged twice.
 - *Admission.* The attempt-budget gate admits the call once, before the first attempt at it: a
   fail-over is the same logical call reaching a second endpoint, not a new request asking for
   permission. One consequence is worth stating plainly: the prompt was measured against the
@@ -447,34 +503,38 @@ With `ReasoningEffort`, the route values map to the lowercase `reasoning_effort`
 `true`. That mode intentionally loses intensity, and a local server may ignore the field.
 
 `MaxOutputTokens` retains its existing semantics. On most servers it still limits the combined
-reasoning and final-answer output, rather than reserving a separate final-answer allowance.
+reasoning and final-answer output, rather than reserving a separate final-answer allowance. A route's
+`MaxOutputTokens` is an upper bound on what an investigation call requests, not always what it
+sends: the request carries the smaller of it and what is left of the attempt token budget, see
+"Investigation Budget Events" below.
 
 ### Shipped Local-Safe Profile
 
-The shipped profile pairs the chat provider's 300-second `TimeoutSeconds` with an orchestrator
-`MaxWallClockSeconds` of 600. Both `analysis-chat` and `report-chat` allow `MaxOutputTokens: 8000`
-and retain `ContextWindowTokens: 8192`; the orchestrator retains `MaxTokens: 200000` and
-`MaxReprompts: 2`. These settings form one local-safe profile for slower local generation. They are
-ceilings, not target token consumption or expected latency, and each call is still canceled when
-the investigation's remaining wall-clock budget expires.
+The shipped profile pairs the chat provider's 30-second connect limit, 600-second first-output limit
+and 600-second body inactivity limit with an orchestrator `MaxAttemptDurationSeconds` of 14400. Both
+`analysis-chat` and `report-chat` allow `MaxOutputTokens: 8000` and retain
+`ContextWindowTokens: 8192`; the orchestrator retains `MaxTokens: 200000` and `MaxReprompts: 2`.
+These settings form one local-safe profile for slower local generation. They are ceilings, not
+target token consumption or expected latency. A long investigation on a slow model that keeps
+answering is no longer stopped after ten minutes; what stops a stalled call is the provider call
+limit of the phase it stalled in.
 
 `ContextWindowTokens` only limits the backend's prompt-size estimate for a route. It does not
 subtract from or reserve room inside the separate 8000-token provider output ceiling. The
 OpenAI-compatible embedding adapter, when an operator selects it, retains its separate 30-second
 default timeout.
 
-The separation between these deadlines preserves two intentionally different dispositions. A
-stalled call that reaches its provider-owned deadline first fails as
-`provider_generation_timeout`, consumes the current job attempt and remains retryable while job
-attempts remain. If the investigation's remaining wall clock expires first, the bounded-run failure
-dead-letters immediately without spending another job attempt. Bringing the provider timeout too
-close to the investigation budget would make a later call hit the wall-clock path before its own
-timeout. Keeping the per-call ceiling noticeably lower leaves both outcomes meaningfully reachable;
-it does not prevent the remaining wall clock from canceling a call that starts late.
+The two kinds of bound keep two intentionally different dispositions. A call that reaches a
+provider call limit fails with that limit's `provider_*_timeout` code, consumes the current job
+attempt and remains retryable while job attempts remain. If the attempt ceiling expires first, the
+bounded-run failure dead-letters immediately without spending another job attempt. With the shipped
+four-hour ceiling that second outcome is reserved for a run that keeps going far beyond any expected
+investigation; an operator who sets a short ceiling brings it back into reach for ordinary calls.
 
-Cloud operators can tighten the host timeout and triage route/budget overrides for their measured
-provider latency and cost requirements. Until streaming stall detection is available, the larger
-timeouts also mean a stalled generation can take longer to surface as a failure.
+Cloud operators can tighten the provider call limits, the attempt ceiling and the triage route
+budget for their measured provider latency and cost requirements. Until streaming is implemented, a
+non-streaming generation shows no output before it finishes, so the first-output limit has to cover a
+whole generation and a stalled one takes up to that long to surface as a failure.
 
 ## Investigation Budget Events
 
@@ -493,8 +553,18 @@ fault update commit or roll back together. If the lease owner is stale, its call
 audit-visible, but the fenced update does not alter the current job or fault.
 
 Budget decisions sum `BudgetEvent.tokens_delta` and `BudgetEvent.workers_delta`, never rendered
-prompts, full provider responses, `ModelCall` rows or `BudgetEvent` rationale text. `MaxTokens`
-prevents starting a call once the current-attempt token budget is already reached; one-call overshoot
-is possible and is recorded. `MaxWallClockSeconds` is checked between calls and passed into model
-calls through cancellation. The shipped ceilings above do not change these accounting or
-cancellation rules.
+prompts, full provider responses, `ModelCall` rows or `BudgetEvent` rationale text. Before each call
+the remainder is `MaxTokens` minus the tokens the attempt has spent minus the backend's estimate of
+the prompt. A remainder of zero or less refuses the call before dispatch
+(`max_tokens_reached_before_call`); otherwise the request's `max_tokens` is the smaller of the route's
+`MaxOutputTokens` and that remainder, and a route without `MaxOutputTokens` sends the remainder,
+which early in an attempt is close to `MaxTokens` itself. Some providers reject a `max_tokens` above
+the model's own output limit, so set `Routes.*.MaxOutputTokens` to that limit; the shipped routes set
+8000. A fallback that has no remainder left is not taken, and that is recorded as a
+`max_tokens_reached_before_call` budget event naming the fallback route plus log event 3212. A
+fallback hop recomputes the remainder after the failed call's charge. Charged tokens are the
+provider's total, prompt and completion together, and the prompt estimate is an approximation, so a
+one-call overshoot is still possible and is still recorded (`max_tokens_overshot_after_call`). The
+attempt ceiling is checked between calls and, when configured, passed into model calls through
+cancellation. The shipped ceilings above do not change these accounting or cancellation rules.
+`IncidentCompass:ModelGateway:MaxOutputTokensLimit` plays no part in this investigation path.

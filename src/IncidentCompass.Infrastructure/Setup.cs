@@ -167,6 +167,9 @@ public static class Setup
                     openAiOptions.IsValid(),
                 "OpenAI-compatible model gateway configuration is invalid.")
             .ValidateOnStart();
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<
+            IValidateOptions<OpenAiCompatibleModelClientOptions>,
+            OpenAiCompatibleModelClientOptionsValidator>());
 
         return services;
     }
@@ -218,10 +221,7 @@ public static class Setup
         services
             .AddHttpClient<OpenAiCompatibleModelClient>(client =>
                 client.Timeout = Timeout.InfiniteTimeSpan)
-            .ConfigurePrimaryHttpMessageHandler(static () => new SocketsHttpHandler
-            {
-                AllowAutoRedirect = false
-            });
+            .ConfigurePrimaryHttpMessageHandler(OpenAiCompatiblePrimaryHandlerFactory.Create);
         services.TryAddScoped<MockAiModelClient>();
 
         // There is no local chat adapter. ModelGatewayProviderOptionsValidator refuses LocalOnnx

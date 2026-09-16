@@ -115,11 +115,23 @@
         "Budget": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["MaxWorkers", "MaxTokens", "MaxWallClockSeconds"],
+          "required": ["MaxWorkers", "MaxTokens"],
+          "not": { "required": ["MaxAttemptDurationSeconds", "MaxWallClockSeconds"] },
           "properties": {
             "MaxWorkers": { "type": "integer", "minimum": 1 },
             "MaxTokens": { "type": "integer", "minimum": 1 },
-            "MaxWallClockSeconds": { "type": "integer", "minimum": 1 },
+            "MaxAttemptDurationSeconds": {
+              "description": "Ceiling on one investigation attempt, in seconds. Absent means 14400; 0 disables the ceiling.",
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 604800
+            },
+            "MaxWallClockSeconds": {
+              "description": "Deprecated: use MaxAttemptDurationSeconds. When it is the only one set, its value is the attempt ceiling. Setting both is rejected.",
+              "deprecated": true,
+              "type": "integer",
+              "minimum": 1
+            },
             "MaxReprompts": { "type": "integer", "minimum": 0 },
             "MaxTurns": { "type": "integer", "minimum": 1, "maximum": 64 }
           }

@@ -5,28 +5,33 @@ using IncidentCompass.Application.Core.Serialization;
 using IncidentCompass.Application.Intake.Configuration;
 using IncidentCompass.Infrastructure.Configuration;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
 namespace IncidentCompass.Infrastructure.Intake;
 
-internal sealed class FileTriageConfigurationRepository : ITriageConfigurationRepository
+internal sealed partial class FileTriageConfigurationRepository : ITriageConfigurationRepository
 {
     private readonly IHostEnvironment hostEnvironment;
     private readonly IOptions<TriageConfigSourceOptions> configSourceOptions;
     private readonly TriageConfigurationMaterializer materializer;
     private readonly ITriageConfigurationSnapshotStore snapshotStore;
+    private readonly ILogger<FileTriageConfigurationRepository> logger;
     private readonly Lazy<Task<TriageConfiguration>> lazyConfiguration;
 
     public FileTriageConfigurationRepository(
         IHostEnvironment hostEnvironment,
         IOptions<TriageConfigSourceOptions> configSourceOptions,
         TriageConfigurationMaterializer materializer,
-        ITriageConfigurationSnapshotStore snapshotStore)
+        ITriageConfigurationSnapshotStore snapshotStore,
+        ILogger<FileTriageConfigurationRepository>? logger = null)
     {
         this.hostEnvironment = hostEnvironment;
         this.configSourceOptions = configSourceOptions;
         this.materializer = materializer;
         this.snapshotStore = snapshotStore;
+        this.logger = logger ?? NullLogger<FileTriageConfigurationRepository>.Instance;
         lazyConfiguration = new Lazy<Task<TriageConfiguration>>(
             () => LoadAsync(persistSnapshot: true, CancellationToken.None),
             LazyThreadSafetyMode.ExecutionAndPublication);
@@ -89,6 +94,18 @@ internal sealed class FileTriageConfigurationRepository : ITriageConfigurationRe
             throw new InvalidOperationException(
                 $"Triage configuration file '{absolutePath}' is invalid: {exception.Message}",
                 exception);
+        }
+
+        // Warned here, where the operator-edited file is read, rather than in the materializer, which
+        // also rehydrates stored snapshots for every claimed job and would repeat the warning per job.
+        var budget = configuration.Orchestrator.Budget;
+        if (budget.UsesDeprecatedMaxWallClockSeconds())
+        {
+            LogDeprecatedAttemptDurationKey(
+                logger,
+                OrchestratorBudgetSettings.MaxWallClockSecondsSettingName,
+                budget.ResolveAttemptDurationSeconds(),
+                OrchestratorBudgetSettings.MaxAttemptDurationSecondsSettingName);
         }
 
         if (persistSnapshot)
@@ -170,4 +187,14 @@ internal sealed class FileTriageConfigurationRepository : ITriageConfigurationRe
                 break;
         }
     }
+
+    [LoggerMessage(
+        EventId = 2701,
+        Level = LogLevel.Warning,
+        Message = "Triage configuration sets the deprecated {DeprecatedSetting}; its value {AttemptDurationSeconds} is used as the attempt duration ceiling. Rename it to {CurrentSetting}.")]
+    private static partial void LogDeprecatedAttemptDurationKey(
+        ILogger logger,
+        string deprecatedSetting,
+        int attemptDurationSeconds,
+        string currentSetting);
 }

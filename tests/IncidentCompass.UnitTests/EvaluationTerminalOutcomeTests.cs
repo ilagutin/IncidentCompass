@@ -136,7 +136,7 @@ public sealed class EvaluationTerminalOutcomeTests
             "test-revision",
             "git-tree:test",
             false,
-            new EvaluationConfigurationSnapshot([], new EvaluationOrchestratorBudgetResult(4, 1000, 60, 1)),
+            new EvaluationConfigurationSnapshot([], new EvaluationOrchestratorBudgetResult(4, 1000, 60, 1, 60, EvaluationOrchestratorBudgetResult.DeprecatedAttemptDurationSetting)),
             true,
             false);
 
