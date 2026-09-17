@@ -377,6 +377,12 @@ could complete its final answer. The 8000-token ceiling gives `analysis-chat` ro
 and the answer; `report-chat` uses the same bound for a consistent shipped profile. On most servers,
 reasoning and final-answer tokens share that output allowance.
 
+A verbose model that runs into that allowance is refused rather than half-answered: a completion the
+provider finished on `length` becomes `provider_output_limit_reached`, its partial text is discarded
+and the job dead-letters without a retry, because the same request would be cut at the same place. The
+fix is the operator's, not a retry: raise the route's `MaxOutputTokens` up to what the model allows, or
+give the call a smaller task.
+
 `ContextWindowTokens: 8192` only bounds the backend's prompt-size estimate. It neither subtracts
 from nor reserves room in the separate 8000-token output allowance. Embedding calls keep their
 separate 30-second default timeout.

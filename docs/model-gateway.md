@@ -136,7 +136,11 @@ A stream ends at `data: [DONE]`, and nothing after it is read. It fails closed:
 - A tool-call fragment that cannot belong to a well-formed call is `invalid_response` at once: one
   without an `index`, an index that skips past the next unstarted call, a new call whose first
   fragment has no id, or a fragment naming a different id, type or function name than its call
-  already has. Assembled arguments that are not a JSON object are refused as on the JSON path.
+  already has. Assembled arguments that are not a JSON object are refused as on the JSON path,
+  unless the stream finished on `length`: a cut-off answer is `provider_output_limit_reached`
+  whatever its arguments look like. A fragment that breaks one of the structural rules above is
+  still `invalid_response`, because it is refused the moment it arrives, before any finish reason
+  is judged.
   The `index` rule is deliberate: some OpenAI-compatible layers, historically including some
   Gemini- and Mistral-compatible ones, stream tool-call fragments without `index`. Their tool calls
   are refused as `invalid_response`, and such a provider needs `Streaming=false`.
@@ -320,11 +324,19 @@ provider to bill; see `docs/cost-tracking.md`, "Embedding Calls Are Absent, Not 
 ## Provider Response And Failure Boundary
 
 The OpenAI-compatible adapter fails closed when a response cannot be mapped to the provider-neutral
-contract. A completion with no usable content or tool call and `finish_reason: length` becomes
-`provider_output_limit_reached`; `empty_response` is reserved for a genuinely empty completion. A
-tool call must contain its provider-issued id, use the `function` type, name a function and carry
-arguments that parse as a JSON object. The adapter does not fabricate an id, discard a malformed
-tool call or wrap unparsable arguments as a string.
+contract. Every completion whose first choice reports `finish_reason: length` becomes
+`provider_output_limit_reached`, with or without partial content and with or without tool calls: the
+provider said the answer was cut off, so the partial text is discarded and never returned to the
+caller, and a tool call the ceiling cut through is reported under this code rather than as an invalid
+tool call. The check runs before the tool calls are parsed, so the recorded reason is the one that
+actually ended the completion. Usage and the returned model are still carried on the failure, because
+the call was generated and is paid for. The rule reads the OpenAI wire value `length` and nothing
+else: a compatibility layer that reports a cut-off answer under another finish reason, such as
+`max_tokens` or `model_length`, is not recognised and its partial answer is still returned as a
+completion. `empty_response` is reserved for a genuinely empty completion
+that did not hit the ceiling. A tool call must contain its provider-issued id, use the `function`
+type, name a function and carry arguments that parse as a JSON object. The adapter does not fabricate
+an id, discard a malformed tool call or wrap unparsable arguments as a string.
 
 Caller cancellation propagates unchanged. A provider call limit becomes the code of the phase it
 bounds (`provider_connect_timeout`, `provider_first_output_timeout` or
