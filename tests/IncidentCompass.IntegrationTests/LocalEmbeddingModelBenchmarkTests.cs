@@ -38,8 +38,8 @@ public sealed class LocalEmbeddingModelBenchmarkTests(PostgresRepositoryFixture 
         var cancellationToken = TestContext.Current.CancellationToken;
         var startedAt = DateTimeOffset.UtcNow;
         var repoRoot = RepositoryRootLocator.Find();
-        var corpus = MemoryRetrievalBenchmarkCorpus.Load(repoRoot);
-        var multilingual = MemoryRetrievalMultilingualQueries.Load(repoRoot);
+        var corpus = MemoryRetrievalBenchmarkCorpus.LoadV2(repoRoot);
+        var multilingual = MemoryRetrievalMultilingualQueries.LoadV2(repoRoot);
         var groups = new (string Name, MemoryRetrievalBenchmarkCorpus Corpus)[]
         {
             ("en", corpus),
@@ -117,7 +117,8 @@ public sealed class LocalEmbeddingModelBenchmarkTests(PostgresRepositoryFixture 
                     pipeline,
                     fallbackModes,
                     rawSummary,
-                    rawQueries));
+                    rawQueries,
+                    CountCategories(groupCorpus)));
             }
 
             var latency = await LocalEmbeddingModelBenchmarkMeasurements.MeasureLatencyAsync(
@@ -135,8 +136,8 @@ public sealed class LocalEmbeddingModelBenchmarkTests(PostgresRepositoryFixture 
         }
 
         var record = new LocalEmbeddingModelBenchmarkRecord(
-            2,
-            "local-embedding-model-benchmark-v2",
+            LocalEmbeddingModelBenchmarkContract.SchemaVersion,
+            LocalEmbeddingModelBenchmarkContract.Benchmark,
             corpus.CorpusVersion,
             multilingual.Version,
             startedAt,
@@ -176,6 +177,15 @@ public sealed class LocalEmbeddingModelBenchmarkTests(PostgresRepositoryFixture 
                     "incidentcompass.config.json"));
             builder.UseSetting("IncidentCompass:Memory:Seed:Enabled", "false");
         });
+
+    private static LocalEmbeddingModelBenchmarkCategoryCounts CountCategories(MemoryRetrievalBenchmarkCorpus corpus) => new(
+        CountCategory(corpus, MemoryRetrievalQueryCategory.Positive),
+        CountCategory(corpus, MemoryRetrievalQueryCategory.OffTopic),
+        CountCategory(corpus, MemoryRetrievalQueryCategory.HardNegative));
+
+    private static int CountCategory(MemoryRetrievalBenchmarkCorpus corpus, string category) =>
+        corpus.Queries.Count(query =>
+            string.Equals(MemoryRetrievalQueryCategory.Of(query), category, StringComparison.Ordinal));
 
     private static LocalEmbeddingModelBenchmarkMachine DescribeMachine() => new(
         Environment.ProcessorCount,

@@ -21,7 +21,23 @@ public sealed record MemoryRetrievalBenchmarkCorpus(
     IReadOnlyList<MemoryRetrievalBenchmarkItem> Items,
     IReadOnlyList<MemoryRetrievalBenchmarkQuery> Queries)
 {
-    public static MemoryRetrievalBenchmarkCorpus Load(string repoRoot)
+    /// <summary>The first corpus, whose queries carry no category and whose numbers the versioned baseline pins.</summary>
+    public const string Version1 = "memory-retrieval-corpus-v1";
+
+    /// <summary>
+    /// The grown corpus. Every version 1 item and query is carried over verbatim so the recorded
+    /// measurements stay comparable; every query additionally names a
+    /// <see cref="MemoryRetrievalQueryCategory" />.
+    /// </summary>
+    public const string Version2 = "memory-retrieval-corpus-v2";
+
+    /// <summary>Loads the version 1 corpus, the one the versioned baseline is recorded against.</summary>
+    public static MemoryRetrievalBenchmarkCorpus Load(string repoRoot) => LoadFile(repoRoot, "corpus-v1.json");
+
+    /// <summary>Loads the version 2 corpus, the one that carries hard negatives and query categories.</summary>
+    public static MemoryRetrievalBenchmarkCorpus LoadV2(string repoRoot) => LoadFile(repoRoot, "corpus-v2.json");
+
+    private static MemoryRetrievalBenchmarkCorpus LoadFile(string repoRoot, string fileName)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(repoRoot);
         var path = Path.Combine(
@@ -30,7 +46,7 @@ public sealed record MemoryRetrievalBenchmarkCorpus(
             "IncidentCompass.IntegrationTests",
             "Fixtures",
             "MemoryRetrieval",
-            "corpus-v1.json");
+            fileName);
         var corpus = JsonSerializer.Deserialize<MemoryRetrievalBenchmarkCorpus>(
             File.ReadAllText(path),
             SerializerOptions) ?? throw new InvalidOperationException("Memory retrieval corpus is empty.");
@@ -150,7 +166,7 @@ public sealed record MemoryRetrievalBenchmarkCorpus(
 
     private void Validate()
     {
-        if (SchemaVersion != 1 || CorpusVersion != "memory-retrieval-corpus-v1" || TopK != 5)
+        if ((SchemaVersion, CorpusVersion) is not ((1, Version1) or (2, Version2)) || TopK != 5)
         {
             throw new InvalidOperationException("Unsupported memory retrieval corpus contract.");
         }
@@ -181,6 +197,48 @@ public sealed record MemoryRetrievalBenchmarkCorpus(
             .Any(static group => group.Key < 0))
         {
             throw new InvalidOperationException("Chunk positions must be non-negative.");
+        }
+
+        ValidateCategories();
+    }
+
+    /// <summary>
+    /// A version 1 query carries no category, so its category is derived from its relevance arrays and
+    /// only the label/category agreement is checked. From version 2 the field is part of the contract:
+    /// it must be present, must name a known category, and the corpus must exercise all three.
+    /// </summary>
+    private void ValidateCategories()
+    {
+        foreach (var query in Queries)
+        {
+            if (SchemaVersion >= 2 &&
+                (query.Category is null || !MemoryRetrievalQueryCategory.IsKnown(query.Category)))
+            {
+                throw new InvalidOperationException(
+                    "Query '" + query.Id + "' must name a known category from corpus schema 2 on.");
+            }
+
+            var labelled = query.RelevantItemIds.Count > 0 || query.RelevantChunkIds.Count > 0;
+            if (MemoryRetrievalQueryCategory.Of(query) == MemoryRetrievalQueryCategory.Positive)
+            {
+                if (query.RelevantItemIds.Count == 0 || query.RelevantChunkIds.Count == 0)
+                {
+                    throw new InvalidOperationException(
+                        "Positive query '" + query.Id + "' must label a relevant item and chunk.");
+                }
+            }
+            else if (labelled)
+            {
+                throw new InvalidOperationException(
+                    "Query '" + query.Id + "' is not positive, so both relevance arrays must be empty.");
+            }
+        }
+
+        if (SchemaVersion >= 2 &&
+            MemoryRetrievalQueryCategory.All.Any(category =>
+                !Queries.Any(query => string.Equals(query.Category, category, StringComparison.Ordinal))))
+        {
+            throw new InvalidOperationException("The corpus must contain a query of every category.");
         }
     }
 
@@ -242,9 +300,15 @@ public sealed record MemoryRetrievalBenchmarkItem(
 
 public sealed record MemoryRetrievalBenchmarkChunk(Guid Id, int Position, string Text);
 
+/// <summary>
+/// One benchmark query. <paramref name="Category" /> is null for a version 1 corpus, which predates the
+/// field, and is required from version 2 on. Read it through
+/// <see cref="MemoryRetrievalQueryCategory.Of" /> when a derived value is acceptable.
+/// </summary>
 public sealed record MemoryRetrievalBenchmarkQuery(
     string Id,
     string Text,
     string ServiceName,
     IReadOnlyList<Guid> RelevantItemIds,
-    IReadOnlyList<Guid> RelevantChunkIds);
+    IReadOnlyList<Guid> RelevantChunkIds,
+    string? Category = null);
