@@ -28,10 +28,35 @@ internal static class MockIncidentCompassMemoryQuery
         {
             if (line.StartsWith(prefix, StringComparison.Ordinal))
             {
-                return line[prefix.Length..].Trim();
+                return DecodePromptValue(line[prefix.Length..].Trim());
             }
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// The prompt writes every scalar as a JSON string literal, so the value arrives wrapped in quotes
+    /// and with each non-ASCII character escaped. A real model reads that literal and emits its query
+    /// inside JSON tool arguments, where the escapes decode again; the mock has to perform the same
+    /// decode or a Cyrillic message would reach memory_search as Latin <c>u0422</c> fragments, which
+    /// count against lexical coverage and leave the query with no word in its own script. A value that
+    /// is not a valid JSON string literal is used exactly as written.
+    /// </summary>
+    private static string DecodePromptValue(string value)
+    {
+        if (!value.StartsWith('"'))
+        {
+            return value;
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<string>(value) ?? value;
+        }
+        catch (JsonException)
+        {
+            return value;
+        }
     }
 }
