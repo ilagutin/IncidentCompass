@@ -6,9 +6,10 @@ using IncidentCompass.Application.Memory;
 namespace IncidentCompass.IntegrationTests;
 
 /// <summary>
-/// The three measurements the local embedding model benchmark takes on a seeded corpus: the production
-/// <c>memory_search</c> pipeline over a range of <c>MinScore</c> values, the raw vector ranking, and
-/// query embedding latency.
+/// The four measurements the local embedding model benchmark takes on a seeded corpus: the production
+/// <c>memory_search</c> pipeline over a range of <c>MinScore</c> values, the same pipeline over each
+/// <c>VectorOnlyFallback</c> mode at the shipped floor, the raw vector ranking, and query embedding
+/// latency.
 /// </summary>
 internal static class LocalEmbeddingModelBenchmarkMeasurements
 {
@@ -20,17 +21,31 @@ internal static class LocalEmbeddingModelBenchmarkMeasurements
 
     public const int LatencyMeasuredPasses = 30;
 
+    /// <summary>The shipped floor, at which every fallback mode is measured.</summary>
+    public const double ShippedMinScore = 0.25;
+
     public static readonly IReadOnlyList<double> PipelineMinScores =
         [0.25, 0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80, 0.85, 0.90];
 
     /// <summary>
+    /// The sweep keeps <c>off</c> so its numbers stay comparable with records taken before the setting
+    /// existed; the modes are measured separately at <see cref="ShippedMinScore" />.
+    /// </summary>
+    public static readonly IReadOnlyList<string> PipelineFallbackModes =
+        [MemorySearchVectorOnlyFallbackSetting.Off,
+         MemorySearchVectorOnlyFallbackSetting.ForeignScript,
+         MemorySearchVectorOnlyFallbackSetting.Always];
+
+    /// <summary>
     /// The host configuration with <c>memory-embed</c> routed to a <c>LocalOnnx</c> provider naming the
-    /// installed model id, and <c>memory_search</c> at <paramref name="minScore" />.
+    /// installed model id, and <c>memory_search</c> at <paramref name="minScore" /> under
+    /// <paramref name="vectorOnlyFallback" />.
     /// </summary>
     public static TriageConfiguration ConfigurationFor(
         TriageConfiguration hostConfiguration,
         LocalEmbeddingModelBenchmarkModel model,
-        double minScore)
+        double minScore,
+        string vectorOnlyFallback = MemorySearchVectorOnlyFallbackSetting.Off)
     {
         var providers = new Dictionary<string, TriageProviderSettings>(hostConfiguration.Providers, StringComparer.Ordinal)
         {
@@ -47,7 +62,11 @@ internal static class LocalEmbeddingModelBenchmarkMeasurements
                 null)
         };
         var tools = new Dictionary<string, TriageToolSettings>(hostConfiguration.Tools, StringComparer.Ordinal);
-        tools["memory_search"] = tools["memory_search"] with { MinScore = minScore };
+        tools["memory_search"] = tools["memory_search"] with
+        {
+            MinScore = minScore,
+            VectorOnlyFallback = vectorOnlyFallback
+        };
         return hostConfiguration with { Providers = providers, Routes = routes, Tools = tools };
     }
 
@@ -59,19 +78,83 @@ internal static class LocalEmbeddingModelBenchmarkMeasurements
         Action<TriageConfiguration> setCurrentConfiguration,
         CancellationToken cancellationToken)
     {
-        var tool = new MemorySearchTool(model.Client, repository);
         var results = new List<LocalEmbeddingModelBenchmarkPipelineResult>(PipelineMinScores.Count);
         foreach (var minScore in PipelineMinScores)
         {
-            var configuration = ConfigurationFor(hostConfiguration, model, minScore);
-            setCurrentConfiguration(configuration);
-            var run = await new ProductionMemoryRetrievalStrategy(tool, configuration)
-                .ExecuteAsync(corpus, cancellationToken);
-            var evaluation = MemoryRetrievalMetrics.Evaluate(corpus, run);
-            results.Add(new LocalEmbeddingModelBenchmarkPipelineResult(minScore, evaluation.Metrics, evaluation.Queries));
+            var run = await RunPipelineAsync(
+                hostConfiguration, model, repository, corpus, minScore,
+                MemorySearchVectorOnlyFallbackSetting.Off, setCurrentConfiguration, cancellationToken);
+            results.Add(new LocalEmbeddingModelBenchmarkPipelineResult(
+                minScore, run.Evaluation.Metrics, run.Evaluation.Queries));
         }
 
         return results;
+    }
+
+    /// <summary>
+    /// The same production pipeline at the shipped floor under each fallback mode, with the count of
+    /// returned items per retrieval-confidence band beside the ordinary retrieval metrics.
+    /// </summary>
+    public static async Task<IReadOnlyList<LocalEmbeddingModelBenchmarkFallbackResult>> MeasureFallbackModesAsync(
+        TriageConfiguration hostConfiguration,
+        LocalEmbeddingModelBenchmarkModel model,
+        IMemoryRepository repository,
+        MemoryRetrievalBenchmarkCorpus corpus,
+        Action<TriageConfiguration> setCurrentConfiguration,
+        CancellationToken cancellationToken)
+    {
+        var results = new List<LocalEmbeddingModelBenchmarkFallbackResult>(PipelineFallbackModes.Count);
+        foreach (var mode in PipelineFallbackModes)
+        {
+            var run = await RunPipelineAsync(
+                hostConfiguration, model, repository, corpus, ShippedMinScore,
+                mode, setCurrentConfiguration, cancellationToken);
+            results.Add(new LocalEmbeddingModelBenchmarkFallbackResult(
+                mode,
+                ShippedMinScore,
+                run.Evaluation.Metrics,
+                CountConfidenceBands(run.Results),
+                run.Evaluation.Queries));
+        }
+
+        return results;
+    }
+
+    private static async Task<(IReadOnlyList<MemoryRetrievalQueryResult> Results, MemoryRetrievalEvaluation Evaluation)> RunPipelineAsync(
+        TriageConfiguration hostConfiguration,
+        LocalEmbeddingModelBenchmarkModel model,
+        IMemoryRepository repository,
+        MemoryRetrievalBenchmarkCorpus corpus,
+        double minScore,
+        string vectorOnlyFallback,
+        Action<TriageConfiguration> setCurrentConfiguration,
+        CancellationToken cancellationToken)
+    {
+        var configuration = ConfigurationFor(hostConfiguration, model, minScore, vectorOnlyFallback);
+        setCurrentConfiguration(configuration);
+        var results = await new ProductionMemoryRetrievalStrategy(
+            new MemorySearchTool(model.Client, repository), configuration)
+            .ExecuteAsync(corpus, cancellationToken);
+        return (results, MemoryRetrievalMetrics.Evaluate(corpus, results));
+    }
+
+    private static Dictionary<string, int> CountConfidenceBands(
+        IReadOnlyList<MemoryRetrievalQueryResult> results)
+    {
+        var counts = new Dictionary<string, int>(StringComparer.Ordinal)
+        {
+            [MemoryRetrievalConfidence.High] = 0,
+            [MemoryRetrievalConfidence.Medium] = 0,
+            [MemoryRetrievalConfidence.Low] = 0
+        };
+        foreach (var band in results.SelectMany(static result => result.Matches)
+                     .Select(static match => match.RetrievalConfidence)
+                     .OfType<string>())
+        {
+            counts[band] = counts.TryGetValue(band, out var count) ? count + 1 : 1;
+        }
+
+        return counts;
     }
 
     public static async Task<(LocalEmbeddingModelBenchmarkRawSummary Summary, IReadOnlyList<LocalEmbeddingModelBenchmarkRawQuery> Queries)> MeasureRawAsync(

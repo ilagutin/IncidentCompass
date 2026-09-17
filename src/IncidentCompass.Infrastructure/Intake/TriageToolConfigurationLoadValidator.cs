@@ -2,6 +2,7 @@ using System.Globalization;
 using IncidentCompass.Application.Governance.ActionApprovals;
 using IncidentCompass.Application.Governance.Tools;
 using IncidentCompass.Application.Intake.Configuration;
+using IncidentCompass.Application.Memory;
 using IncidentCompass.Application.Notifications;
 using IncidentCompass.Domain.Incidents.Actions;
 using static IncidentCompass.Infrastructure.Intake.TriageConfigurationValidationGuards;
@@ -91,24 +92,44 @@ internal sealed class TriageToolConfigurationLoadValidator(IAgentToolRegistry to
 
         if (string.Equals(toolName, MemorySearchToolName, StringComparison.Ordinal))
         {
-            RequireNonBlank("Tools." + toolName + ".EmbeddingRouteId", tool.EmbeddingRouteId ?? string.Empty);
-            RequireEmbeddingRoute(routes, tool.EmbeddingRouteId!, "Tools." + toolName + ".EmbeddingRouteId");
-            if (tool.TopK is <= 0)
-            {
-                throw Invalid("Tools." + toolName + ".TopK", tool.TopK.Value.ToString(CultureInfo.InvariantCulture), "a positive integer when set");
-            }
-
-            if (tool.MinScore is < -1 or > 1)
-            {
-                throw Invalid("Tools." + toolName + ".MinScore", tool.MinScore.Value.ToString(CultureInfo.InvariantCulture), "a score between -1 and 1 when set");
-            }
-
+            ValidateMemorySearchTool(routes, toolName, tool);
             return;
+        }
+
+        if (tool.VectorOnlyFallback is not null)
+        {
+            throw Invalid("Tools." + toolName, toolName, "no memory_search retrieval settings");
         }
 
         if (!string.IsNullOrWhiteSpace(tool.EmbeddingRouteId))
         {
             RequireEmbeddingRoute(routes, tool.EmbeddingRouteId, "Tools." + toolName + ".EmbeddingRouteId");
+        }
+    }
+
+    private static void ValidateMemorySearchTool(
+        IReadOnlyDictionary<string, TriageRouteSettings> routes,
+        string toolName,
+        TriageToolSettings tool)
+    {
+        RequireNonBlank("Tools." + toolName + ".EmbeddingRouteId", tool.EmbeddingRouteId ?? string.Empty);
+        RequireEmbeddingRoute(routes, tool.EmbeddingRouteId!, "Tools." + toolName + ".EmbeddingRouteId");
+        if (tool.TopK is <= 0)
+        {
+            throw Invalid("Tools." + toolName + ".TopK", tool.TopK.Value.ToString(CultureInfo.InvariantCulture), "a positive integer when set");
+        }
+
+        if (tool.MinScore is < -1 or > 1)
+        {
+            throw Invalid("Tools." + toolName + ".MinScore", tool.MinScore.Value.ToString(CultureInfo.InvariantCulture), "a score between -1 and 1 when set");
+        }
+
+        if (tool.VectorOnlyFallback is { } vectorOnlyFallback)
+        {
+            RequireKnown(
+                "Tools." + toolName + "." + MemorySearchVectorOnlyFallbackSetting.SettingName,
+                vectorOnlyFallback,
+                MemorySearchVectorOnlyFallbackSetting.KnownValues);
         }
     }
 
@@ -129,7 +150,8 @@ internal sealed class TriageToolConfigurationLoadValidator(IAgentToolRegistry to
             throw Invalid("Tools." + toolName + ".LogicalTargetId", tool.LogicalTargetId, "the registered safe logical target id");
         }
 
-        if (tool.EmbeddingRouteId is not null || tool.TopK is not null || tool.MinScore is not null)
+        if (tool.EmbeddingRouteId is not null || tool.TopK is not null || tool.MinScore is not null ||
+            tool.VectorOnlyFallback is not null)
         {
             throw Invalid("Tools." + toolName, toolName, "no immediate-read settings");
         }

@@ -8,6 +8,13 @@ namespace IncidentCompass.Infrastructure.ModelGateway.Mock;
 
 internal static class MockIncidentCompassScripts
 {
+    /// <summary>The band memory_search gives an item the vector-only fallback returned.</summary>
+    private const string UnconfirmedBand = "low";
+
+    private const string NoMatchesReason = "no matches";
+
+    private const string UnconfirmedOnlyReason = "no lexically confirmed matches";
+
     public static AiModelResponse OrchestratorResponse(AiModelRequest request)
     {
         var toolResults = request.Messages
@@ -134,6 +141,12 @@ internal static class MockIncidentCompassScripts
         });
     }
 
+    /// <summary>
+    /// Follows the shipped memory role instructions rather than trusting <c>matched</c>: an item banded
+    /// <c>low</c> came from the vector-only fallback and is not lexically confirmed, so the mock drops
+    /// it instead of quoting it, and returns the honest empty result when nothing else is left. Without
+    /// this the mock profile would turn an unconfirmed cross-language hit into a KnownIncident report.
+    /// </summary>
     private static string MemoryWorkerJson(string toolResult)
     {
         using var document = JsonDocument.Parse(toolResult);
@@ -141,17 +154,17 @@ internal static class MockIncidentCompassScripts
         var matched = root.TryGetProperty("matched", out var matchedElement) && matchedElement.GetBoolean();
         if (!matched)
         {
-            return JsonSerializer.Serialize(new
-            {
-                matched = false,
-                items = Array.Empty<object>(),
-                noMatchReason = ReadOptionalString(root, "noMatchReason") ?? "no matches"
-            });
+            return NoMemoryMatchJson(ReadOptionalString(root, "noMatchReason") ?? NoMatchesReason);
         }
 
         var items = new JsonArray();
         foreach (var item in root.GetProperty("items").EnumerateArray())
         {
+            if (string.Equals(ReadOptionalString(item, "retrievalConfidence"), UnconfirmedBand, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
             items.Add(new JsonObject
             {
                 ["artifactId"] = ReadOptionalString(item, "artifactId") ?? string.Empty,
@@ -161,12 +174,24 @@ internal static class MockIncidentCompassScripts
             });
         }
 
+        if (items.Count == 0)
+        {
+            return NoMemoryMatchJson(UnconfirmedOnlyReason);
+        }
+
         return new JsonObject
         {
             ["matched"] = true,
             ["items"] = items
         }.ToJsonString();
     }
+
+    private static string NoMemoryMatchJson(string noMatchReason) => JsonSerializer.Serialize(new
+    {
+        matched = false,
+        items = Array.Empty<object>(),
+        noMatchReason
+    });
 
     private static bool ContainsMemoryRoleResult(string value)
     {

@@ -20,30 +20,56 @@ internal static class MemorySearchReranker
             ["postmortem"] = ["postmortem"]
         };
 
-    public static IReadOnlyList<MemorySearchMatch> Rank(
+    /// <summary>
+    /// Ranks the candidates the repository already bounded by <c>MinScore</c>. Lexically supported
+    /// candidates are returned whenever there is at least one; only when there is none does
+    /// <paramref name="vectorOnlyFallback" /> decide whether the whole candidate set is returned
+    /// unconfirmed instead of nothing.
+    /// </summary>
+    public static IReadOnlyList<MemorySearchRankedMatch> Rank(
         string query,
         TriageConfiguration configuration,
         string faultServiceName,
         IReadOnlyList<MemorySearchMatch> candidates,
-        int topK)
+        int topK,
+        MemorySearchVectorOnlyFallback vectorOnlyFallback)
     {
-        return MemorySearchLexicalFilter.ApplyForReranking(query, candidates)
-            .Select(match => (
-                Match: match,
-                Features: CreateFeatures(query, configuration, faultServiceName, match)))
-            .OrderByDescending(static ranked => ranked.Features.CombinedScore)
-            .ThenByDescending(static ranked => ranked.Features.VectorScore)
-            .ThenBy(static ranked => ranked.Match.ChunkId)
-            .Take(topK)
-            .Select(static ranked => ranked.Match)
+        var evaluated = candidates
+            .Select(match => (Match: match, Support: MemorySearchLexicalFilter.Evaluate(query, match.Text)))
             .ToArray();
+        var supported = evaluated.Where(static candidate => candidate.Support.IsSupported).ToArray();
+        if (supported.Length > 0)
+        {
+            return Order(query, configuration, faultServiceName, supported, topK, vectorOnly: false);
+        }
+
+        return AllowsVectorOnly(query, candidates, vectorOnlyFallback)
+            ? Order(query, configuration, faultServiceName, evaluated, topK, vectorOnly: true)
+            : [];
     }
 
     internal static MemorySearchRankingFeatures CreateFeatures(
         string query,
         TriageConfiguration configuration,
         string faultServiceName,
-        MemorySearchMatch match)
+        MemorySearchMatch match) =>
+        CreateFeatures(
+            query,
+            configuration,
+            faultServiceName,
+            match,
+            MemorySearchLexicalFilter.Evaluate(query, match.Text));
+
+    /// <summary>
+    /// The ranking path has already judged the candidate, so it passes that judgement in rather than
+    /// letting the lexical boost tokenize the same chunk text a second time.
+    /// </summary>
+    private static MemorySearchRankingFeatures CreateFeatures(
+        string query,
+        TriageConfiguration configuration,
+        string faultServiceName,
+        MemorySearchMatch match,
+        MemorySearchLexicalSupport support)
     {
         var documentation = MemoryDocumentationStatusEvaluator.Assess(
             configuration,
@@ -56,7 +82,7 @@ internal static class MemorySearchReranker
             MemoryDocumentationStatus.Unversioned => UnversionedDocumentationBoost,
             _ => 0
         };
-        var lexicalBoost = MemorySearchLexicalFilter.Coverage(query, match.Text);
+        var lexicalBoost = support.Coverage;
         var componentBoost = !string.IsNullOrWhiteSpace(match.Component) &&
             MemorySearchLexicalFilter.ContainsNormalizedTokenOrPhrase(query, match.Component)
             ? ComponentBoost
@@ -75,10 +101,67 @@ internal static class MemorySearchReranker
             evidenceKindBoost);
     }
 
+    private static MemorySearchRankedMatch[] Order(
+        string query,
+        TriageConfiguration configuration,
+        string faultServiceName,
+        IReadOnlyList<(MemorySearchMatch Match, MemorySearchLexicalSupport Support)> candidates,
+        int topK,
+        bool vectorOnly)
+    {
+        return candidates
+            .Select(candidate => (
+                candidate.Match,
+                candidate.Support,
+                Features: CreateFeatures(
+                    query, configuration, faultServiceName, candidate.Match, candidate.Support)))
+            .OrderByDescending(static ranked => ranked.Features.CombinedScore)
+            .ThenByDescending(static ranked => ranked.Features.VectorScore)
+            .ThenBy(static ranked => ranked.Match.ChunkId)
+            .Take(topK)
+            .Select(ranked => new MemorySearchRankedMatch(
+                ranked.Match,
+                MemoryRetrievalConfidence.Band(ranked.Support, vectorOnly),
+                vectorOnly))
+            .ToArray();
+    }
+
+    private static bool AllowsVectorOnly(
+        string query,
+        IReadOnlyList<MemorySearchMatch> candidates,
+        MemorySearchVectorOnlyFallback vectorOnlyFallback) => vectorOnlyFallback switch
+        {
+            MemorySearchVectorOnlyFallback.Always => true,
+            MemorySearchVectorOnlyFallback.ForeignScript => HasScriptNoCandidateWrites(query, candidates),
+            _ => false
+        };
+
+    /// <summary>
+    /// True when the query carries a counted word in a writing system none of the candidates use, which
+    /// is the one case where lexical absence says nothing about relevance. When no candidate has a
+    /// counted word at all the comparison is vacuous - every script is missing from an empty set - so
+    /// it is not treated as a foreign script.
+    /// </summary>
+    private static bool HasScriptNoCandidateWrites(string query, IReadOnlyList<MemorySearchMatch> candidates)
+    {
+        var candidateScripts = new HashSet<WritingScript>();
+        foreach (var candidate in candidates)
+        {
+            candidateScripts.UnionWith(MemorySearchLexicalFilter.CountedScripts(candidate.Text));
+        }
+
+        if (candidateScripts.Count == 0)
+        {
+            return false;
+        }
+
+        return MemorySearchLexicalFilter.CountedScripts(query)
+            .Any(script => script != WritingScript.Neutral && !candidateScripts.Contains(script));
+    }
+
     private static bool HasEvidenceKindAlias(string query, string kind)
     {
         return EvidenceKindAliases.TryGetValue(kind, out var aliases) &&
             aliases.Any(alias => MemorySearchLexicalFilter.ContainsNormalizedTokenOrPhrase(query, alias));
     }
-
 }

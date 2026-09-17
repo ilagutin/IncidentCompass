@@ -74,7 +74,10 @@ public sealed class LocalEmbeddingModelBenchmarkTests(PostgresRepositoryFixture 
                 options,
                 () => currentConfiguration,
                 cancellationToken);
-            currentConfiguration = LocalEmbeddingModelBenchmarkMeasurements.ConfigurationFor(hostConfiguration, model, 0.25);
+            currentConfiguration = LocalEmbeddingModelBenchmarkMeasurements.ConfigurationFor(
+                hostConfiguration,
+                model,
+                LocalEmbeddingModelBenchmarkMeasurements.ShippedMinScore);
             await corpus.SeedWithEmbeddingIdentityAsync(
                 connectionString,
                 model.Client,
@@ -93,6 +96,13 @@ public sealed class LocalEmbeddingModelBenchmarkTests(PostgresRepositoryFixture 
                     groupCorpus,
                     configuration => currentConfiguration = configuration,
                     cancellationToken);
+                var fallbackModes = await LocalEmbeddingModelBenchmarkMeasurements.MeasureFallbackModesAsync(
+                    hostConfiguration,
+                    model,
+                    repository,
+                    groupCorpus,
+                    configuration => currentConfiguration = configuration,
+                    cancellationToken);
                 var (rawSummary, rawQueries) = await LocalEmbeddingModelBenchmarkMeasurements.MeasureRawAsync(
                     model,
                     repository,
@@ -105,6 +115,7 @@ public sealed class LocalEmbeddingModelBenchmarkTests(PostgresRepositoryFixture 
                     positiveCount,
                     groupCorpus.Queries.Count - positiveCount,
                     pipeline,
+                    fallbackModes,
                     rawSummary,
                     rawQueries));
             }
@@ -124,8 +135,8 @@ public sealed class LocalEmbeddingModelBenchmarkTests(PostgresRepositoryFixture 
         }
 
         var record = new LocalEmbeddingModelBenchmarkRecord(
-            1,
-            "local-embedding-model-benchmark-v1",
+            2,
+            "local-embedding-model-benchmark-v2",
             corpus.CorpusVersion,
             multilingual.Version,
             startedAt,
@@ -179,6 +190,8 @@ public sealed class LocalEmbeddingModelBenchmarkTests(PostgresRepositoryFixture 
     private static LocalEmbeddingModelBenchmarkSettings DescribeSettings(MemoryRetrievalBenchmarkCorpus corpus) => new(
         corpus.TopK,
         LocalEmbeddingModelBenchmarkMeasurements.PipelineMinScores,
+        LocalEmbeddingModelBenchmarkMeasurements.PipelineFallbackModes,
+        LocalEmbeddingModelBenchmarkMeasurements.ShippedMinScore,
         LocalEmbeddingModelBenchmarkMeasurements.RawMinScore,
         LocalEmbeddingModelBenchmarkMeasurements.RawRankingDepth,
         LocalEmbeddingModelBenchmarkMeasurements.LatencyWarmupPasses,
@@ -186,7 +199,11 @@ public sealed class LocalEmbeddingModelBenchmarkTests(PostgresRepositoryFixture 
         1,
         "MemorySearchTool over the real LocalOnnx adapter: memory-embed routed to a LocalOnnx provider naming the" +
         " installed model id, TopK " + corpus.TopK.ToString(CultureInfo.InvariantCulture) +
-        ", candidates above MinScore then MemorySearchReranker; metrics from MemoryRetrievalMetrics.",
+        ", candidates above MinScore then MemorySearchReranker; metrics from MemoryRetrievalMetrics." +
+        " The MinScore sweep runs with Tools.memory_search.VectorOnlyFallback off, so its numbers stay comparable" +
+        " with records taken before that setting existed.",
+        "The same pipeline at the shipped MinScore under each VectorOnlyFallback mode, with the count of returned" +
+        " items per retrievalConfidence band beside the ordinary retrieval metrics.",
         "Repository vector search with MinScore -1 over every active chunk; nDCG@10 with binary chunk relevance," +
         " chunk and item recall@5 and @10 macro-averaged over positive queries.",
         "Direct adapter query embedding per query text (English, Polish, Russian), 5 warm-up and 30 measured passes" +

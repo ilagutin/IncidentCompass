@@ -184,6 +184,10 @@
         "EmbeddingRouteId": { "type": ["string", "null"] },
         "TopK": { "type": ["integer", "null"], "minimum": 1 },
         "MinScore": { "type": ["number", "null"], "minimum": -1, "maximum": 1 },
+        "VectorOnlyFallback": {
+          "enum": ["off", "foreign_script", "always", null],
+          "description": "memory_search only. What to return when lexical coverage leaves no candidate. Absent: foreign_script, which returns vector-only matches only when the query uses a script no candidate writes."
+        },
         "Category": { "enum": ["notification", "ticket_create", "ticket_update", "code_write", "branch_push", "pr_create", null] },
         "LogicalTargetId": { "type": ["string", "null"], "minLength": 1, "maxLength": 128 },
         "Mode": { "enum": ["live", "dry_run", "disabled", null] },

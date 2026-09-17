@@ -627,13 +627,61 @@ only exact normalized query matches against stored metadata and code-owned alias
 
 This is a bounded reference implementation, not a general hybrid-search engine. Its fixed lexical rules
 may need revision for multilingual or much larger corpora, and overfetch adds query and application work.
-The coverage rule keeps a candidate only when at least half of the query's words appear in the chunk
-text. That is what keeps unrelated chunks out, because vector scores alone do not separate them, but it
-also means a query in another language than the corpus, such as a Polish or Russian query over English
-runbooks, usually returns no match even when the multilingual embedding ranks the right chunk near the
-top, unless enough English identifiers such as error types or service names appear in the query.
-PostgreSQL full-text search, reciprocal-rank fusion, adaptive retries and caller-configurable ranking
-weights remain deferred. Each execution makes exactly one embedding request and one repository search.
+The coverage rule keeps a candidate only when at least half of the query's eligible words appear in the
+chunk text. That is what keeps unrelated chunks out, because vector scores alone do not separate them:
+on the shipped model the benchmark's relevant and unrelated chunks score alike, so no floor and no
+score gap can tell a cross-language hit from a query about another topic.
+
+Eligibility is what makes another *script* work. A counted query word is eligible against a candidate
+only when the candidate's own text uses that word's writing system, or when the word has no letter at
+all, so Cyrillic words are not counted against an English chunk that can never contain them. A Russian
+query over the English corpus is therefore carried by whatever Latin identifiers it keeps, and one
+that keeps none is handled by `Tools.memory_search.VectorOnlyFallback`, whose default `foreign_script`
+returns the vector candidates unconfirmed when the query uses a script no candidate writes. The two
+mechanisms are measured separately on the shipped model: Russian pipeline recall@5 was 0 before this
+change, eligibility alone takes it to 0.17 because it admits the one query that keeps its Latin
+identifiers, and the default fallback takes it from there to 1.00 over the six positive queries.
+
+Several costs come with it. A foreign-script query is judged on fewer words, so it is more permissive
+than the same query in the corpus language: a Russian query about another topic that still names the
+service can pass on the service name alone. The fallback is not relevance: both Russian no-match
+queries return five unconfirmed items each, which is why such a match is always banded `low` and never
+`high`. A firing fallback also returns item sets that vary with the query, where a failing lexical gate
+returned the same empty result every time, so a model that loops through reworded queries is recognised
+as making no progress later than it would have been before.
+
+The band does not survive into the report. A `low` item is an ordinary `RetrievedItem` artifact, and
+report evidence grounding derives the evidence kind from the memory item's own kind, so an unconfirmed
+item the model chooses to cite appears in the published report exactly like a lexically confirmed one.
+`retrievalConfidence` exists only in the tool output and in the artifact payload; dropping an
+unconfirmed item is the memory role's job, and the role is a model. This applies to the shipped default
+on foreign-script queries, not only to `always`.
+
+The default's trigger is an operational edge worth knowing: it compares the query's scripts against the
+*whole* candidate set, not against each candidate. One Russian runbook among English ones puts Cyrillic
+into the candidate set, so no Russian query has a missing script any more and the default fallback stops
+firing for every Russian query in that tenant. Those queries then depend on lexical support exactly like
+a same-script query, which for Russian text over mostly English chunks usually means the empty result.
+An operator who mixes scripts in one corpus and wants the old behaviour has to choose `always` and
+accept its cost.
+
+Another *language* in the same script is a different problem and is not solved. A Polish query over
+English runbooks is all Latin, so no script is missing, the fallback does not fire, and the pipeline
+returns nothing even though the multilingual embedding ranks the right chunk near the top. Setting
+`VectorOnlyFallback` to `always` recovers it - Polish recall@5 goes from 0 to 1.00 on the benchmark -
+but it removes the empty result for *every* query without lexical support, English off-topic queries
+included: both English no-match queries then return five unconfirmed `low` items apiece, and deciding
+whether any of them is about the fault becomes the model's judgement rather than the backend's. That
+is why the default is `foreign_script` and not `always`: the backend keeps the honest empty result
+wherever lexical absence is evidence, and only stands aside where it is not. The memory role is
+instructed to query in the corpus language and to drop a `low` item whose quote is not about the
+fault, but that is guidance to a model, not a guarantee.
+
+`retrievalConfidence` names that admission path rather than a score band: the values keep their names,
+but `high` now means full lexical coverage with nothing excluded, `medium` partial or script-reduced
+coverage, and `low` a vector-only match. PostgreSQL full-text search, reciprocal-rank fusion, adaptive
+retries and caller-configurable ranking weights remain deferred. Each execution still makes exactly one
+embedding request and one repository search.
 
 ## Deterministic Grouping Is Not Incident Correlation
 

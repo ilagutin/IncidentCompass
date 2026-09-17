@@ -18,6 +18,9 @@ internal sealed class MemorySearchTool(IEmbeddingClient embeddingClient, IMemory
     private const double DefaultMinScore = 0.25;
     private const int MaxTopK = 20;
     private const int MaxQuoteLength = 500;
+    private const string MatchesFoundMessage = "matches found";
+    private const string NoMatchesMessage = "no matches";
+    private const string VectorOnlyMatchesMessage = "vector-only matches, not lexically confirmed";
 
     public AiToolDefinition Definition { get; } = new(
         "memory_search",
@@ -93,19 +96,20 @@ internal sealed class MemorySearchTool(IEmbeddingClient embeddingClient, IMemory
             new MemorySearchRequest(context.TenantId, embedding.Provider, embedding.Model,
                 embedding.Vector.Count, embedding.Vector, CalculateCandidateCount(topK), NormalizeMinScore(toolSettings.MinScore)),
             cancellationToken);
-        var matches = MemorySearchReranker.Rank(
+        var ranked = MemorySearchReranker.Rank(
             query,
             context.Configuration,
             context.FaultServiceName,
             candidates,
-            topK);
+            topK,
+            MemorySearchVectorOnlyFallbackSetting.Resolve(toolSettings.VectorOnlyFallback));
 
-        var drafts = matches
+        var drafts = ranked
             .Select(match => CreateRetrievedDraft(context, embedding, match))
             .ToArray();
         return new ToolExecutionResult(
             ToolExecutionStatus.Succeeded,
-            CreateOutput(context, matches, drafts),
+            CreateOutput(context, ranked, drafts),
             Artifacts: drafts);
     }
 
@@ -113,14 +117,15 @@ internal sealed class MemorySearchTool(IEmbeddingClient embeddingClient, IMemory
     // so it is always 36 characters of hexadecimal and hyphens. It cannot break a rule, and a
     // refusal would mean the runtime's own formatting changed rather than that a connector supplied
     // something unexpected.
-    private static ToolArtifactDraft CreateRetrievedDraft(AgentToolExecutionContext context, EmbeddingResponse embedding, MemorySearchMatch match) =>
+    private static ToolArtifactDraft CreateRetrievedDraft(AgentToolExecutionContext context, EmbeddingResponse embedding, MemorySearchRankedMatch ranked) =>
         new(
             ArtifactKind.RetrievedItem,
-            ArtifactDomainRef.Create("memory_item", match.MemoryItemId.ToString()),
-            CreateRetrievedPayload(context, embedding, match));
+            ArtifactDomainRef.Create("memory_item", ranked.Match.MemoryItemId.ToString()),
+            CreateRetrievedPayload(context, embedding, ranked));
 
-    private static JsonObject CreateRetrievedPayload(AgentToolExecutionContext context, EmbeddingResponse embedding, MemorySearchMatch match)
+    private static JsonObject CreateRetrievedPayload(AgentToolExecutionContext context, EmbeddingResponse embedding, MemorySearchRankedMatch ranked)
     {
+        var match = ranked.Match;
         var documentation = MemoryDocumentationStatusEvaluator.Assess(context.Configuration, context.FaultServiceName, match);
         return new JsonObject
         {
@@ -133,7 +138,7 @@ internal sealed class MemorySearchTool(IEmbeddingClient embeddingClient, IMemory
             ["headingPath"] = match.HeadingPath,
             ["quote"] = CreateQuote(match.Text),
             ["score"] = Math.Round(match.Score, 6),
-            ["retrievalConfidence"] = MemoryRetrievalConfidence.Band(match.Score),
+            ["retrievalConfidence"] = ranked.RetrievalConfidence,
             ["serviceName"] = match.ServiceName,
             ["component"] = match.Component,
             ["release"] = match.ReleaseName,
@@ -145,12 +150,12 @@ internal sealed class MemorySearchTool(IEmbeddingClient embeddingClient, IMemory
         };
     }
 
-    private static JsonElement CreateOutput(AgentToolExecutionContext context, IReadOnlyList<MemorySearchMatch> matches, ToolArtifactDraft[] drafts)
+    private static JsonElement CreateOutput(AgentToolExecutionContext context, IReadOnlyList<MemorySearchRankedMatch> ranked, ToolArtifactDraft[] drafts)
     {
         var items = new JsonArray();
-        for (var i = 0; i < matches.Count; i++)
+        for (var i = 0; i < ranked.Count; i++)
         {
-            var match = matches[i];
+            var match = ranked[i].Match;
             var documentation = MemoryDocumentationStatusEvaluator.Assess(context.Configuration, context.FaultServiceName, match);
             items.Add(new JsonObject
             {
@@ -163,7 +168,7 @@ internal sealed class MemorySearchTool(IEmbeddingClient embeddingClient, IMemory
                 ["source"] = match.Source,
                 ["quote"] = CreateQuote(match.Text),
                 ["score"] = Math.Round(match.Score, 6),
-                ["retrievalConfidence"] = MemoryRetrievalConfidence.Band(match.Score),
+                ["retrievalConfidence"] = ranked[i].RetrievalConfidence,
                 ["serviceName"] = match.ServiceName,
                 ["component"] = match.Component,
                 ["release"] = match.ReleaseName,
@@ -172,13 +177,30 @@ internal sealed class MemorySearchTool(IEmbeddingClient embeddingClient, IMemory
             });
         }
 
+        var matched = ranked.Count > 0;
         return CanonicalJsonSerializer.ToElement(new JsonObject
         {
-            ["matched"] = matches.Count > 0,
-            ["message"] = matches.Count > 0 ? "matches found" : "no matches",
+            ["matched"] = matched,
+            ["message"] = ResolveMessage(ranked),
             ["items"] = items,
-            ["noMatchReason"] = matches.Count > 0 ? null : "no matches"
+            ["noMatchReason"] = matched ? null : NoMatchesMessage
         });
+    }
+
+    /// <summary>
+    /// A vector-only result is reported under its own sentence so the role can tell an unconfirmed set
+    /// apart from a lexically confirmed one without reading each item's band.
+    /// </summary>
+    private static string ResolveMessage(IReadOnlyList<MemorySearchRankedMatch> ranked)
+    {
+        if (ranked.Count == 0)
+        {
+            return NoMatchesMessage;
+        }
+
+        return ranked.Any(static match => match.VectorOnly)
+            ? VectorOnlyMatchesMessage
+            : MatchesFoundMessage;
     }
 
     private static string CreateQuote(string text)
