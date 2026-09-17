@@ -307,16 +307,18 @@ variable; only `docker-compose.yml` alone falls back to that value when it is un
 `memory rebuild` on the Worker once the model is installed: until then the corpus was built under
 another route, and `memory_search` cannot reach it.
 
-**Changing the route model opens a window in which memory searches dead-letter.** Once
-`INCIDENTCOMPASS_EMBEDDINGS_MODEL` names a different model, a one-off
-`docker compose run --rm worker memory status` or `memory rebuild` recreates the running API with the
-new route model, while the running Worker keeps the model it verified at start until it is restarted.
-Every triage job that reaches `memory_search` in that window has its embedding call refused, spends
-its attempts and is dead-lettered with `memory_embedding_model_mismatch`. Installing a model with
-`memory model install` before the route variable changes leaves the previous corpus retrievable. The
-procedure in [Single-host production runbook](single-host-production.md), "Local embedding model", is
-unchanged: run its steps 2 to 4 back to back, or stop the long-running Worker for that time so it
-claims nothing, and expect jobs that reach `memory_search` during the window to dead-letter.
+**Changing the route model follows an order, and a job caught across it dead-letters.** A job is pinned
+to the route model of the API that created it, and the Worker refuses an embedding call whose model is
+not the one it has installed. The procedure in
+[Single-host production runbook](single-host-production.md), "Local embedding model", therefore runs
+every one-off command with `--no-deps`, so `docker compose run` does not recreate the running API at a
+moment the procedure did not choose, and goes in this order: install the model, let the queue drain and
+stop the Worker, change `INCIDENTCOMPASS_EMBEDDINGS_MODEL` and recreate the API alone, run
+`memory rebuild`, recreate the Worker. Installing a model leaves the previous corpus retrievable, and
+jobs that arrive while the Worker is stopped wait and complete on the new corpus. What remains is a job
+created before the API was recreated and not finished before the Worker restarted: its snapshot names
+the previous model, so its `memory_search` call is refused, it spends its attempts and is dead-lettered
+with `memory_embedding_model_mismatch`.
 
 **Run `memory rebuild` to get section chunks.** A corpus seeded before migration 036 keeps its
 whole-file chunks and reports current; it is re-chunked only by `memory rebuild`. Any later change to a
@@ -393,9 +395,10 @@ create the GitHub App described in [Versioning and release flow](versioning.md) 
   rule means a query in another language than the corpus usually finds nothing.
 - Accounting of external embedding calls. An embedding call served by an OpenAI-compatible server
   still appears in no count, token total or spend figure.
-- A seamless change of the embedding route model. Between changing `INCIDENTCOMPASS_EMBEDDINGS_MODEL`
-  and restarting the Worker, jobs that reach `memory_search` dead-letter with
-  `memory_embedding_model_mismatch`; see the upgrade notes.
+- Requeueing a job across a change of the embedding route model. A job created before the route model
+  changed and still unfinished when the Worker restarts dead-letters with
+  `memory_embedding_model_mismatch`; the documented order keeps that to jobs already in flight, see the
+  upgrade notes.
 
 ## Verification
 
