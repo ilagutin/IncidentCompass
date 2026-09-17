@@ -182,6 +182,18 @@ inside untrusted text as it would in any UTF-8 prompt, and a character that is i
 a format character, such as a Hangul filler or a variation selector, now arrives raw. Neither can end
 a quoted value or a prompt line.
 
+The same rule now covers text one model call wrote that a later backend-authored prompt carries, which
+three places used to carry raw: the name of a tool the orchestrator invented, the `task` a `delegate`
+call names for its worker, and the suggestion a recovery review returns. Raw, each of them could forge
+a line the backend appeared to have written - a context marker, a copy of the answer rule that follows
+the context, or a whole second context block. Each is now one JSON string literal on one line, the
+tool name is capped at 128 code units and named identically by the tool message and the reprompt, and
+the worker prompt's label says the next line is the orchestrator's task as a JSON string. A delegated
+task is still the instruction the worker follows; quoting only stops it forging structure, and the LLM
+is still not a security boundary. The shared text cut also cuts on a rune boundary now, so a bound can
+no longer leave half of a surrogate pair behind, which the model-facing encoder wrote as U+FFFD and a
+PostgreSQL `text` column cannot store at all.
+
 ### Provider calls are bounded by phase, and the attempt by a long ceiling
 
 The single chat `TimeoutSeconds` bounded a whole HTTP attempt, so a slow local model either needed a
@@ -487,7 +499,7 @@ gate.
 including the PostgreSQL-backed integration tests through Testcontainers with
 `INCIDENTCOMPASS_REQUIRE_DOCKER_TESTS` set.
 
-On the release tree the full solution run reported 2813 tests: 2809 passed, 0 failed and 4
+On the release tree the full solution run reported 2835 tests: 2831 passed, 0 failed and 4
 skipped. The skips are three symbolic-link tests the Windows test process cannot create links for
 and the explicit OpenAPI baseline regeneration, which only `scripts/update-openapi-baseline.ps1`
 runs.

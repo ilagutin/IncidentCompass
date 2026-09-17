@@ -1,6 +1,7 @@
 using IncidentCompass.Application.Core.Errors;
 using IncidentCompass.Application.Core.ModelClients;
 using IncidentCompass.Application.Core.Resilience;
+using IncidentCompass.Application.Core.Text;
 using IncidentCompass.Application.Intake.Configuration;
 using IncidentCompass.Domain.Incidents;
 
@@ -34,7 +35,10 @@ namespace IncidentCompass.Application.Investigation.Jobs;
 /// </remarks>
 internal sealed class InvestigationRecoveryCall(InvestigationModelCaller modelCaller, TriageLedgerAppender ledgerAppender)
 {
-    /// <summary>The bound, in UTF-16 code units, on the suggestion text that reaches the orchestrator.</summary>
+    /// <summary>
+    /// The bound, in UTF-16 code units, on the suggestion text that reaches the orchestrator. The cut
+    /// is <see cref="TextTruncator"/>'s, so it never splits a surrogate pair.
+    /// </summary>
     internal const int MaxSuggestionLength = 2000;
 
     internal const string EmptySuggestion = "The recovery review returned no suggestion.";
@@ -68,7 +72,7 @@ internal sealed class InvestigationRecoveryCall(InvestigationModelCaller modelCa
                 tools: null,
                 cancellationToken);
             var text = string.IsNullOrWhiteSpace(response.Content) ? EmptySuggestion : response.Content.Trim();
-            return InvestigationRecoveryOutcome.Suggested(TruncateOnRuneBoundary(text, MaxSuggestionLength));
+            return InvestigationRecoveryOutcome.Suggested(TextTruncator.Truncate(text, MaxSuggestionLength));
         }
         catch (TriageBudgetExhaustedException refused) when (
             refused.ErrorCode is TriageBudgetExhaustedException.MaxTokensReachedCode or
@@ -83,21 +87,6 @@ internal sealed class InvestigationRecoveryCall(InvestigationModelCaller modelCa
             await ledgerAppender.AppendModelCallAccountingAsync(job, failure.Accounting, CancellationToken.None);
             return InvestigationRecoveryOutcome.Failed(failure.Accounting.Metadata.ErrorCode);
         }
-    }
-
-    /// <summary>
-    /// Cuts <paramref name="text"/> to at most <paramref name="maxLength"/> code units without splitting
-    /// a surrogate pair.
-    /// </summary>
-    internal static string TruncateOnRuneBoundary(string text, int maxLength)
-    {
-        if (text.Length <= maxLength)
-        {
-            return text;
-        }
-
-        var cut = char.IsHighSurrogate(text[maxLength - 1]) ? maxLength - 1 : maxLength;
-        return text[..cut];
     }
 
     private static bool WouldRepeat(InvestigationModelCallFailureException failure) =>

@@ -215,6 +215,16 @@ report.
   space, unassigned and private-use code points and supplementary-plane characters all stay escaped.
   Nothing durable moved - hashes, fingerprints, stored payloads, `ModelCall` metadata, intake and the
   provider request body keep the previous encoding, and ASCII text is byte-identical to before.
+- Text one model call wrote reached a later backend-authored prompt or message raw in three places, so
+  it could forge a line the backend appeared to have written: a context marker, a copy of the answer
+  rule that follows the context, or a whole second context block. The name of a tool the orchestrator
+  invented, the `task` a `delegate` call names for its worker and the suggestion a recovery review
+  returns are each now one JSON string literal on one line, the tool name is capped at 128 code units
+  and named identically by the tool message and the reprompt, and the worker prompt's label says the
+  next line is the orchestrator's task as a JSON string. A delegated task is still the instruction the
+  worker follows; what quoting removes is only the forging of structure. The shared text cut also cuts
+  on a rune boundary now, so a bound can no longer leave half of a surrogate pair, which the
+  model-facing encoder wrote as U+FFFD and a PostgreSQL `text` column cannot store.
 
 ### Security
 

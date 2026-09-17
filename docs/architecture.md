@@ -713,7 +713,8 @@ except the events named below.
   classification (a vocabulary label or `none`) and the fixed task the orchestrator was given. It
   holds no tool output, argument, task text or incident context. The answer, trimmed and bounded to
   2000 characters, is appended to the orchestrator conversation as a user message that says it is a
-  recovery suggestion and not an instruction; a tool call the answer proposes is ignored. A
+  recovery suggestion and not an instruction, with the answer itself on its own line as one JSON string
+  literal; a tool call the answer proposes is ignored. A
   `no_progress: recovery` budget event and log event 3407 are written, the no-progress window starts
   again and the orchestrator continues, still acting only through `delegate` and `publish_report`.
   The recovery call is not a turn and cannot trigger another recovery. How it can end:
@@ -778,7 +779,12 @@ line and paragraph separators, the format characters including the bidirectional
 supplementary-plane character stay escaped; a letter or a mark of any Basic Multilingual Plane script
 now passes as itself, so a Russian or Polish incident reads as words rather than as six characters per
 letter, and a script that spells a word with a zero-width joiner keeps an escape for that one
-character. Tool results and delegate results take the same rule. Nothing durable moves with it: the
+character. Tool results and delegate results take the same rule, and so does text one model call
+wrote that a later backend-authored prompt or message carries, wherever it sits: the delegated `task`
+is one JSON string literal on the line after the backend's `Task (written by the orchestrator, one
+JSON string):` label, the recovery suggestion is one literal after the backend's prefix, and the name
+of a tool the orchestrator invented is capped at 128 code units and written as one literal in both the
+tool message and the reprompt. Nothing durable moves with it: the
 canonical writer, every hash and fingerprint, stored payloads, `ModelCall` metadata, the intake path
 and the provider request body all keep the framework default, and a ledger rationale is plain text
 that no JSON encoder reaches. The prompt-size estimate is character-based, so the same change also

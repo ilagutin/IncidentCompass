@@ -880,6 +880,29 @@ is not a security boundary and prompt hygiene is not enforcement: what keeps a m
 instructions hidden in incident text is that nothing it says executes anything, because every tool
 call is validated, policy-checked and dispatched by the backend.
 
+**The rule is about who wrote the text, not about which block it sits in.** A value written by a
+sender or by a model is a JSON string literal wherever a backend-authored prompt or message carries
+it, including outside the two markers. Three places carry text one model call wrote into a later one.
+An orchestrator turn that names a tool the backend does not have gets a tool message and a reprompt,
+and both name the tool; the name is whatever the model said, so it is capped at 128 UTF-16 code units,
+cut on a rune boundary so the cap cannot leave half of a surrogate pair, and written as one literal in
+both messages rather than between apostrophes in one of them. A `delegate` call's `task` becomes the
+worker's instruction, and it is written as one literal on the line after
+`Task (written by the orchestrator, one JSON string):`, which is the backend saying who wrote the next
+line and how to read it. The suggestion a recovery review returns follows the backend's prefix on its
+own line as one literal, after the trim and the 2000-character bound that already applied to it.
+
+**What that gives, and what it does not.** A delegated task is still an instruction the worker
+follows: that is the design, and quoting does not change it. What quoting removes is the ability to
+forge structure. Raw, a task could carry its own `END_UNTRUSTED_INCIDENT_CONTEXT` line, its own copy of
+the answer rule the backend writes after the context, or a whole second context block, and the worker
+had no way to tell those lines from the backend's own. Quoted, all of it is one value on one line, so
+the only marker lines, answer rules and labels in the prompt are the ones the backend wrote. The same
+holds for the recovery suggestion appended to the orchestrator conversation and for the name of an
+unsupported tool. It stays prompt hygiene rather than enforcement, for the reason above: the LLM is not
+a security boundary, and what keeps a model from acting on a forged instruction is that nothing it says
+executes anything.
+
 **What stays escaped.** Stated by Unicode category, because that is how it is decided rather than by a
 list someone maintains. Every character of categories Cc (control), Cf (format), Zl and Zp (the line
 and paragraph separators U+2028 and U+2029), Cn (unassigned) and Co (private use) is escaped, as is
@@ -908,14 +931,15 @@ otherwise readable text, so Persian words joined that way and Indic or Sinhala c
 around a `U+200C` or `U+200D` escape rather than whole.
 
 **Where the rule applies, and where it does not.** Only to text a model reads: the three prompts
-above, a worker tool's result, a delegate's result and the backend diagnostics that reach the model
-as tool messages. `CanonicalJsonSerializer` and every hash and fingerprint computed from it, stored
-artifact payloads and their content hashes, `ModelCall` metadata, the whole intake path and the
-provider request body all keep the framework default, which escapes every non-ASCII character. Those
-are contracts compared across processes and releases rather than renderings, and the provider decodes
-its own request body before a prompt exists. A ledger rationale is not in either list: it is a plain
-text column, not a JSON document, and no JSON encoder reaches it. For ASCII text the two encodings
-are byte-identical, so nothing an English incident produced has changed.
+above, the three carried values above, a worker tool's result, a delegate's result and the backend
+diagnostics that reach the model as tool messages. `CanonicalJsonSerializer` and every hash and
+fingerprint computed from it, stored artifact payloads and their content hashes, `ModelCall`
+metadata, the whole intake path and the provider request body all keep the framework default, which
+escapes every non-ASCII character. Those are contracts compared across processes and releases rather
+than renderings, and the provider decodes its own request body before a prompt exists. A ledger
+rationale is not in either list: it is a plain text column, not a JSON document, and no JSON encoder
+reaches it. For ASCII text the two encodings are byte-identical, so nothing an English incident
+produced has changed.
 
 **The residual.** Two things, and neither can end a quoted value or a prompt line.
 
