@@ -189,7 +189,7 @@ public sealed class LocalModelCorpusIdentityTests(PostgresRepositoryFixture post
             ModelFileSha256 = modelDigest
         };
         var state = new LocalOnnxModelInstallState();
-        state.RecordInstalled(new LocalOnnxInstalledModel(LocalOnnxModelStore.CreateManifest(options), "unused.onnx", "unused.model"));
+        state.RecordInstalled(new LocalOnnxInstalledModel(LocalOnnxModelStore.CreateManifest(options.CreatePin()), "unused.onnx", "unused.model"));
         return state;
     }
 

@@ -13,17 +13,18 @@ internal static class LocalOnnxModelManifestSerializer
     {
         WriteIndented = true,
 
-        // Every manifest field is required. A missing field is refused rather than read with the
-        // type's default: a manifest without "normalize" would otherwise read as false and quietly
-        // produce unnormalized vectors.
+        // Every field a manifest of any kind must carry is required here. A missing one is refused
+        // rather than read with the type's default: a manifest without "normalize" would otherwise
+        // read as false and quietly produce unnormalized vectors. The fields only one kind carries
+        // are nullable instead, and IsComplete refuses a kind that lacks one of its own.
         RespectRequiredConstructorParameters = true,
         RespectNullableAnnotations = true
     };
 
     /// <summary>
     /// Returns <see langword="null" /> when no manifest is installed, and refuses one that is not
-    /// valid JSON, lacks any field, uses another schema version, or carries a value the adapter
-    /// cannot use.
+    /// valid JSON, lacks a field its kind calls for, names no kind this version knows, uses an
+    /// unsupported schema version, or carries a value the adapter cannot use.
     /// </summary>
     public static async Task<LocalOnnxModelManifest?> ReadAsync(string manifestPath, CancellationToken cancellationToken)
     {
@@ -52,6 +53,13 @@ internal static class LocalOnnxModelManifestSerializer
                 exception);
         }
 
+        // A schema 1 manifest predates the kind field and could only ever describe an embedding
+        // model, so it is read as that kind. A shipped release wrote those manifests onto operator
+        // volumes; refusing one here would close the embedding path on every host that upgrades.
+        manifest = manifest is { SchemaVersion: LocalOnnxModelManifest.LegacyEmbeddingSchemaVersion, Kind: null }
+            ? manifest with { Kind = LocalOnnxModelManifest.EmbeddingKind }
+            : manifest;
+
         if (manifest is null || !IsComplete(manifest))
         {
             throw new LocalOnnxModelStoreException(
@@ -62,11 +70,26 @@ internal static class LocalOnnxModelManifestSerializer
         return manifest;
     }
 
+    /// <summary>
+    /// Writes the active manifest, refusing one this version could not read back before anything is
+    /// created. A manifest that fails the same check <see cref="ReadAsync" /> applies would install
+    /// a model directory that refuses itself on the next read, so it is refused here, where the
+    /// caller still has a model directory in the state it was in.
+    /// </summary>
     public static async Task WriteAtomicallyAsync(
         string manifestPath,
         LocalOnnxModelManifest manifest,
         CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(manifest);
+        if (!IsComplete(manifest))
+        {
+            throw new LocalOnnxModelStoreException(
+                LocalOnnxModelErrorCodes.ManifestInvalid,
+                $"The manifest of {manifest.Id} is of kind '{manifest.Kind}' and lacks a field that kind" +
+                " requires, so it was not written; the model directory was left as it was.");
+        }
+
         var temporaryPath = manifestPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
@@ -137,23 +160,47 @@ internal static class LocalOnnxModelManifestSerializer
         }
     }
 
+    /// <summary>
+    /// What every manifest must carry, whatever it describes. The schema is this version's or the
+    /// embedding-only one it replaced, and both files are named, addressed and digested.
+    /// </summary>
     private static bool IsComplete(LocalOnnxModelManifest manifest) =>
-        manifest.SchemaVersion == LocalOnnxModelManifest.CurrentSchemaVersion &&
+        manifest.SchemaVersion is LocalOnnxModelManifest.CurrentSchemaVersion
+            or LocalOnnxModelManifest.LegacyEmbeddingSchemaVersion &&
         !string.IsNullOrWhiteSpace(manifest.Id) &&
         !string.IsNullOrWhiteSpace(manifest.Revision) &&
-        IsComplete(manifest.ModelFile, LocalOnnxModelArtifact.OnnxKind) &&
-        IsComplete(manifest.TokenizerFile, LocalOnnxModelArtifact.SentencePieceKind) &&
-        manifest.Dimensions > 0 &&
+        !string.IsNullOrWhiteSpace(manifest.License) &&
         manifest.MaxTokens >= 3 &&
-        manifest.QueryPrefix is not null &&
-        manifest.PassagePrefix is not null &&
-        string.Equals(manifest.Pooling, LocalOnnxEmbeddingOptions.MeanPooling, StringComparison.Ordinal) &&
-        !string.IsNullOrWhiteSpace(manifest.License);
+        IsComplete(manifest.ModelFile, LocalOnnxModelArtifact.OnnxKind) &&
+        IsKindComplete(manifest);
 
-    private static bool IsComplete(LocalOnnxModelArtifact? artifact, string expectedKind) =>
+    /// <summary>
+    /// What one kind of manifest must carry beyond that. An embedding manifest keeps every rule it
+    /// had: the SentencePiece tokenizer, mean pooling, a vector width and both prefixes. A relevance
+    /// judge names a tokenizer of its own kind and nothing embedding-specific, and exists only in
+    /// this version's schema. An unknown or absent kind is refused.
+    /// </summary>
+    private static bool IsKindComplete(LocalOnnxModelManifest manifest) => manifest.Kind switch
+    {
+        LocalOnnxModelManifest.EmbeddingKind =>
+            IsComplete(manifest.TokenizerFile, LocalOnnxModelArtifact.SentencePieceKind) &&
+            manifest.Dimensions > 0 &&
+            manifest.Normalize is not null &&
+            manifest.QueryPrefix is not null &&
+            manifest.PassagePrefix is not null &&
+            string.Equals(manifest.Pooling, LocalOnnxEmbeddingOptions.MeanPooling, StringComparison.Ordinal),
+        LocalOnnxModelManifest.RelevanceJudgeKind =>
+            manifest.SchemaVersion == LocalOnnxModelManifest.CurrentSchemaVersion &&
+            IsComplete(manifest.TokenizerFile, expectedKind: null),
+        _ => false
+    };
+
+    private static bool IsComplete(LocalOnnxModelArtifact? artifact, string? expectedKind) =>
         artifact is not null &&
         !string.IsNullOrWhiteSpace(artifact.Path) &&
         LocalOnnxModelLayout.IsHttpsUrl(artifact.Url) &&
         LocalOnnxModelLayout.IsSha256Hex(artifact.Sha256) &&
-        string.Equals(artifact.Kind, expectedKind, StringComparison.Ordinal);
+        (expectedKind is null
+            ? !string.IsNullOrWhiteSpace(artifact.Kind)
+            : string.Equals(artifact.Kind, expectedKind, StringComparison.Ordinal));
 }

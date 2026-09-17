@@ -53,7 +53,7 @@ internal sealed class LocalEmbeddingModelBenchmarkModel : IDisposable
         RouteProviderId,
         LocalOnnxEmbeddingProvider.Name,
         EncodedIdentity,
-        Installed.Manifest.Dimensions);
+        Installed.Manifest.GetEmbeddingProfile().Dimensions);
 
     public static LocalOnnxEmbeddingOptions SmallOptions(string cacheRoot) => new()
     {
@@ -95,11 +95,11 @@ internal sealed class LocalEmbeddingModelBenchmarkModel : IDisposable
         installCancellation.CancelAfter(TimeSpan.FromSeconds(options.InstallTimeoutSeconds));
         var store = new LocalOnnxModelStore(new LocalOnnxModelFileFetcher(httpClient));
         var started = Stopwatch.GetTimestamp();
-        await store.EnsureInstalledAsync(options, installCancellation.Token);
-        var installed = await store.ReadInstalledAsync(options, cancellationToken)
+        await store.EnsureInstalledAsync(options.CreatePin(), installCancellation.Token);
+        var installed = await store.ReadInstalledAsync(options.CreatePin(), cancellationToken)
             ?? throw new InvalidOperationException("The model store reports no installed model after install.");
         var installSeconds = Stopwatch.GetElapsedTime(started).TotalSeconds;
-        if (installed.Manifest != LocalOnnxModelStore.CreateManifest(options))
+        if (installed.Manifest != LocalOnnxModelStore.CreateManifest(options.CreatePin()))
         {
             throw new InvalidOperationException(
                 "The model directory for " + shortName + " holds another manifest than the pinned one.");

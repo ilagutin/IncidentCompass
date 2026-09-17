@@ -115,7 +115,7 @@ public sealed class MemorySearchClosedLocalModelTests(PostgresRepositoryFixture 
             ModelFileSha256 = new string('a', 64)
         };
         var state = new LocalOnnxModelInstallState();
-        state.RecordInstalled(new LocalOnnxInstalledModel(LocalOnnxModelStore.CreateManifest(options), "unused.onnx", "unused.model"));
+        state.RecordInstalled(new LocalOnnxInstalledModel(LocalOnnxModelStore.CreateManifest(options.CreatePin()), "unused.onnx", "unused.model"));
         return state;
     }
 

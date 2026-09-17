@@ -47,7 +47,7 @@ public sealed class LocalOnnxRealModelTests
         using var installCancellation = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
         installCancellation.CancelAfter(TimeSpan.FromSeconds(options.InstallTimeoutSeconds));
         var store = new LocalOnnxModelStore(new LocalOnnxModelFileFetcher(httpClient));
-        var installed = await store.EnsureInstalledAsync(options, installCancellation.Token);
+        var installed = await store.EnsureInstalledAsync(options.CreatePin(), installCancellation.Token);
         var installState = new LocalOnnxModelInstallState();
         installState.RecordInstalled(installed);
         using var runtime = new LocalOnnxModelRuntime(Options.Create(options));

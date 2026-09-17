@@ -38,8 +38,9 @@ internal sealed class LocalOnnxInputEncoder
     private LocalOnnxInputEncoder(SentencePieceTokenizer tokenizer, LocalOnnxModelManifest manifest)
     {
         this.tokenizer = tokenizer;
-        queryPrefix = manifest.QueryPrefix;
-        passagePrefix = manifest.PassagePrefix;
+        var profile = manifest.GetEmbeddingProfile();
+        queryPrefix = profile.QueryPrefix;
+        passagePrefix = profile.PassagePrefix;
         maxContentTokens = manifest.MaxTokens - 2;
     }
 
