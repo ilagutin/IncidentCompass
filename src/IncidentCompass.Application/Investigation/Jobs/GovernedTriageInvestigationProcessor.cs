@@ -1,5 +1,5 @@
-using System.Text.Json;
 using IncidentCompass.Application.Core.ModelClients;
+using IncidentCompass.Application.Core.Serialization;
 using IncidentCompass.Application.Intake.Configuration;
 using IncidentCompass.Application.Investigation.Reports;
 using IncidentCompass.Domain.Incidents;
@@ -204,7 +204,7 @@ internal sealed class GovernedTriageInvestigationProcessor : IClaimedTriageJobPr
                 "publish_report remained invalid after bounded reprompts.",
                 cancellationToken,
                 exception);
-            var validationResult = JsonSerializer.Serialize(new
+            var validationResult = ModelFacingJson.Serialize(new
             {
                 errorCode = "publish_report_validation_failed",
                 errorMessage = safeDiagnostic
@@ -245,7 +245,7 @@ internal sealed class GovernedTriageInvestigationProcessor : IClaimedTriageJobPr
         {
             // Same shape as a delegate validation result, but no reprompt is charged: the call was
             // well formed, it only asked again for what the attempt already has.
-            var refusal = JsonSerializer.Serialize(new
+            var refusal = ModelFacingJson.Serialize(new
             {
                 errorCode = InvestigationNoProgressRecorder.RepeatedCallErrorCode,
                 errorMessage = InvestigationNoProgressRecorder.RepeatedCallErrorMessage
@@ -265,7 +265,7 @@ internal sealed class GovernedTriageInvestigationProcessor : IClaimedTriageJobPr
                 "delegate remained invalid after bounded reprompts.",
                 cancellationToken,
                 exception);
-            var validationResult = JsonSerializer.Serialize(new
+            var validationResult = ModelFacingJson.Serialize(new
             {
                 errorCode = "delegate_validation_failed",
                 errorMessage = safeDiagnostic
@@ -302,8 +302,13 @@ internal sealed class GovernedTriageInvestigationProcessor : IClaimedTriageJobPr
             cancellationToken);
     }
 
+    /// <summary>
+    /// The one diagnostic on this path built from model text: <paramref name="toolName"/> is
+    /// whatever the model named. It is quoted as a JSON string literal, which is why it is worth
+    /// naming at all, and it goes through the model-facing encoder like every other tool message.
+    /// </summary>
     private static string UnknownToolResult(string toolName)
     {
-        return JsonSerializer.Serialize(new { errorCode = "unknown_tool", toolName });
+        return ModelFacingJson.Serialize(new { errorCode = "unknown_tool", toolName });
     }
 }

@@ -1,4 +1,3 @@
-using System.Text.Json;
 using System.Text.Json.Nodes;
 using IncidentCompass.Application.Core.ModelClients;
 using IncidentCompass.Application.Core.Observability;
@@ -153,7 +152,10 @@ internal sealed partial class WorkerToolCallExecutor(
             progress.RecordEvidence(identity);
             telemetry?.RecordToolCall(RuntimeTelemetryOutcome.Succeeded);
             LogWorkerToolExecuted(logger, job.Id, job.Attempt, roleName, toolCall.Name);
-            return redactedOutput.Output.GetRawText();
+            // The stored element's own text escapes every non-ASCII character, so the tool message
+            // is normalized on the way to the model. The document it names is unchanged: what is
+            // committed above, hashed and identified is the element, not this text.
+            return ModelFacingJson.Normalize(redactedOutput.Output);
         }
 
         // The failure path reaches the same two surfaces the success path does - this turn's tool
@@ -286,7 +288,7 @@ internal sealed partial class WorkerToolCallExecutor(
         string errorMessage,
         string? limitation)
     {
-        return JsonSerializer.Serialize(new
+        return ModelFacingJson.Serialize(new
         {
             status,
             errorCode,

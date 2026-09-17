@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
+using IncidentCompass.Application.Core.Serialization;
 using IncidentCompass.Application.Core.Text;
 using IncidentCompass.Domain.Incidents;
 
@@ -90,10 +91,23 @@ internal static class TriageInvestigationPromptBuilder
         builder.AppendLine(UntrustedContextEndMarker);
     }
 
-    private static string AsJsonString(string? value) => JsonSerializer.Serialize(value ?? string.Empty);
+    private static string AsJsonString(string? value) => ModelFacingJson.SerializeString(value);
 
+    /// <summary>
+    /// Normalizes the payload's own JSON text before cutting it, so the budget below is spent on
+    /// content rather than on escapes.
+    /// </summary>
+    /// <remarks>
+    /// The text arrives one of two ways - escaped, from an element this process built, or with the
+    /// characters themselves, from a <c>jsonb</c> column - and normalizing covers both without
+    /// re-escaping what is already a character. The order matters: a Cyrillic payload cut before
+    /// normalization would spend six characters of the budget per letter and carry a sixth of the
+    /// content a Latin one does.
+    /// </remarks>
     private static string TrimPayload(JsonElement payload)
     {
-        return TextTruncator.Truncate(payload.GetRawText(), MaxArtifactPayloadPromptLength);
+        return TextTruncator.Truncate(
+            ModelFacingJson.Normalize(payload),
+            MaxArtifactPayloadPromptLength);
     }
 }

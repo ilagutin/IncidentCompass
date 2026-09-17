@@ -1,4 +1,5 @@
 using System.Text.Json;
+using IncidentCompass.Application.Core.Serialization;
 
 namespace IncidentCompass.Application.Investigation.Jobs;
 
@@ -32,7 +33,7 @@ internal static class WorkerDelegateResultFactory
         var rationale = output.Rationale ?? string.Join(" ", output.KeyFacts);
         return new WorkerDelegateResult(
             rationale,
-            JsonSerializer.Serialize(new
+            ModelFacingJson.Serialize(new
             {
                 role = roleName,
                 summary = rationale,
@@ -60,7 +61,7 @@ internal static class WorkerDelegateResultFactory
         var output = MemoryWorkerOutputParser.Parse(workerContent);
         return new WorkerDelegateResult(
             output.Rationale,
-            JsonSerializer.Serialize(new
+            ModelFacingJson.Serialize(new
             {
                 role = roleName,
                 summary = output.Rationale,

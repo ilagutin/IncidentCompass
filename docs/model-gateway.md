@@ -626,7 +626,12 @@ audit-visible, but the fenced update does not alter the current job or fault.
 Budget decisions sum `BudgetEvent.tokens_delta` and `BudgetEvent.workers_delta`, never rendered
 prompts, full provider responses, `ModelCall` rows or `BudgetEvent` rationale text. Before each call
 the remainder is `MaxTokens` minus the tokens the attempt has spent minus the backend's estimate of
-the prompt. A remainder of zero or less refuses the call before dispatch
+the prompt. That estimate is the message and tool-definition text divided by four, so it is a
+character count rather than a tokenization; since v0.5.0 a non-ASCII prompt is measured over the
+characters that now pass as themselves rather than over a six-character `\uXXXX` escape for each one,
+which is also what the route's `ContextWindowTokens` check now sees (see `docs/security-model.md`,
+"Untrusted prompt boundary", for which characters those are). A remainder of zero or less refuses the
+call before dispatch
 (`max_tokens_reached_before_call`); otherwise the request's `max_tokens` is the smaller of the route's
 `MaxOutputTokens` and that remainder, and a route without `MaxOutputTokens` sends the remainder,
 which early in an attempt is close to `MaxTokens` itself. Some providers reject a `max_tokens` above

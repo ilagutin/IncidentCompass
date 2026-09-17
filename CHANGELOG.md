@@ -4,7 +4,7 @@
 
 - No unreleased changes.
 
-## 0.5.0 - 2026-09-16
+## 0.5.0 - 2026-09-17
 
 Memory embeddings run inside the Worker by default, seed documents are chunked by section, and a slow
 model is bounded by per-phase provider limits and a long attempt ceiling instead of a short total
@@ -113,7 +113,10 @@ report.
 - The memory role instructions tell the worker to query in the language the corpus is written in, to
   keep identifiers verbatim, and to drop a `low` item whose quote is not about the fault rather than
   pass it on.
-
+- The documented procedure for changing the embedding route model has an order and runs its one-off
+  commands with `--no-deps`: install, drain and stop the Worker, recreate the API alone, rebuild,
+  recreate the Worker. A job is pinned to the route model of the API that created it, so the old order
+  dead-lettered jobs for the length of the change; see `docs/single-host-production.md`.
 - The Worker is the only process composed with an embedding client. The memory seed and resync pass,
   `memory status`, `memory rebuild` and the `memory model` commands run on the Worker; the API keeps
   the corpus status and health readers, which need no model. An architecture test fails if API
@@ -145,8 +148,8 @@ report.
   partial text is discarded and never reaches a caller, and a tool call the ceiling cut through is
   reported under that code rather than as an invalid tool call. Previously such an answer was returned
   as a normal completion whenever it carried any text or tool call, so a cut-off report or remediation
-  diff could be used as if it were whole. The job dead-letters without a retry, as an output limit already did; the fix is a higher route
-  `MaxOutputTokens` or a smaller task.
+  diff could be used as if it were whole. The job dead-letters without a retry, as an output limit
+  already did; the fix is a higher route `MaxOutputTokens` or a smaller task.
 - `publish_report` accepts exactly one argument shape per call (`report_json` alone, `report` alone or
   a bare report) instead of silently taking the first wrapper it found. `summary` (4000 characters),
   `recommendedNextAction` (2000), `limitations` (20 items of 1000), `evidence` (50 items) and `quote`
@@ -200,6 +203,18 @@ report.
   `remediation_answer_unrecorded`, with the answer discarded and no diff kept, and is not retried.
 - A chunk overlap no longer spends part of its budget on the passage prefix and sequence markers, and
   a document made only of headings becomes one chunk carrying its heading path.
+- Every non-ASCII character in model-facing text was sent as a six-character `\uXXXX` escape, so a
+  Russian or Polish incident reached the model as escapes rather than as words: a small local model
+  may not decode them, the prompt was several times longer than its text, and the character-based
+  prompt estimate charged the context window and the attempt's token budget for the inflation. The
+  prompts, worker tool results and delegate results now carry a letter or a mark of any Basic
+  Multilingual Plane script as itself, and the 800-character artifact payload excerpt is cut after
+  decoding rather than before. The quoting inside the untrusted-context boundary is unchanged: quotes,
+  backslashes, control characters, the line and paragraph separators, every format character including
+  the bidirectional controls and the zero-width joiner, every space separator other than the ordinary
+  space, unassigned and private-use code points and supplementary-plane characters all stay escaped.
+  Nothing durable moved - hashes, fingerprints, stored payloads, `ModelCall` metadata, intake and the
+  provider request body keep the previous encoding, and ASCII text is byte-identical to before.
 
 ### Security
 

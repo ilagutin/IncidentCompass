@@ -863,6 +863,79 @@ fresh proposal, which the workflow produces on the next evaluation. The number a
 re-checked inside the proposal transaction against the audit projection the pull-request action wrote,
 so it is a value the database vouches for rather than one a workflow computed.
 
+## Untrusted prompt boundary
+
+Incident text reaches a model inside a backend-authored boundary, between
+`BEGIN_UNTRUSTED_INCIDENT_CONTEXT` and `END_UNTRUSTED_INCIDENT_CONTEXT`, and every untrusted text
+value inside it is written as a JSON string literal. The values that are not quoted are the ones the
+backend authored: artifact and signal ids, artifact kinds, attempt numbers, the fingerprint strength,
+line numbers and the base tree identity are bare, because none of them is text a sender chose. The
+orchestrator prompt, the worker prompt and the remediation request use the same two marker strings and
+the same quoting rather than a second spelling of either.
+
+**What the quoting is for.** It is a delimiter. A value cannot close its own literal or break across
+two prompt lines, so a message carrying the end marker and a newline is still one quoted value on one
+line and the marker inside it is text rather than a boundary. That is the whole of the claim. The LLM
+is not a security boundary and prompt hygiene is not enforcement: what keeps a model from acting on
+instructions hidden in incident text is that nothing it says executes anything, because every tool
+call is validated, policy-checked and dispatched by the backend.
+
+**What stays escaped.** Stated by Unicode category, because that is how it is decided rather than by a
+list someone maintains. Every character of categories Cc (control), Cf (format), Zl and Zp (the line
+and paragraph separators U+2028 and U+2029), Cn (unassigned) and Co (private use) is escaped, as is
+every space separator other than the ordinary space U+0020, which is the non-breaking space U+00A0,
+the ideographic space U+3000 and the fourteen others of category Zs. On top of that the framework's
+JavaScript encoder escapes eight ASCII characters regardless of its allow list: `"`, `\`, `<`, `>`,
+`&`, `'`, `+` and the backtick. And every supplementary-plane character is written as a surrogate
+pair, so an emoji or a rare CJK ideograph is still unreadable in a prompt, which is an accepted cost
+rather than a property anything depends on.
+
+The category that carries the weight is Cf. It is the bidirectional controls U+202A-U+202E and
+U+2066-U+2069, the zero-width characters U+200B-U+200F, U+2060-U+2064 and U+FEFF, the soft hyphen
+U+00AD, the Arabic letter mark and the rest: an invisible or direction-changing character inside
+attacker-influenced text is exactly what should not arrive looking like nothing at all. It is also
+the reason the next paragraph is qualified, because the zero-width non-joiner U+200C and the
+zero-width joiner U+200D are format characters too.
+
+**What passes as itself.** A letter or a mark of any Basic Multilingual Plane script: Cyrillic, Greek,
+Polish diacritics, Arabic, Hebrew, Devanagari, BMP CJK. Before this release every one of them was
+sent as a six-character `\uXXXX` escape. A large model decodes that; a small local model, which is
+the runtime this product is built to run on, may not, and the character-based prompt estimate charged
+the context window and the attempt's token budget for the inflation either way. A model has to be
+able to read the incident it is triaging, so a letter is now a letter. The qualification: a script
+that spells a word with a zero-width joiner or non-joiner still carries an escape in the middle of
+otherwise readable text, so Persian words joined that way and Indic or Sinhala conjuncts are readable
+around a `U+200C` or `U+200D` escape rather than whole.
+
+**Where the rule applies, and where it does not.** Only to text a model reads: the three prompts
+above, a worker tool's result, a delegate's result and the backend diagnostics that reach the model
+as tool messages. `CanonicalJsonSerializer` and every hash and fingerprint computed from it, stored
+artifact payloads and their content hashes, `ModelCall` metadata, the whole intake path and the
+provider request body all keep the framework default, which escapes every non-ASCII character. Those
+are contracts compared across processes and releases rather than renderings, and the provider decodes
+its own request body before a prompt exists. A ledger rationale is not in either list: it is a plain
+text column, not a JSON document, and no JSON encoder reaches it. For ASCII text the two encodings
+are byte-identical, so nothing an English incident produced has changed.
+
+**The residual.** Two things, and neither can end a quoted value or a prompt line.
+
+A look-alike letter from another script now reads as itself inside untrusted text, exactly as it would
+in any UTF-8 prompt: `а` (U+0430) and `a` are different characters that render the same. Nothing here
+claims otherwise, and nothing downstream decides anything by reading a rendered prompt. The one path
+where a name a human reads has to be the name a filesystem opens is the patch boundary above, which
+refuses everything outside printable ASCII for that reason.
+
+And a character can be invisible without being in category Cf, in which case it now arrives raw where
+the old encoder escaped it. The Hangul fillers U+115F, U+1160, U+3164 and U+FFA0 are letters that
+render as nothing. The variation selectors U+FE00-U+FE0F, the combining grapheme joiner U+034F and the
+Khmer inherent vowels U+17B4 and U+17B5 are combining marks that render as nothing. The Braille
+pattern blank U+2800 is a symbol that renders as nothing. Combining marks stack without bound, so a
+single base letter can be given a hundred of them. What follows from that is a rendering problem
+rather than a boundary problem: such a character is still inside its own quoted value, it still cannot
+carry the end marker out of the block, and it is still bounded by the same character caps as any other
+text. It is the obligation of a surface that shows incident text to a human, and this backend has no
+such surface; the patch boundary above states the same obligation for a diff.
+
 ## Redaction And Pseudonymization
 
 Redaction runs at two boundaries, not one. Incoming signals are redacted during intake, before the

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using IncidentCompass.Application.Core.ModelClients;
 using IncidentCompass.Infrastructure.Configuration;
 using IncidentCompass.Infrastructure.ModelGateway.OpenAi;
@@ -303,6 +304,33 @@ public sealed class OpenAiCompatibleClientOptionsTests
 
         Assert.False(options.TryCreateEndpointUri(out _));
         Assert.False(options.IsValid());
+    }
+
+    /// <summary>
+    /// The transport keeps the framework's default encoding. A prompt now carries a Cyrillic letter
+    /// as itself, and the request body still sends it as an escape, which is the provider's own
+    /// concern: it decodes the body before it ever sees a prompt. The assertion is that the content
+    /// survives the round trip unchanged, not that the bytes are readable.
+    /// </summary>
+    [Fact]
+    public void RequestFactory_StillEscapesNonAsciiContentInTheRequestBody()
+    {
+        const string content = "- errorMessage: \"Тайм-аут запроса\"";
+
+        var payload = OpenAiModelRequestFactory.CreatePayloadJson(
+            new AiModelRequest(
+                CorrelationId: "payload-test",
+                Model: "reasoning-model",
+                Messages: [new AiChatMessage(AiMessageRole.User, content)],
+                ProviderId: "local-oai"),
+            CreateOptions(OpenAiReasoningMode.Disabled));
+
+        Assert.DoesNotContain("Тайм", payload, StringComparison.Ordinal);
+        Assert.Contains("\\u0422", payload, StringComparison.Ordinal);
+        using var document = JsonDocument.Parse(payload);
+        Assert.Equal(
+            content,
+            document.RootElement.GetProperty("messages")[0].GetProperty("content").GetString());
     }
 
     private static AiModelRequest CreateReasoningRequest(AiReasoningLevel? reasoning)
