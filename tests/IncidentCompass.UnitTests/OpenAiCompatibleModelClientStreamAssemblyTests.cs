@@ -231,6 +231,47 @@ public sealed class OpenAiCompatibleModelClientStreamAssemblyTests
         Assert.Equal(9, exception.Usage?.OutputTokens);
     }
 
+    [Fact]
+    public async Task CompleteAsync_LengthFinishWithPartialContent_IsTheOutputLimit()
+    {
+        var exception = await FailStreamAsync(
+            Event("""{"choices":[{"index":0,"delta":{"content":"--- a/src/App.cs\n+++ b/src/App.cs\n@@ -1,2 +1,2 @@\n-old"}}]}"""),
+            Event("""{"choices":[{"index":0,"delta":{},"finish_reason":"length"}]}"""),
+            Event("""{"choices":[],"usage":{"prompt_tokens":40,"completion_tokens":8000,"total_tokens":8040}}"""),
+            Done);
+
+        Assert.Equal(ProviderFailureKind.OutputLimitReached, exception.FailureKind);
+        Assert.Equal("provider_output_limit_reached", exception.ErrorCode);
+        Assert.Equal(8000, exception.Usage?.OutputTokens);
+        Assert.DoesNotContain("src/App.cs", exception.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task CompleteAsync_LengthFinishWithTruncatedToolCallArguments_IsTheOutputLimit()
+    {
+        var exception = await FailStreamAsync(
+            Event("""{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_a","type":"function","function":{"name":"source_lookup","arguments":"{\"path\":\"src/"}}]}}]}"""),
+            Event("""{"choices":[{"index":0,"delta":{},"finish_reason":"length"}]}"""),
+            Done);
+
+        Assert.Equal(ProviderFailureKind.OutputLimitReached, exception.FailureKind);
+        Assert.Equal("provider_output_limit_reached", exception.ErrorCode);
+    }
+
+    [Fact]
+    public async Task CompleteAsync_LengthFinishWithACompleteToolCall_IsTheOutputLimit()
+    {
+        var exception = await FailStreamAsync(
+            Event("""{"model":"tool-model","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_a","type":"function","function":{"name":"source_lookup","arguments":"{\"path\":\"src/App.cs\"}"}}]}}]}"""),
+            Event("""{"choices":[{"index":0,"delta":{},"finish_reason":"length"}],"usage":{"prompt_tokens":5,"completion_tokens":20,"total_tokens":25}}"""),
+            Done);
+
+        Assert.Equal(ProviderFailureKind.OutputLimitReached, exception.FailureKind);
+        Assert.Equal("provider_output_limit_reached", exception.ErrorCode);
+        Assert.Equal(20, exception.Usage?.OutputTokens);
+        Assert.Equal("tool-model", exception.ReturnedModel);
+    }
+
     public static TheoryData<string> MalformedDataEvents => new()
     {
         "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"a\"\n\n",

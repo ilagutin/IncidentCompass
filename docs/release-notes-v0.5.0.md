@@ -248,6 +248,14 @@ set any of the new keys keeps its hash. Every intervention writes a `BudgetEvent
 
 ### Model answers that cannot be used are refused sooner
 
+- A completion the provider cut off at its output ceiling is refused, on the JSON path and the streamed
+  path alike. Any answer whose first choice reports `finish_reason: length` is
+  `provider_output_limit_reached`, with or without partial content and with or without tool calls: the
+  partial text is discarded and never reaches a caller, and a tool call whose arguments the ceiling cut
+  through is reported under that code instead of as an invalid tool call. It previously became a normal
+  completion as soon as it carried any text or tool call, so half a report or half a remediation diff
+  could be used as if it were the whole answer. The job dead-letters without a retry, as an output limit
+  already did, and the operator's fix is a higher route `MaxOutputTokens` or a smaller task.
 - `publish_report` accepts exactly one argument shape per call: `report_json` alone, `report` alone,
   or a bare report. It previously took the first wrapper it found. `summary` (4000 characters),
   `recommendedNextAction` (2000), `limitations` (20 items of 1000 characters), `evidence` (50 items)

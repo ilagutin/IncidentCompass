@@ -22,6 +22,13 @@ internal static class OpenAiModelResponseMapper
     /// Validates a completion however it arrived: deserialized from one JSON body, or assembled from a
     /// stream. Content, tool-call and empty-answer rules are this one code path for both shapes.
     /// </summary>
+    /// <remarks>
+    /// A first choice that finished on <c>length</c> ran into its output ceiling, so whatever arrived is
+    /// half of an answer and is refused before it is read any further: the partial text is discarded and
+    /// never returned, and a tool call whose arguments the ceiling cut through is reported as the output
+    /// limit it is rather than as a malformed tool call. Usage and the returned model are still carried
+    /// on the failure, because the call was generated and is paid for.
+    /// </remarks>
     public static AiModelResponse Map(
         OpenAiChatCompletionResponse? completion,
         AiModelRequest request)
@@ -30,17 +37,17 @@ internal static class OpenAiModelResponseMapper
         var usage = MapUsage(completion?.Usage);
         var choices = completion?.Choices;
         var choice = choices is { Count: > 0 } ? choices[0] : null;
+        if (string.Equals(choice?.FinishReason, "length", StringComparison.OrdinalIgnoreCase))
+        {
+            throw OpenAiModelErrorMapper.OutputLimitReached(usage, returnedModel);
+        }
+
         var message = choice?.Message;
         var content = message?.Content;
         var proposedToolCalls = MapToolCalls(message?.ToolCalls, usage, returnedModel);
 
         if (string.IsNullOrWhiteSpace(content) && proposedToolCalls.Length == 0)
         {
-            if (string.Equals(choice?.FinishReason, "length", StringComparison.OrdinalIgnoreCase))
-            {
-                throw OpenAiModelErrorMapper.OutputLimitReached(usage, returnedModel);
-            }
-
             throw OpenAiModelErrorMapper.EmptyResponse(usage, returnedModel);
         }
 

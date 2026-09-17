@@ -180,13 +180,17 @@ internal static class OpenAiModelErrorMapper
             returnedModel: returnedModel);
     }
 
+    /// <summary>
+    /// The completion ran into its output ceiling. Whatever it carried is part of an answer, so it is
+    /// refused rather than passed on, and the spend is still reported.
+    /// </summary>
     public static AiModelException OutputLimitReached(
         AiModelUsage? usage,
         string? returnedModel)
     {
         return new AiModelException(
             OpenAiModelProvider.Name,
-            "Model provider reached its output limit before returning usable content.",
+            "Model provider reached its output limit and cut the answer off.",
             errorCode: "provider_output_limit_reached",
             failureKind: ProviderFailureKind.OutputLimitReached,
             usage: usage,
