@@ -328,11 +328,11 @@ volume ends by restarting the Worker:
 5. `docker @compose up --detach --no-deps --force-recreate worker`. The Worker verifies the new model at
    start and claims the jobs that waited.
 
-Every one-off command carries `--no-deps`. Without it, `docker compose run` first brings the services
-the Worker depends on in line with the changed configuration, which recreates the running API with the
-new route model at a moment the procedure did not choose. The order matters for the same reason: a job
-is pinned to the route model of the API that created it, and the Worker refuses an embedding call whose
-model is not the one it has installed.
+Every one-off command in this procedure carries `--no-deps`. Without it, `docker compose run` first
+brings the services the Worker depends on in line with the changed configuration, which recreates the
+running API with the new route model at a moment the procedure did not choose. The order matters for
+the same reason: a job is pinned to the route model of the API that created it, and the Worker refuses
+an embedding call whose model is not the one it has installed.
 
 **Known limitation: a job created before step 3 and not finished before step 5 dead-letters.** Its
 configuration snapshot names the previous model, the restarted Worker has the new one, so its
