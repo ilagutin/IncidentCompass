@@ -7,6 +7,12 @@ namespace IncidentCompass.Application.Intake.Configuration;
 /// <see cref="DefaultImmediateTimeoutSeconds"/> and an external action gets the Worker host's
 /// <c>ActionDispatch:AdapterTimeoutSeconds</c>. The key is optional so a configuration that does not
 /// set it keeps its content and therefore its configuration hash.
+/// <para>
+/// <see cref="VectorOnlyFallback"/> belongs to <c>memory_search</c> alone and is refused on any other
+/// tool. It names what that tool does when lexical coverage leaves no candidate: <c>off</c>,
+/// <c>foreign_script</c> or <c>always</c>. It is optional for the same reason the timeout is, and an
+/// absent key resolves to <c>foreign_script</c>.
+/// </para>
 /// </summary>
 public sealed record TriageToolSettings(
     string Kind,
@@ -16,7 +22,8 @@ public sealed record TriageToolSettings(
     string? Category = null,
     string? LogicalTargetId = null,
     string? Mode = null,
-    int? TimeoutSeconds = null)
+    int? TimeoutSeconds = null,
+    string? VectorOnlyFallback = null)
 {
     public const int MinimumTimeoutSeconds = 1;
 

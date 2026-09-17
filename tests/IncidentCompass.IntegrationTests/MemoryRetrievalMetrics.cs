@@ -104,7 +104,12 @@ public sealed record MemoryRetrievalQueryOutcome(
     double ItemRecallAt5,
     int FirstRelevantChunkRank);
 
-public sealed record MemoryRetrievalMatch(Guid ItemId, Guid ChunkId);
+/// <summary>
+/// One returned match. <paramref name="RetrievalConfidence" /> is the band the production tool reported
+/// for it, and is null for a strategy that does not go through the tool. It is deliberately outside
+/// <see cref="MemoryRetrievalQueryOutcome" />, which the versioned baseline is compared on.
+/// </summary>
+public sealed record MemoryRetrievalMatch(Guid ItemId, Guid ChunkId, string? RetrievalConfidence = null);
 
 public sealed record MemoryRetrievalQueryResult(
     string QueryId,

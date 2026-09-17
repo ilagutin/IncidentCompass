@@ -24,29 +24,40 @@ internal static class MemorySearchLexicalFilter
             .ToArray();
     }
 
-    internal static IReadOnlyList<MemorySearchMatch> ApplyForReranking(
-        string query,
-        IReadOnlyList<MemorySearchMatch> matches)
-    {
-        var queryTokens = Tokenize(query);
-        if (queryTokens.Count == 0)
-        {
-            return matches;
-        }
-
-        return matches
-            .Where(match => HasSufficientCoverage(queryTokens, Tokenize(match.Text)))
-            .ToArray();
-    }
-
-    internal static double Coverage(string query, string value)
+    /// <summary>
+    /// Judges one candidate against one query over the query words that candidate could carry at all.
+    /// For a query and a candidate written in the same script every counted word is eligible and the
+    /// result is the plain half rule over every counted word.
+    /// </summary>
+    internal static MemorySearchLexicalSupport Evaluate(string query, string value)
     {
         var queryTokens = Tokenize(query);
         var valueTokens = Tokenize(value);
-        return queryTokens.Count == 0
-            ? 0
-            : (double)queryTokens.Count(valueTokens.Contains) / queryTokens.Count;
+        var valueScripts = CountedScripts(valueTokens);
+        var eligible = 0;
+        var matched = 0;
+        foreach (var token in queryTokens)
+        {
+            var script = WritingScriptClassifier.Classify(token);
+            if (script != WritingScript.Neutral && !valueScripts.Contains(script))
+            {
+                continue;
+            }
+
+            eligible++;
+            if (valueTokens.Contains(token))
+            {
+                matched++;
+            }
+        }
+
+        return new MemorySearchLexicalSupport(queryTokens.Count, eligible, matched);
     }
+
+    /// <summary>The writing systems the counted words of <paramref name="value" /> are written in.</summary>
+    internal static IReadOnlySet<WritingScript> CountedScripts(string value) => CountedScripts(Tokenize(value));
+
+    internal static double Coverage(string query, string value) => Evaluate(query, value).Coverage;
 
     internal static bool ContainsNormalizedTokenOrPhrase(string query, string value)
     {
@@ -68,12 +79,15 @@ internal static class MemorySearchLexicalFilter
         return false;
     }
 
-    private static bool HasSufficientCoverage(
-        HashSet<string> queryTokens,
-        IReadOnlySet<string> valueTokens)
+    private static HashSet<WritingScript> CountedScripts(IReadOnlyCollection<string> tokens)
     {
-        var requiredMatches = Math.Max(1, (queryTokens.Count + 1) / 2);
-        return queryTokens.Count(valueTokens.Contains) >= requiredMatches;
+        var scripts = new HashSet<WritingScript>();
+        foreach (var token in tokens)
+        {
+            scripts.Add(WritingScriptClassifier.Classify(token));
+        }
+
+        return scripts;
     }
 
     private static HashSet<string> Tokenize(string value)

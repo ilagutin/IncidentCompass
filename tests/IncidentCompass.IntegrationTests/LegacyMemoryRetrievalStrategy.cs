@@ -97,7 +97,8 @@ internal sealed class ProductionMemoryRetrievalStrategy(
             var matches = (execution.Artifacts ?? [])
                 .Select(static draft => new MemoryRetrievalMatch(
                     Guid.Parse(draft.Payload["memoryItemId"]!.GetValue<string>()),
-                    Guid.Parse(draft.Payload["chunkId"]!.GetValue<string>())))
+                    Guid.Parse(draft.Payload["chunkId"]!.GetValue<string>()),
+                    draft.Payload["retrievalConfidence"]!.GetValue<string>()))
                 .ToArray();
             results.Add(new MemoryRetrievalQueryResult(query.Id, matches));
         }

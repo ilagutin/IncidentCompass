@@ -100,6 +100,13 @@ internal sealed class EvaluationScriptedModelClient : IAiModelClient
         {
             foreach (var item in root.GetProperty("items").EnumerateArray())
             {
+                // The role instructions drop an item the vector-only fallback returned: it is not
+                // lexically confirmed, so the scripted worker does not quote it either.
+                if (item.GetProperty("retrievalConfidence").GetString() == "low")
+                {
+                    continue;
+                }
+
                 // The shipped memory schema has no null-typed properties: an absent
                 // targetCurrentRelease is omitted, not emitted as null.
                 var memoryItem = new JsonObject
@@ -119,14 +126,15 @@ internal sealed class EvaluationScriptedModelClient : IAiModelClient
             }
         }
 
+        var confirmed = matched && items.Count > 0;
         var output = new JsonObject
         {
-            ["matched"] = matched,
+            ["matched"] = confirmed,
             ["items"] = items
         };
-        if (!matched)
+        if (!confirmed)
         {
-            output["noMatchReason"] = "no matches";
+            output["noMatchReason"] = matched ? "no lexically confirmed matches" : "no matches";
         }
 
         return Respond(request, output.ToJsonString(), []);

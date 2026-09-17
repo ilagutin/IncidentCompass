@@ -26,12 +26,15 @@ internal sealed record LocalEmbeddingModelBenchmarkMachine(
 internal sealed record LocalEmbeddingModelBenchmarkSettings(
     int TopK,
     IReadOnlyList<double> PipelineMinScores,
+    IReadOnlyList<string> PipelineFallbackModes,
+    double PipelineFallbackMinScore,
     double RawMinScore,
     int RawRankingDepth,
     int LatencyWarmupPasses,
     int LatencyMeasuredPasses,
     int IntraOpThreads,
     string PipelineDescription,
+    string FallbackDescription,
     string RawDescription,
     string LatencyDescription);
 
@@ -50,12 +53,20 @@ internal sealed record LocalEmbeddingModelBenchmarkGroupResult(
     int PositiveQueryCount,
     int NoMatchQueryCount,
     IReadOnlyList<LocalEmbeddingModelBenchmarkPipelineResult> Pipeline,
+    IReadOnlyList<LocalEmbeddingModelBenchmarkFallbackResult> FallbackModes,
     LocalEmbeddingModelBenchmarkRawSummary Raw,
     IReadOnlyList<LocalEmbeddingModelBenchmarkRawQuery> RawQueries);
 
 internal sealed record LocalEmbeddingModelBenchmarkPipelineResult(
     double MinScore,
     MemoryRetrievalMetricSummary Metrics,
+    IReadOnlyList<MemoryRetrievalQueryOutcome> Queries);
+
+internal sealed record LocalEmbeddingModelBenchmarkFallbackResult(
+    string VectorOnlyFallback,
+    double MinScore,
+    MemoryRetrievalMetricSummary Metrics,
+    IReadOnlyDictionary<string, int> ReturnedItemsByConfidenceBand,
     IReadOnlyList<MemoryRetrievalQueryOutcome> Queries);
 
 internal sealed record LocalEmbeddingModelBenchmarkRawSummary(

@@ -115,16 +115,42 @@ seed pass.
 An opt-in benchmark, run only when `INCIDENTCOMPASS_EMBEDDING_BENCHMARK` is set, runs the retrieval
 corpus through the real local adapter for `multilingual-e5-small` and `multilingual-e5-base`, with the
 English queries and Polish and Russian renderings that reuse the same relevance labels. It reports
-the production `memory_search` pipeline across `MinScore` values, the raw vector ranking and query
-embedding latency. The deterministic gates keep the mock embedder.
+the production `memory_search` pipeline across `MinScore` values, the same pipeline under each
+`VectorOnlyFallback` mode, the raw vector ranking and query embedding latency. The deterministic gates
+keep the mock embedder.
 
 The measurement keeps `multilingual-e5-small` as the shipped model and `MinScore` at 0.25. On that
 model the floor removes nothing: every relevant match on the benchmark scored well above it, and so
-did unrelated chunks. What keeps unrelated chunks out is the reranker's lexical coverage rule, which
-requires at least half of the query's words to appear in the chunk text. That has a consequence
-stated in [Trade-offs](trade-offs.md): **a query written in another language than the corpus usually
-finds nothing**, even when the multilingual vector ranks the right chunk near the top, unless enough
-words from the corpus language, such as error types or service names, appear in the query.
+did unrelated chunks. What keeps unrelated chunks out is the reranker's lexical coverage rule.
+
+### Memory search reads another script, and says how sure it is
+
+Lexical coverage is now judged per candidate over the query words that candidate could carry at all.
+A counted query word is eligible when it has no letter, such as a number, or when its writing system
+occurs among that candidate's own words; a word in a script the candidate never writes is left out of
+the judgement instead of counted against it. For a query and a corpus in one script the rule is
+unchanged. A mixed query such as `circuit breaker при задержках склада` is now carried by its two
+Latin words over an English corpus.
+
+`Tools.memory_search.VectorOnlyFallback` decides what happens when coverage leaves nothing: `off`
+returns nothing as before, `always` returns the top `TopK` candidates unconfirmed, and the default
+`foreign_script` does so only when the query uses a writing system no candidate writes. The key is
+optional, no shipped or sample configuration sets it, and it cannot reach below `MinScore`. On the
+benchmark Russian pipeline recall@5 was 0 before this release; eligibility alone raises it to 0.17,
+because it admits the one query that keeps its Latin identifiers, and the default fallback takes it
+from there to 1.00 over the six positive queries. English stays exactly as it was. **A language in the
+same script as the corpus, such as Polish over English runbooks, still finds nothing by default**;
+`always` recovers it, at the price of unconfirmed items for every query without lexical support,
+English off-topic queries included. The default also compares scripts against the whole candidate set,
+so a corpus that holds even one chunk in the query's script turns the default fallback off for every
+query in that script. See [Trade-offs](trade-offs.md).
+
+`retrievalConfidence` now names how an item was admitted rather than where its vector score fell. The
+values keep their names: `high` is full lexical coverage with no word excluded for script, `medium` is
+partial or script-reduced coverage, and `low` is a vector-only match. The numeric `score` is unchanged.
+A vector-only result also carries its own top-level `message`, `vector-only matches, not lexically
+confirmed`, and the memory role is instructed to query in the corpus language and to drop a `low` item
+whose quote is not about the fault.
 
 ### Provider calls are bounded by phase, and the attempt by a long ceiling
 
@@ -373,10 +399,15 @@ create the GitHub App described in [Versioning and release flow](versioning.md) 
   events: 2701 and 2801 for the deprecated keys, 3213 for a skipped fallback whose budget event could
   not be recorded, 3305 to 3309 and 3521 for tool execution limits, and 3404 to 3411 for repetition,
   progress, recovery and termination.
-- New optional configuration keys: `Tools.<id>.TimeoutSeconds`, `Orchestrator.Budget.MaxEquivalentCalls`,
-  `MaxTurnsWithoutProgress`, `MaxRecoveries` and `Orchestrator.RecoveryInstructions`. The shipped
-  configuration sets none of them. `ModelCall` rows gain the call kind `recovery`, and tool-call
-  telemetry gains the outcome `refused`.
+- New optional configuration keys: `Tools.<id>.TimeoutSeconds`, `Tools.memory_search.VectorOnlyFallback`,
+  `Orchestrator.Budget.MaxEquivalentCalls`, `MaxTurnsWithoutProgress`, `MaxRecoveries` and
+  `Orchestrator.RecoveryInstructions`. The shipped configuration sets none of them. `ModelCall` rows
+  gain the call kind `recovery`, and tool-call telemetry gains the outcome `refused`.
+- `memory_search` keeps its output shape, but two of its values change meaning. Each item's
+  `retrievalConfidence` still reads `high`, `medium` or `low` and no longer derives from the vector
+  score: it now reports lexical support, because on the shipped model relevant and unrelated chunks
+  score alike. A result returned by the vector-only fallback carries the new top-level `message`
+  `vector-only matches, not lexically confirmed`; `matched`, `items` and `noMatchReason` are unchanged.
 - Configuration validation is stricter in two places: a role output schema with a secret-named
   non-string property, and a configuration that sets both names of a deprecated key. Neither affects
   the shipped configuration.
@@ -392,8 +423,12 @@ create the GitHub App described in [Versioning and release flow](versioning.md) 
 - Semantic progress detection. Repetition and progress are judged from result identities and the
   candidate classification, so a model that loops through reworded tasks or calls is not caught as
   repeating.
-- Cross-language retrieval. The multilingual model embeds other languages, but the lexical coverage
-  rule means a query in another language than the corpus usually finds nothing.
+- Cross-language retrieval for a language in the corpus's own script. Another script works by default,
+  because a word that cannot occur in the corpus is no longer counted against a candidate and the
+  vector-only fallback covers what is left. A Latin-script language over a Latin-script corpus, such as
+  Polish over English runbooks, still finds nothing unless an operator sets
+  `Tools.memory_search.VectorOnlyFallback` to `always`, which also removes the empty result for every
+  other query without lexical support.
 - Accounting of external embedding calls. An embedding call served by an OpenAI-compatible server
   still appears in no count, token total or spend figure.
 - Requeueing a job across a change of the embedding route model. A job created before the route model

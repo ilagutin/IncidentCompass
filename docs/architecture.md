@@ -260,12 +260,40 @@ model it is effectively inert: on the retrieval benchmark every top-ten candidat
 higher and every relevant match 0.77 or higher, while unrelated chunks scored about 0.76 to 0.91. It
 is a floor for other embedding routes and the mock embedder, not a relevance judgement on this model.
 The configuration file is shared by the default and the mock profiles, which is why the floor is not
-raised. What removes unrelated matches is the reranker's lexical coverage, which requires at least
-half of the query's words to appear in the chunk text, so a query written in a different language
-than the corpus usually finds nothing, even when its vector is close, unless enough words from the
-corpus language, such as error types or service names, appear in it. Cosine scales differ between
-models, so an operator who routes `memory-embed` to another model, such as one behind the
-OpenAI-compatible adapter, should measure before raising the floor.
+raised. What removes unrelated matches is the reranker's lexical coverage, described next. Cosine
+scales differ between models, so an operator who routes `memory-embed` to another model, such as one
+behind the OpenAI-compatible adapter, should measure before raising the floor.
+
+Lexical coverage is judged per candidate, over the query words that candidate could carry at all.
+Both the query and the chunk text are reduced to counted words (three characters or more, English
+stop words removed), and each counted word is classified by writing system from the Unicode block of
+its first letter. A counted query word is eligible against one candidate when it has no letter at all,
+such as a number, or when its script occurs among that candidate's own counted words. The candidate is
+lexically supported when it has at least one eligible word and at least `max(1, (eligible + 1) / 2)`
+of them occur in its text, and the ranking boost uses the same eligible-word denominator. For a query
+and a corpus written in one script every word is eligible and the rule is the plain half rule. A word
+in a script the candidate never writes is left out of the judgement instead of counted against it, so
+`circuit breaker при задержках склада` is carried by its two Latin words over an English corpus. The
+accepted cost is that such a query is judged on fewer words and is therefore more permissive than the
+same query written in the corpus language; a match admitted that way never reaches the `high` band.
+
+`Tools.memory_search.VectorOnlyFallback` decides what happens when lexical coverage leaves no
+candidate at all. It is optional and takes `off`, `foreign_script` or `always`; an absent key means
+`foreign_script`, and no shipped or sample configuration sets it. `off` returns nothing, the behaviour
+before the setting existed. `always` returns the top `TopK` of all candidates in the ordinary order.
+`foreign_script` does the same, but only when the query carries a counted word in a writing system
+none of the candidates use, which is the one case where lexical absence says nothing about relevance;
+a query in the corpus's own script that simply matches nothing still returns the honest empty result.
+The fallback never applies while the gate kept something, and it cannot reach below `MinScore`,
+because the repository dropped those candidates before the reranker saw them.
+
+`retrievalConfidence` reports how a returned item was admitted, not how high its vector score was:
+`high` when every counted query word was eligible and all of them occur in the chunk, `medium` when
+the item is lexically supported on partial coverage or with words excluded for script, and `low` when
+the vector-only fallback returned it. The numeric `score` is reported unchanged beside it. The tool's
+top-level `message` is `matches found` for a lexically confirmed result, `vector-only matches, not
+lexically confirmed` for a fallback result, and `no matches` for none; `matched` and `noMatchReason`
+are unchanged.
 
 Ranking is Application-owned rather than delegated to the database. It applies lexical coverage and
 fixed metadata rules, then returns the configured final `TopK`. Current evidence for the fault

@@ -87,9 +87,32 @@ report.
 - An opt-in retrieval benchmark for the local embedding models, run only when
   `INCIDENTCOMPASS_EMBEDDING_BENCHMARK` is set. It measures `multilingual-e5-small` and
   `multilingual-e5-base` on the retrieval corpus with English queries and Polish and Russian
-  renderings that reuse the same relevance labels.
+  renderings that reuse the same relevance labels, across `MinScore` values and across each
+  `Tools.memory_search.VectorOnlyFallback` mode.
+- `Tools.memory_search.VectorOnlyFallback`, an optional setting taking `off`, `foreign_script` or
+  `always`, which decides what `memory_search` returns when lexical coverage leaves no candidate.
+  Absent means `foreign_script`, which returns the vector candidates unconfirmed only when the query
+  carries a word in a writing system none of the candidates use; `always` does so for any query
+  without lexical support, and `off` keeps the empty result. It never applies while the lexical gate
+  kept something and cannot reach below `MinScore`. The shipped configuration does not set it, and the
+  key is refused on any other tool.
 
 ### Changed
+
+- Lexical coverage in the `memory_search` reranker is judged per candidate over eligible query words.
+  A counted query word is eligible when it carries no letter, such as a number, or when its writing
+  system occurs among that candidate's own counted words; the half rule then applies to the eligible
+  words alone. A query and a corpus in one script are judged exactly as before, while a word in a
+  script the candidate never writes is no longer counted against it.
+- `retrievalConfidence` on a `memory_search` item and on its `RetrievedItem` artifact keeps the values
+  `high`, `medium` and `low` but no longer derives from the vector score, which separates nothing on
+  the shipped embedding model. It now reports lexical support: `high` is full coverage with no word
+  excluded for script, `medium` is partial or script-reduced coverage, and `low` is a vector-only
+  match. The numeric `score` is unchanged, and a vector-only result carries the top-level `message`
+  `vector-only matches, not lexically confirmed`.
+- The memory role instructions tell the worker to query in the language the corpus is written in, to
+  keep identifiers verbatim, and to drop a `low` item whose quote is not about the fault rather than
+  pass it on.
 
 - The Worker is the only process composed with an embedding client. The memory seed and resync pass,
   `memory status`, `memory rebuild` and the `memory model` commands run on the Worker; the API keeps

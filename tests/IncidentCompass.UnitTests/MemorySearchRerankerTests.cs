@@ -23,10 +23,11 @@ public sealed class MemorySearchRerankerTests
             Configuration(),
             "checkout-api",
             [wrongService, stale, current],
-            5);
+            5,
+            MemorySearchVectorOnlyFallback.ForeignScript);
 
         Assert.Equal([current.ChunkId, stale.ChunkId, wrongService.ChunkId],
-            ranked.Select(static match => match.ChunkId));
+            ranked.Select(static ranked => ranked.Match.ChunkId));
     }
 
     [Fact]
@@ -65,10 +66,11 @@ public sealed class MemorySearchRerankerTests
             Configuration(currentReleases: false),
             "checkout-api",
             [lowerVectorWithComponent, higherVector, lowerChunkId],
-            5);
+            5,
+            MemorySearchVectorOnlyFallback.ForeignScript);
 
         Assert.Equal([lowerChunkId.ChunkId, higherVector.ChunkId, lowerVectorWithComponent.ChunkId],
-            ranked.Select(static match => match.ChunkId));
+            ranked.Select(static ranked => ranked.Match.ChunkId));
     }
 
     [Fact]
@@ -82,9 +84,10 @@ public sealed class MemorySearchRerankerTests
             Configuration(),
             "checkout-api",
             [weak, stale],
-            5);
+            5,
+            MemorySearchVectorOnlyFallback.ForeignScript);
 
-        Assert.Equal(stale.ChunkId, Assert.Single(ranked).ChunkId);
+        Assert.Equal(stale.ChunkId, Assert.Single(ranked).Match.ChunkId);
     }
 
     [Fact]
