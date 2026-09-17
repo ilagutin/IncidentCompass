@@ -191,7 +191,7 @@ internal sealed class AnalysisDelegateExecutor(
     {
         progress.Activity.RecordWorkerStopped();
         await noProgressRecorder.RecordWorkerStoppedAsync(job, roleName, stopped.ConsecutiveRefusals, cancellationToken);
-        var result = JsonSerializer.Serialize(new
+        var result = ModelFacingJson.Serialize(new
         {
             errorCode = WorkerStoppedRepeatingException.ErrorCode,
             errorMessage = WorkerStoppedRepeatingException.ErrorMessage

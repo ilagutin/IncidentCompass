@@ -36,12 +36,15 @@ internal static class MockIncidentCompassMemoryQuery
     }
 
     /// <summary>
-    /// The prompt writes every scalar as a JSON string literal, so the value arrives wrapped in quotes
-    /// and with each non-ASCII character escaped. A real model reads that literal and emits its query
-    /// inside JSON tool arguments, where the escapes decode again; the mock has to perform the same
-    /// decode or a Cyrillic message would reach memory_search as Latin <c>u0422</c> fragments, which
-    /// count against lexical coverage and leave the query with no word in its own script. A value that
-    /// is not a valid JSON string literal is used exactly as written.
+    /// The prompt writes every untrusted scalar as a JSON string literal, so the value arrives wrapped
+    /// in quotes and with some of its characters still escaped. A letter of any Basic Multilingual
+    /// Plane script now arrives as itself, but the quote, the backslash, every control character, the
+    /// separators, the format characters and every supplementary-plane character do not, and the
+    /// surrounding quotes are always there. A real model reads that literal and emits its query inside
+    /// JSON tool arguments, where the remaining escapes decode again; the mock has to perform the same
+    /// decode or the query would reach memory_search carrying the quotes and Latin <c>u0022</c>
+    /// fragments, which count against lexical coverage. A value that is not a valid JSON string literal
+    /// is used exactly as written.
     /// </summary>
     private static string DecodePromptValue(string value)
     {

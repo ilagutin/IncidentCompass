@@ -772,6 +772,20 @@ model-visible tool output on the way, so connector text cannot reach `triage_art
 prompt unredacted and a new tool cannot express the unredacted shape at all. See
 `docs/security-model.md` for the boundary and `docs/trade-offs.md` for what it costs source excerpts.
 
+Text a model reads has its own encoding, and only that text. Every value inside the untrusted-context
+boundary is still a JSON string literal, and the quote, the backslash, every control character, the
+line and paragraph separators, the format characters including the bidirectional controls, and every
+supplementary-plane character stay escaped; a letter or a mark of any Basic Multilingual Plane script
+now passes as itself, so a Russian or Polish incident reads as words rather than as six characters per
+letter, and a script that spells a word with a zero-width joiner keeps an escape for that one
+character. Tool results and delegate results take the same rule. Nothing durable moves with it: the
+canonical writer, every hash and fingerprint, stored payloads, `ModelCall` metadata, the intake path
+and the provider request body all keep the framework default, and a ledger rationale is plain text
+that no JSON encoder reaches. The prompt-size estimate is character-based, so the same change also
+stops the characters that now pass being charged against the context window and the token budget at
+six characters each. See `docs/security-model.md`, "Untrusted prompt boundary", for what stays escaped
+and why.
+
 ## Post-report Action Approval Boundary
 
 An action approval is one durable row with six states. `023-action-approvals-outbox.sql` defines

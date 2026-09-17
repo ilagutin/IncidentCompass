@@ -8,10 +8,13 @@ namespace IncidentCompass.UnitTests;
 
 /// <summary>
 /// The mock memory worker reads its query out of the rendered prompt, and the prompt writes every
-/// scalar as a JSON string literal. A real model decodes that literal on the way into its tool
-/// arguments, so the mock has to decode it too; reading the raw text turned a Cyrillic error message
-/// into Latin <c>u0422</c> fragments, which are counted words in the corpus script and therefore both
-/// failed lexical coverage and hid the query's real script from the foreign-script fallback.
+/// untrusted scalar as a JSON string literal. A real model decodes that literal on the way into its
+/// tool arguments, so the mock has to decode it too. A letter of any Basic Multilingual Plane script
+/// now arrives as itself, but the surrounding quotes are always there and the quote, the backslash,
+/// the control characters, the separators and the format characters are still escaped, so reading the
+/// raw line would carry the quotes and Latin <c>u0022</c> fragments into the query. Those are counted
+/// words in the corpus script, which both fails lexical coverage and hides the query's real script
+/// from the foreign-script fallback; the decode is what keeps that from happening.
 /// </summary>
 public sealed class MockMemoryQueryDecodingTests
 {
@@ -44,6 +47,27 @@ public sealed class MockMemoryQueryDecodingTests
 
         Assert.Contains(RussianErrorMessage, query, StringComparison.Ordinal);
         Assert.DoesNotContain("u04", query, StringComparison.Ordinal);
+        Assert.DoesNotContain("\\u", query, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The decode is still load-bearing now that letters arrive readable: a quote inside the message
+    /// is written as an escape, and reading the line raw would carry <c>u0022</c> into the query.
+    /// </summary>
+    [Fact]
+    public void CreateSearchArguments_AnEmbeddedQuoteDecodesBesideTheReadableCyrillic()
+    {
+        const string summaryWithQuote = "Checkout failed at the \"pay\" step";
+
+        var query = ReadQuery(WorkerPrompt(
+            "payments-api",
+            summaryWithQuote,
+            "TimeoutException",
+            RussianErrorMessage));
+
+        Assert.Contains(summaryWithQuote, query, StringComparison.Ordinal);
+        Assert.Contains(RussianErrorMessage, query, StringComparison.Ordinal);
+        Assert.DoesNotContain("u0022", query, StringComparison.Ordinal);
         Assert.DoesNotContain("\\u", query, StringComparison.Ordinal);
     }
 

@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
+using IncidentCompass.Application.Core.Serialization;
 using IncidentCompass.Application.Core.Text;
 using IncidentCompass.Application.Investigation.Jobs;
 using IncidentCompass.Domain.Incidents;
@@ -147,6 +148,11 @@ internal static class RemediationPromptBuilder
             ? value.GetString()
             : null;
 
+    /// <summary>
+    /// A JSON number's raw text is digits, a sign, a dot and an exponent marker by grammar, so this
+    /// is the one model-facing value in this file that cannot carry a non-ASCII character and needs
+    /// no normalization.
+    /// </summary>
     private static string ReadNumber(JsonElement payload, string name) =>
         payload.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Number
             ? value.GetRawText()
@@ -155,5 +161,5 @@ internal static class RemediationPromptBuilder
     private static string Trim(string? value, int maxLength) =>
         TextTruncator.Truncate(value ?? string.Empty, maxLength);
 
-    private static string AsJsonString(string? value) => JsonSerializer.Serialize(value ?? string.Empty);
+    private static string AsJsonString(string? value) => ModelFacingJson.SerializeString(value);
 }

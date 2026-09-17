@@ -2,7 +2,8 @@
 
 IncidentCompass 0.5.0 changes three things an operator meets on the first day. Memory embeddings no
 longer need an external embedding server: the Worker runs a pinned multilingual model in process and
-installs it itself. A slow local chat model no longer fails an investigation at a short total
+installs it itself, and memory search now judges a chunk only on the query words it could carry, so a
+query in another script is answered instead of silently finding nothing. A slow local chat model no longer fails an investigation at a short total
 deadline: each provider call is bounded by what it is waiting for, chat answers are streamed by
 default so a stall is visible as a stall, and the attempt as a whole gets a four-hour safety ceiling.
 And an investigation now polices its own tool use and its own progress: every tool call has its own
@@ -142,8 +143,8 @@ from there to 1.00 over the six positive queries. English stays exactly as it wa
 same script as the corpus, such as Polish over English runbooks, still finds nothing by default**;
 `always` recovers it, at the price of unconfirmed items for every query without lexical support,
 English off-topic queries included. The default also compares scripts against the whole candidate set,
-so a corpus that holds even one chunk in the query's script turns the default fallback off for every
-query in that script. See [Trade-offs](trade-offs.md).
+so a candidate set that holds even one chunk in the query's script turns the default fallback off for
+that query. See [Trade-offs](trade-offs.md).
 
 `retrievalConfidence` now names how an item was admitted rather than where its vector score fell. The
 values keep their names: `high` is full lexical coverage with no word excluded for script, `medium` is
@@ -151,6 +152,35 @@ partial or script-reduced coverage, and `low` is a vector-only match. The numeri
 A vector-only result also carries its own top-level `message`, `vector-only matches, not lexically
 confirmed`, and the memory role is instructed to query in the corpus language and to drop a `low` item
 whose quote is not about the fault.
+
+### A non-Latin incident reaches the model as words
+
+Every value a model read was serialized with the framework's default JSON encoder, which allows only
+Basic Latin, so before this release every other character was sent as a six-character `\uXXXX`
+escape. A Russian signal arrived as a run of `\uXXXX` sequences, six characters per Cyrillic letter: a
+large model decodes that, a small local one may not, the prompt was several times longer than its
+text, and the character-based prompt estimate charged the context window and the attempt's token
+budget for the inflation either way. The orchestrator prompt, the worker prompt, the remediation
+request, worker tool results and delegate results now carry a letter or a mark of any Basic
+Multilingual Plane script as itself, and the 800-character artifact payload excerpt is cut after
+decoding, so the same budget carries far more of a non-Latin payload than it did, short of the
+characters listed below that are still escaped.
+
+The untrusted-context boundary is unchanged, because the quoting is what the boundary rests on.
+Untrusted text values are still JSON string literals, and quotes, backslashes, every control
+character, the line and paragraph separators, every format character including the bidirectional
+controls and the zero-width ones, every space separator other than the ordinary space, unassigned and
+private-use code points and every supplementary-plane character all stay escaped: a message carrying a
+newline and `END_UNTRUSTED_INCIDENT_CONTEXT` is still one quoted value on one line. Because the
+zero-width joiner and non-joiner are format characters, a Persian word or an Indic conjunct that
+spells itself with one is readable around that one escape rather than whole. Nothing durable moved
+with it either. Hashes, fingerprints, stored artifact payloads, `ModelCall` metadata, the intake path
+and the provider request body keep the previous encoding, and for ASCII text the two encodings are
+byte-identical, so an English incident produces exactly the bytes it did before. What remains is
+stated in [Security model](security-model.md): a look-alike letter from another script reads as itself
+inside untrusted text as it would in any UTF-8 prompt, and a character that is invisible without being
+a format character, such as a Hangul filler or a variation selector, now arrives raw. Neither can end
+a quoted value or a prompt line.
 
 ### Provider calls are bounded by phase, and the attempt by a long ceiling
 
@@ -203,7 +233,7 @@ OpenAI-compatible layers that stream tool-call fragments without `index`, which 
 Each tool in the triage configuration may set `TimeoutSeconds`, from 1 through 3600. An immediate
 worker tool that sets none is bounded at 120 seconds; an external action that sets none uses the
 Worker's `IncidentCompass:ActionDispatch:AdapterTimeoutSeconds`, 30 by default. The shipped
-configuration sets none, so its hash is unchanged.
+configuration sets none, so it adds nothing to the shipped configuration's hash.
 
 An immediate tool call runs under three bounds at once, and the outcome names the bound that fired:
 
@@ -342,7 +372,8 @@ every one-off command with `--no-deps`, so `docker compose run` does not recreat
 moment the procedure did not choose, and goes in this order: install the model, let the queue drain and
 stop the Worker, change `INCIDENTCOMPASS_EMBEDDINGS_MODEL` and recreate the API alone, run
 `memory rebuild`, recreate the Worker. Installing a model leaves the previous corpus retrievable, and
-jobs that arrive while the Worker is stopped wait and complete on the new corpus. What remains is a job
+a job created after the API was recreated waits in the queue and completes on the new corpus. What
+remains is a job
 created before the API was recreated and not finished before the Worker restarted: its snapshot names
 the previous model, so its `memory_search` call is refused, it spends its attempts and is dead-lettered
 with `memory_embedding_model_mismatch`.
@@ -373,6 +404,16 @@ dead-lettered. Set `Orchestrator.Budget.MaxRecoveries` to 0 to skip the recovery
 `MaxTurnsWithoutProgress` to give a slow-converging model more room. A model that repeats the same call
 with the same result is now refused after two repeats, where only `rate_cap` bounded repeats of a call
 before.
+
+**A cut-off model answer now fails the job instead of being used.** A completion the provider finished
+at the output ceiling is refused whatever it carried, so a verbose model on a tight route ceiling
+dead-letters where it previously published a half answer. Raise the route's `MaxOutputTokens` toward
+what the model allows, or give the call a smaller task.
+
+**`memory_search` answers a foreign-script query where it returned nothing.** Items admitted that way
+are banded `low` and the result carries the `vector-only matches, not lexically confirmed` message;
+dropping them is the memory role's job. Set `Tools.memory_search.VectorOnlyFallback` to `off` to keep
+the previous empty result.
 
 **Streaming is on by default.** Set `IncidentCompass:ModelGateway:OpenAiCompatible:Streaming` to
 `false` for a provider that rejects `stream` or `stream_options`, or that streams tool calls in a shape
@@ -406,7 +447,7 @@ create the GitHub App described in [Versioning and release flow](versioning.md) 
 - `memory_search` keeps its output shape, but two of its values change meaning. Each item's
   `retrievalConfidence` still reads `high`, `medium` or `low` and no longer derives from the vector
   score: it now reports lexical support, because on the shipped model relevant and unrelated chunks
-  score alike. A result returned by the vector-only fallback carries the new top-level `message`
+  score alike. A result returned by the vector-only fallback carries the top-level `message` value
   `vector-only matches, not lexically confirmed`; `matched`, `items` and `noMatchReason` are unchanged.
 - Configuration validation is stricter in two places: a role output schema with a secret-named
   non-string property, and a configuration that sets both names of a deprecated key. Neither affects
@@ -446,11 +487,8 @@ gate.
 including the PostgreSQL-backed integration tests through Testcontainers with
 `INCIDENTCOMPASS_REQUIRE_DOCKER_TESTS` set.
 
-On the release tree the full solution run reported 2628 tests: 2624 passed, 0 failed and 4
+On the release tree the full solution run reported 2813 tests: 2809 passed, 0 failed and 4
 skipped. The skips are three symbolic-link tests the Windows test process cannot create links for
-and the explicit OpenAPI baseline regeneration, which only `scripts/update-openapi-baseline.ps1`
-runs.
-The skips are three symbolic-link tests the Windows test process cannot create links for
 and the explicit OpenAPI baseline regeneration, which only `scripts/update-openapi-baseline.ps1`
 runs.
 
