@@ -1,3 +1,5 @@
+using IncidentCompass.Application.Memory;
+
 namespace IncidentCompass.IntegrationTests;
 
 public static class MemoryRetrievalMetrics
@@ -22,6 +24,8 @@ public static class MemoryRetrievalMetrics
         var predictedNoMatchCount = outcomes.Count(static outcome => outcome.ReturnedChunkIds.Count == 0);
         var truePredictedNoMatchCount = outcomes.Count(static outcome =>
             outcome.RelevantChunkCount == 0 && outcome.ReturnedChunkIds.Count == 0);
+        var offTopic = CategoryQueries(corpus, byQuery, MemoryRetrievalQueryCategory.OffTopic);
+        var hardNegative = CategoryQueries(corpus, byQuery, MemoryRetrievalQueryCategory.HardNegative);
 
         return new MemoryRetrievalEvaluation(
             outcomes,
@@ -42,8 +46,40 @@ public static class MemoryRetrievalMetrics
                     outcome.RelevantChunkCount == 0 && outcome.ReturnedChunkIds.Count > 0),
                 PositiveQueryCount: positive.Length,
                 TrueNoMatchQueryCount: outcomes.Count(static outcome => outcome.RelevantChunkCount == 0),
-                PredictedNoMatchCount: predictedNoMatchCount));
+                PredictedNoMatchCount: predictedNoMatchCount,
+                OffTopicQueryCount: offTopic.Length,
+                OffTopicFalsePositiveCount: offTopic.Count(static result => result.Matches.Count > 0),
+                HardNegativeQueryCount: hardNegative.Length,
+                HardNegativeReturnedCount: hardNegative.Count(static result => result.Matches.Count > 0),
+                HardNegativeConfirmedCount: hardNegative.Count(result =>
+                    result.Matches.Take(corpus.TopK).Any(static match => IsConfirmed(match)))));
     }
+
+    /// <summary>
+    /// The results of the queries a corpus explicitly puts in <paramref name="category" />, each trimmed
+    /// to the first <c>TopK</c> matches. A corpus that predates the category field names none, so every
+    /// per-category count on such a corpus is zero and its recorded numbers stay comparable.
+    /// </summary>
+    private static MemoryRetrievalQueryResult[] CategoryQueries(
+        MemoryRetrievalBenchmarkCorpus corpus,
+        Dictionary<string, MemoryRetrievalQueryResult> byQuery,
+        string category) =>
+        corpus.Queries
+            .Where(query => string.Equals(query.Category, category, StringComparison.Ordinal))
+            .Select(query => byQuery[query.Id] with
+            {
+                Matches = byQuery[query.Id].Matches.Take(corpus.TopK).ToArray()
+            })
+            .ToArray();
+
+    /// <summary>
+    /// A returned match confirms a hard negative when the tool banded it <c>medium</c> or <c>high</c>:
+    /// that is the tool claiming lexical support for a query nothing active answers. A <c>low</c> band
+    /// is the vector-only fallback saying so itself, and a null band comes from a strategy that does not
+    /// go through the tool, so neither can confirm.
+    /// </summary>
+    private static bool IsConfirmed(MemoryRetrievalMatch match) =>
+        match.RetrievalConfidence is MemoryRetrievalConfidence.Medium or MemoryRetrievalConfidence.High;
 
     private static MemoryRetrievalQueryOutcome CreateOutcome(
         MemoryRetrievalBenchmarkQuery query,
@@ -80,6 +116,20 @@ public sealed record MemoryRetrievalEvaluation(
     IReadOnlyList<MemoryRetrievalQueryOutcome> Queries,
     MemoryRetrievalMetricSummary Metrics);
 
+/// <summary>
+/// The retrieval numbers for one run. The first ten fields are the version 1 metrics and are computed
+/// exactly as they were when the versioned baseline was recorded: the no-match fields still count every
+/// zero-relevance query, whatever category it belongs to. The per-category fields that follow are read
+/// from the corpus's explicit categories only, so they are zero on a corpus that predates the field.
+/// <para>
+/// <c>OffTopicFalsePositiveCount</c> counts off-topic queries that returned at least one chunk.
+/// <c>HardNegativeReturnedCount</c> counts hard negatives that returned at least one chunk and is a
+/// diagnostic, not an error count: the active siblings of a retired procedure are legitimate
+/// low-confidence context. <c>HardNegativeConfirmedCount</c> is the error measure, counting hard
+/// negatives where at least one returned match was banded <c>medium</c> or <c>high</c>, which is the
+/// tool asserting support for an answer the corpus no longer holds.
+/// </para>
+/// </summary>
 public sealed record MemoryRetrievalMetricSummary(
     double ChunkMacroRecallAt5,
     double ChunkMicroRecallAt5,
@@ -90,7 +140,12 @@ public sealed record MemoryRetrievalMetricSummary(
     int NoMatchFalsePositiveCount,
     int PositiveQueryCount,
     int TrueNoMatchQueryCount,
-    int PredictedNoMatchCount);
+    int PredictedNoMatchCount,
+    int OffTopicQueryCount = 0,
+    int OffTopicFalsePositiveCount = 0,
+    int HardNegativeQueryCount = 0,
+    int HardNegativeReturnedCount = 0,
+    int HardNegativeConfirmedCount = 0);
 
 public sealed record MemoryRetrievalQueryOutcome(
     string QueryId,

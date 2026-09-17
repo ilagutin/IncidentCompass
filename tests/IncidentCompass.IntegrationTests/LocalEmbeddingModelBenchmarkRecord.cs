@@ -2,6 +2,19 @@ using IncidentCompass.Infrastructure.EmbeddingModels;
 
 namespace IncidentCompass.IntegrationTests;
 
+/// <summary>
+/// The identity of the result document. Schema 3 is schema 2 plus the per-category composition of each
+/// group and the per-category counts on <see cref="MemoryRetrievalMetricSummary" />: the metric summary
+/// means more than it did, so the document says so. Records written at schema 1 and 2 stay parseable and
+/// nothing migrates them.
+/// </summary>
+internal static class LocalEmbeddingModelBenchmarkContract
+{
+    public const int SchemaVersion = 3;
+
+    public const string Benchmark = "local-embedding-model-benchmark-v3";
+}
+
 internal sealed record LocalEmbeddingModelBenchmarkRecord(
     int SchemaVersion,
     string Benchmark,
@@ -55,7 +68,14 @@ internal sealed record LocalEmbeddingModelBenchmarkGroupResult(
     IReadOnlyList<LocalEmbeddingModelBenchmarkPipelineResult> Pipeline,
     IReadOnlyList<LocalEmbeddingModelBenchmarkFallbackResult> FallbackModes,
     LocalEmbeddingModelBenchmarkRawSummary Raw,
-    IReadOnlyList<LocalEmbeddingModelBenchmarkRawQuery> RawQueries);
+    IReadOnlyList<LocalEmbeddingModelBenchmarkRawQuery> RawQueries,
+    LocalEmbeddingModelBenchmarkCategoryCounts Categories);
+
+/// <summary>
+/// How the group's queries divide over <see cref="MemoryRetrievalQueryCategory" />, so a reader can see
+/// what a no-match number was measured over without opening the corpus fixture.
+/// </summary>
+internal sealed record LocalEmbeddingModelBenchmarkCategoryCounts(int Positive, int OffTopic, int HardNegative);
 
 internal sealed record LocalEmbeddingModelBenchmarkPipelineResult(
     double MinScore,

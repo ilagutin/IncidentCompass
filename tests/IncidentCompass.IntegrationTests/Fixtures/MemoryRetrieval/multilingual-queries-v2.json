@@ -1,0 +1,295 @@
+{
+  "schemaVersion": 2,
+  "version": "memory-retrieval-multilingual-queries-v2",
+  "corpusVersion": "memory-retrieval-corpus-v2",
+  "queries": [
+    {
+      "id": "false-empty-checkout-timeout-pl",
+      "sourceQueryId": "false-empty-checkout-timeout",
+      "language": "pl",
+      "text": "timeout przy finalizacji zamówienia przez magazyn"
+    },
+    {
+      "id": "false-empty-checkout-timeout-ru",
+      "sourceQueryId": "false-empty-checkout-timeout",
+      "language": "ru",
+      "text": "таймаут оформления заказа из-за склада"
+    },
+    {
+      "id": "current-inventory-mitigation-pl",
+      "sourceQueryId": "current-inventory-mitigation",
+      "language": "pl",
+      "text": "circuit breaker przy opóźnieniach magazynu"
+    },
+    {
+      "id": "current-inventory-mitigation-ru",
+      "sourceQueryId": "current-inventory-mitigation",
+      "language": "ru",
+      "text": "circuit breaker при задержках склада"
+    },
+    {
+      "id": "payments-component-variant-pl",
+      "sourceQueryId": "payments-component-variant",
+      "language": "pl",
+      "text": "ograniczenie ponownych prób płatności"
+    },
+    {
+      "id": "payments-component-variant-ru",
+      "sourceQueryId": "payments-component-variant",
+      "language": "ru",
+      "text": "ограничение повторных попыток платежей"
+    },
+    {
+      "id": "known-incident-pool-pl",
+      "sourceQueryId": "known-incident-pool",
+      "language": "pl",
+      "text": "wyczerpanie puli połączeń"
+    },
+    {
+      "id": "known-incident-pool-ru",
+      "sourceQueryId": "known-incident-pool",
+      "language": "ru",
+      "text": "исчерпание пула соединений"
+    },
+    {
+      "id": "stock-reservation-query-variant-pl",
+      "sourceQueryId": "stock-reservation-query-variant",
+      "language": "pl",
+      "text": "opóźnienie rezerwacji towaru w magazynie"
+    },
+    {
+      "id": "stock-reservation-query-variant-ru",
+      "sourceQueryId": "stock-reservation-query-variant",
+      "language": "ru",
+      "text": "задержка резервирования товара на складе"
+    },
+    {
+      "id": "stale-only-procedure-pl",
+      "sourceQueryId": "stale-only-procedure",
+      "language": "pl",
+      "text": "procedura wycofania starej wersji"
+    },
+    {
+      "id": "stale-only-procedure-ru",
+      "sourceQueryId": "stale-only-procedure",
+      "language": "ru",
+      "text": "процедура отката старой версии"
+    },
+    {
+      "id": "notification-backlog-dispatch-pl",
+      "sourceQueryId": "notification-backlog-dispatch",
+      "language": "pl",
+      "text": "notifications-api QueueSaturatedException zaległości kolejki wysyłki przekroczyły próg alertu opóźnienia dostarczania na /notifications/dispatch"
+    },
+    {
+      "id": "notification-backlog-dispatch-ru",
+      "sourceQueryId": "notification-backlog-dispatch",
+      "language": "ru",
+      "text": "notifications-api QueueSaturatedException очередь отправки накопила отставание выше порога оповещения о задержке доставки на /notifications/dispatch"
+    },
+    {
+      "id": "search-index-lag-pl",
+      "sourceQueryId": "search-index-lag",
+      "language": "pl",
+      "text": "search-indexer IndexLagException wyniki wyszukiwania są nieaktualne, ponieważ worker reindeksujący nie nadąża na /search/reindex"
+    },
+    {
+      "id": "search-index-lag-ru",
+      "sourceQueryId": "search-index-lag",
+      "language": "ru",
+      "text": "search-indexer IndexLagException результаты поиска устарели, потому что воркер переиндексации отстал на /search/reindex"
+    },
+    {
+      "id": "session-eviction-storm-pl",
+      "sourceQueryId": "session-eviction-storm",
+      "language": "pl",
+      "text": "session-store SessionNotFoundException zalogowani użytkownicy są masowo wylogowywani podczas lawiny usuwania sesji"
+    },
+    {
+      "id": "session-eviction-storm-ru",
+      "sourceQueryId": "session-eviction-storm",
+      "language": "ru",
+      "text": "session-store SessionNotFoundException вошедших пользователей пачками разлогинивает во время шторма вытеснения сессий"
+    },
+    {
+      "id": "report-export-timeout-pl",
+      "sourceQueryId": "report-export-timeout",
+      "language": "pl",
+      "text": "report-export ExportTimeoutException zaplanowany eksport raportu przekroczył limit czasu na /reports/export, zanim zapisano pierwszą stronę"
+    },
+    {
+      "id": "report-export-timeout-ru",
+      "sourceQueryId": "report-export-timeout",
+      "language": "ru",
+      "text": "report-export ExportTimeoutException запланированный экспорт отчёта превысил таймаут на /reports/export до записи первой страницы"
+    },
+    {
+      "id": "feature-flag-evaluation-fallback-pl",
+      "sourceQueryId": "feature-flag-evaluation-fallback",
+      "language": "pl",
+      "text": "flag-service FlagEvaluationException ewaluacja flag wróciła do wartości domyślnych dla każdego żądania na /flags/evaluate"
+    },
+    {
+      "id": "feature-flag-evaluation-fallback-ru",
+      "sourceQueryId": "feature-flag-evaluation-fallback",
+      "language": "ru",
+      "text": "flag-service FlagEvaluationException вычисление флагов откатилось к значениям по умолчанию для каждого запроса на /flags/evaluate"
+    },
+    {
+      "id": "orders-fulfillment-backlog-pl",
+      "sourceQueryId": "orders-fulfillment-backlog",
+      "language": "pl",
+      "text": "orders-api FulfillmentBacklogException zaległości w realizacji zamówień rosły dalej po wydaniu 7.1.0"
+    },
+    {
+      "id": "orders-fulfillment-backlog-ru",
+      "sourceQueryId": "orders-fulfillment-backlog",
+      "language": "ru",
+      "text": "orders-api FulfillmentBacklogException отставание в обработке заказов продолжало расти после релиза 7.1.0"
+    },
+    {
+      "id": "explicit-no-match-pl",
+      "sourceQueryId": "explicit-no-match",
+      "language": "pl",
+      "text": "handshake przy rotacji certyfikatu"
+    },
+    {
+      "id": "explicit-no-match-ru",
+      "sourceQueryId": "explicit-no-match",
+      "language": "ru",
+      "text": "handshake при ротации сертификата"
+    },
+    {
+      "id": "off-topic-dns-resolution-pl",
+      "sourceQueryId": "off-topic-dns-resolution",
+      "language": "pl",
+      "text": "edge-gateway DnsResolutionException rozwiązywanie nazw usług nadrzędnych zaczęło zawodzić przy każdym połączeniu wychodzącym"
+    },
+    {
+      "id": "off-topic-dns-resolution-ru",
+      "sourceQueryId": "off-topic-dns-resolution",
+      "language": "ru",
+      "text": "edge-gateway DnsResolutionException разрешение имён вышестоящих сервисов начало падать при каждом исходящем вызове"
+    },
+    {
+      "id": "off-topic-clock-skew-pl",
+      "sourceQueryId": "off-topic-clock-skew",
+      "language": "pl",
+      "text": "audit-api ClockSkewException podpisane wpisy audytowe były odrzucane, bo zegar hosta się rozjechał"
+    },
+    {
+      "id": "off-topic-clock-skew-ru",
+      "sourceQueryId": "off-topic-clock-skew",
+      "language": "ru",
+      "text": "audit-api ClockSkewException подписанные записи аудита отклонялись из-за расхождения часов на хосте"
+    },
+    {
+      "id": "off-topic-disk-pressure-pl",
+      "sourceQueryId": "off-topic-disk-pressure",
+      "language": "pl",
+      "text": "build-runner DiskPressureException agentowi kompilacji zabrakło miejsca na dysku roboczym podczas wysyłania artefaktu"
+    },
+    {
+      "id": "off-topic-disk-pressure-ru",
+      "sourceQueryId": "off-topic-disk-pressure",
+      "language": "ru",
+      "text": "build-runner DiskPressureException у агента сборки закончилось место на рабочем диске во время загрузки артефакта"
+    },
+    {
+      "id": "off-topic-checkout-price-rounding-pl",
+      "sourceQueryId": "off-topic-checkout-price-rounding",
+      "language": "pl",
+      "text": "checkout-api PriceRoundingException sumy w koszyku różniły się o grosz dla zestawów magazynowych po zmianie zaokrąglania waluty"
+    },
+    {
+      "id": "off-topic-checkout-price-rounding-ru",
+      "sourceQueryId": "off-topic-checkout-price-rounding",
+      "language": "ru",
+      "text": "checkout-api PriceRoundingException итоговые суммы заказа расходились на копейку для складских комплектов после изменения округления валюты"
+    },
+    {
+      "id": "off-topic-notification-template-render-pl",
+      "sourceQueryId": "off-topic-notification-template-render",
+      "language": "pl",
+      "text": "notifications-api TemplateRenderException strona podglądu wysyłki nie wyrenderowała zlokalizowanego szablonu mailowego"
+    },
+    {
+      "id": "off-topic-notification-template-render-ru",
+      "sourceQueryId": "off-topic-notification-template-render",
+      "language": "ru",
+      "text": "notifications-api TemplateRenderException страница предпросмотра отправки не отрисовала локализованный шаблон письма"
+    },
+    {
+      "id": "inactive-item-no-match-pl",
+      "sourceQueryId": "inactive-item-no-match",
+      "language": "pl",
+      "text": "dokładna wycofana procedura awaryjna magazynu"
+    },
+    {
+      "id": "inactive-item-no-match-ru",
+      "sourceQueryId": "inactive-item-no-match",
+      "language": "ru",
+      "text": "точная устаревшая аварийная процедура склада"
+    },
+    {
+      "id": "hard-negative-notification-provider-failover-pl",
+      "sourceQueryId": "hard-negative-notification-provider-failover",
+      "language": "pl",
+      "text": "notifications-api ProviderUnavailableException dostawca SMS przestał przyjmować wysyłki i potrzebujemy procedury przełączenia awaryjnego dostawcy"
+    },
+    {
+      "id": "hard-negative-notification-provider-failover-ru",
+      "sourceQueryId": "hard-negative-notification-provider-failover",
+      "language": "ru",
+      "text": "notifications-api ProviderUnavailableException провайдер SMS перестал принимать отправки, и нужна процедура аварийного переключения провайдера"
+    },
+    {
+      "id": "hard-negative-search-full-rebuild-pl",
+      "sourceQueryId": "hard-negative-search-full-rebuild",
+      "language": "pl",
+      "text": "search-indexer IndexCorruptException indeks wyszukiwania jest uszkodzony i potrzebujemy procedury pełnej przebudowy indeksu"
+    },
+    {
+      "id": "hard-negative-search-full-rebuild-ru",
+      "sourceQueryId": "hard-negative-search-full-rebuild",
+      "language": "ru",
+      "text": "search-indexer IndexCorruptException поисковый индекс повреждён, и нужна процедура полной перестройки индекса"
+    },
+    {
+      "id": "hard-negative-session-manual-failover-pl",
+      "sourceQueryId": "hard-negative-session-manual-failover",
+      "language": "pl",
+      "text": "session-store ReplicaUnavailableException replika sesji nie działa i potrzebujemy procedury ręcznego przełączenia awaryjnego magazynu sesji"
+    },
+    {
+      "id": "hard-negative-session-manual-failover-ru",
+      "sourceQueryId": "hard-negative-session-manual-failover",
+      "language": "ru",
+      "text": "session-store ReplicaUnavailableException реплика сессий недоступна, и нужна процедура ручного аварийного переключения хранилища сессий"
+    },
+    {
+      "id": "hard-negative-report-nightly-replay-pl",
+      "sourceQueryId": "hard-negative-report-nightly-replay",
+      "language": "pl",
+      "text": "report-export ExportBatchMissingException brakuje nocnej partii eksportu i potrzebujemy procedury ponownego odtworzenia nocnego eksportu"
+    },
+    {
+      "id": "hard-negative-report-nightly-replay-ru",
+      "sourceQueryId": "hard-negative-report-nightly-replay",
+      "language": "ru",
+      "text": "report-export ExportBatchMissingException ночная партия экспорта отсутствует, и нужна процедура повторного прогона ночного экспорта"
+    },
+    {
+      "id": "hard-negative-flag-kill-switch-pl",
+      "sourceQueryId": "hard-negative-flag-kill-switch",
+      "language": "pl",
+      "text": "flag-service FlagRolloutException wadliwe wdrożenie flagi jest na produkcji i potrzebujemy procedury awaryjnego wyłącznika"
+    },
+    {
+      "id": "hard-negative-flag-kill-switch-ru",
+      "sourceQueryId": "hard-negative-flag-kill-switch",
+      "language": "ru",
+      "text": "flag-service FlagRolloutException неудачное включение флага уже в продакшене, и нужна процедура аварийного отключения"
+    }
+  ]
+}

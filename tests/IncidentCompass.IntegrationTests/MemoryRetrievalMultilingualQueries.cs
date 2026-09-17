@@ -17,7 +17,19 @@ public sealed record MemoryRetrievalMultilingualQueries(
 
     public const string Russian = "ru";
 
-    public static MemoryRetrievalMultilingualQueries Load(string repoRoot)
+    public const string Version1 = "memory-retrieval-multilingual-queries-v1";
+
+    public const string Version2 = "memory-retrieval-multilingual-queries-v2";
+
+    /// <summary>Loads the renderings of the version 1 corpus queries.</summary>
+    public static MemoryRetrievalMultilingualQueries Load(string repoRoot) =>
+        LoadFile(repoRoot, "multilingual-queries-v1.json");
+
+    /// <summary>Loads the renderings of the version 2 corpus queries.</summary>
+    public static MemoryRetrievalMultilingualQueries LoadV2(string repoRoot) =>
+        LoadFile(repoRoot, "multilingual-queries-v2.json");
+
+    private static MemoryRetrievalMultilingualQueries LoadFile(string repoRoot, string fileName)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(repoRoot);
         var path = Path.Combine(
@@ -26,15 +38,33 @@ public sealed record MemoryRetrievalMultilingualQueries(
             "IncidentCompass.IntegrationTests",
             "Fixtures",
             "MemoryRetrieval",
-            "multilingual-queries-v1.json");
-        return JsonSerializer.Deserialize<MemoryRetrievalMultilingualQueries>(
+            fileName);
+        var queries = JsonSerializer.Deserialize<MemoryRetrievalMultilingualQueries>(
             File.ReadAllText(path),
             SerializerOptions) ?? throw new InvalidOperationException("Multilingual query fixture is empty.");
+        queries.Validate();
+        return queries;
+    }
+
+    /// <summary>
+    /// Each fixture version renders exactly one corpus version, so a rendering can never be pooled onto
+    /// a corpus whose queries it does not cover.
+    /// </summary>
+    private void Validate()
+    {
+        var supported = (SchemaVersion, Version, CorpusVersion) is
+            (1, Version1, MemoryRetrievalBenchmarkCorpus.Version1) or
+            (2, Version2, MemoryRetrievalBenchmarkCorpus.Version2);
+        if (!supported || Queries.Count == 0)
+        {
+            throw new InvalidOperationException("Unsupported multilingual query contract.");
+        }
     }
 
     /// <summary>
     /// The corpus with its queries replaced by the renderings in <paramref name="languages" />, each
-    /// carrying the source query's labels and service name under the rendering's own id.
+    /// carrying the source query's labels, service name and category under the rendering's own id. The
+    /// rendering supplies the text and nothing else, so no judgement can drift between languages.
     /// </summary>
     public MemoryRetrievalBenchmarkCorpus ToCorpus(MemoryRetrievalBenchmarkCorpus corpus, params string[] languages)
     {
