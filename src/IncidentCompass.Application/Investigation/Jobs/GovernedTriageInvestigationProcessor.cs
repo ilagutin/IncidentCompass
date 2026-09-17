@@ -1,5 +1,6 @@
 using IncidentCompass.Application.Core.ModelClients;
 using IncidentCompass.Application.Core.Serialization;
+using IncidentCompass.Application.Core.Text;
 using IncidentCompass.Application.Intake.Configuration;
 using IncidentCompass.Application.Investigation.Reports;
 using IncidentCompass.Domain.Incidents;
@@ -22,6 +23,14 @@ internal sealed class GovernedTriageInvestigationProcessor : IClaimedTriageJobPr
     /// classification survives even when the diagnostic has to be cut.
     /// </summary>
     internal const string OrchestratorRepromptRationalePrefix = "orchestrator_reprompt: ";
+
+    /// <summary>
+    /// The cap, in UTF-16 code units, on the model-authored tool name the two unknown-tool messages
+    /// echo. A tool name the model invented is unbounded text, and both messages exist only to tell
+    /// the model which of its own words was not a tool, which a short prefix of the name does. The
+    /// cut is <see cref="TextTruncator"/>'s, so it lands on a rune boundary.
+    /// </summary>
+    internal const int MaxEchoedToolNameLength = 128;
 
     private readonly ITriageJobInvestigationContextRepository contextRepository;
     private readonly InvestigationModelCaller modelCaller;
@@ -173,8 +182,11 @@ internal sealed class GovernedTriageInvestigationProcessor : IClaimedTriageJobPr
             unknownToolDiagnostic,
             "Orchestrator proposed an unsupported tool after bounded reprompts.",
             cancellationToken);
-        messages.Add(new AiChatMessage(AiMessageRole.Tool, UnknownToolResult(toolCall.Name), toolCall.Id));
-        messages.Add(new AiChatMessage(AiMessageRole.User, "Validation error: unknown tool '" + toolCall.Name + "'. Call delegate or publish_report."));
+        // Both messages echo the same capped name, so the tool result and the reprompt cannot
+        // disagree about what the model called.
+        var unsupportedToolName = CapToolName(toolCall.Name);
+        messages.Add(new AiChatMessage(AiMessageRole.Tool, UnknownToolResult(unsupportedToolName), toolCall.Id));
+        messages.Add(new AiChatMessage(AiMessageRole.User, UnknownToolReprompt(unsupportedToolName)));
         return new OrchestratorTurnOutcome(OrchestratorTurnDisposition.UnknownToolReprompted, afterUnknownTool);
     }
 
@@ -303,12 +315,28 @@ internal sealed class GovernedTriageInvestigationProcessor : IClaimedTriageJobPr
     }
 
     /// <summary>
-    /// The one diagnostic on this path built from model text: <paramref name="toolName"/> is
-    /// whatever the model named. It is quoted as a JSON string literal, which is why it is worth
-    /// naming at all, and it goes through the model-facing encoder like every other tool message.
+    /// Caps the model-authored tool name both unknown-tool messages carry to
+    /// <see cref="MaxEchoedToolNameLength"/>.
+    /// </summary>
+    private static string CapToolName(string toolName) =>
+        TextTruncator.Truncate(toolName, MaxEchoedToolNameLength);
+
+    /// <summary>
+    /// The tool message for an unsupported tool. <paramref name="toolName"/> is whatever the model
+    /// named, already capped, and it is a JSON string literal written by the model-facing encoder
+    /// like every other tool message.
     /// </summary>
     private static string UnknownToolResult(string toolName)
     {
         return ModelFacingJson.Serialize(new { errorCode = "unknown_tool", toolName });
     }
+
+    /// <summary>
+    /// The user message that asks for a supported tool. The sentence is the backend's; the name in
+    /// it is the capped model text, written as one JSON string literal so a name carrying a newline,
+    /// a quote or a line that looks backend-authored stays one value on one line.
+    /// </summary>
+    private static string UnknownToolReprompt(string toolName) =>
+        "Validation error: unknown tool " + ModelFacingJson.SerializeString(toolName) +
+        ". Call delegate or publish_report.";
 }

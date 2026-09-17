@@ -20,6 +20,14 @@ internal static class TriageInvestigationPromptBuilder
     internal const string OrchestratorTaskInstruction =
         "Delegate to the analysis role first. Then call publish_report with report_json that includes evidence[] referenceId values copied from citable artifact ids. Completed reports require at least one evidence item; InsufficientEvidence may use an empty evidence array. Do not set isMassIssue or evidence kind; the backend derives them.";
 
+    /// <summary>
+    /// The backend-authored line that introduces the delegated task. It says who wrote the task and
+    /// how it is written, because the next line is one JSON string literal rather than prose: the
+    /// worker still follows the task as its instruction, and the label is what lets it read a
+    /// quoted value correctly rather than as a stray fragment.
+    /// </summary>
+    internal const string WorkerTaskLabel = "Task (written by the orchestrator, one JSON string):";
+
     public static string BuildOrchestratorPrompt(TriageJob job, TriageJobInvestigationContext context)
     {
         var builder = new StringBuilder();
@@ -29,6 +37,12 @@ internal static class TriageInvestigationPromptBuilder
         return builder.ToString();
     }
 
+    /// <summary>
+    /// Builds the worker's user message. <paramref name="task"/> is the task the orchestrator model
+    /// wrote, so it is model-authored text even though it is an instruction by design: it is written
+    /// as one JSON string literal under <see cref="WorkerTaskLabel"/>, which keeps it from carrying
+    /// a forged context marker, a forged answer rule or a line break out of its own value.
+    /// </summary>
     public static string BuildWorkerPrompt(
         string role,
         string task,
@@ -37,8 +51,8 @@ internal static class TriageInvestigationPromptBuilder
     {
         var builder = new StringBuilder();
         builder.AppendLine(CultureInfo.InvariantCulture, $"IncidentCompass {role} worker task for job {job.Id} attempt {job.Attempt}.");
-        builder.AppendLine("Task:");
-        builder.AppendLine(task);
+        builder.AppendLine(WorkerTaskLabel);
+        builder.AppendLine(AsJsonString(task));
         AppendContext(builder, context);
         builder.AppendLine("Return only JSON matching your configured output schema.");
         return builder.ToString();

@@ -3,6 +3,7 @@ using IncidentCompass.Application.Core.Errors;
 using IncidentCompass.Application.Core.ModelClients;
 using IncidentCompass.Application.Core.ModelGateway;
 using IncidentCompass.Application.Core.Resilience;
+using IncidentCompass.Application.Core.Text;
 using IncidentCompass.Application.Investigation.Jobs;
 using IncidentCompass.Application.Investigation.Reports;
 using static IncidentCompass.UnitTests.InvestigationProgressTestHarness;
@@ -322,17 +323,15 @@ public sealed class InvestigationTerminationSafeguardTests
     }
 
     [Fact]
-    public void TruncateOnRuneBoundary_NeverSplitsASurrogatePair()
+    public void TheRecoverySuggestionCap_NeverSplitsASurrogatePair()
     {
         var text = new string('a', InvestigationRecoveryCall.MaxSuggestionLength - 1) + "\U0001F600" + "tail";
 
-        var truncated = InvestigationRecoveryCall.TruncateOnRuneBoundary(text, InvestigationRecoveryCall.MaxSuggestionLength);
+        var truncated = TextTruncator.Truncate(text, InvestigationRecoveryCall.MaxSuggestionLength);
 
         Assert.Equal(InvestigationRecoveryCall.MaxSuggestionLength - 1, truncated.Length);
         Assert.False(char.IsSurrogate(truncated[^1]));
-        Assert.Equal(
-            "ab" + "\U0001F600",
-            InvestigationRecoveryCall.TruncateOnRuneBoundary("ab" + "\U0001F600" + "c", 4));
+        Assert.Equal("ab" + "\U0001F600", TextTruncator.Truncate("ab" + "\U0001F600" + "c", 4));
     }
 
     private static string[] SplitReservedLimitation(int reservedIndex)

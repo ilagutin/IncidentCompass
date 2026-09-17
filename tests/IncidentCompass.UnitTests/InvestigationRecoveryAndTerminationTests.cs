@@ -1,5 +1,6 @@
 using System.Text.Json;
 using IncidentCompass.Application.Core.ModelClients;
+using IncidentCompass.Application.Core.Serialization;
 using IncidentCompass.Application.Investigation.Jobs;
 using IncidentCompass.Application.Investigation.Reports;
 using IncidentCompass.Domain.Incidents.Statuses;
@@ -52,8 +53,10 @@ public sealed class InvestigationRecoveryAndTerminationTests
             model.OrchestratorRequests[4].Messages,
             message => message.Content.StartsWith(InvestigationNoProgressHandler.RecoverySuggestionPrefix, StringComparison.Ordinal));
         Assert.Equal(AiMessageRole.User, suggestion.Role);
+        // The model's text follows the backend's prefix as one JSON string literal, never raw.
         Assert.Equal(
-            InvestigationNoProgressHandler.RecoverySuggestionPrefix + ScriptedInvestigationModel.DefaultRecoveryText,
+            InvestigationNoProgressHandler.RecoverySuggestionPrefix +
+            ModelFacingJson.SerializeString(ScriptedInvestigationModel.DefaultRecoveryText),
             suggestion.Content);
         Assert.Equal(5, model.OrchestratorCalls);
 
