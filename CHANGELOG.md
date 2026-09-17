@@ -117,12 +117,12 @@ report.
   Providers that stream tool-call fragments without `index` need `Streaming=false`;
   `docs/model-gateway.md` lists the known incompatibilities.
 - A completion cut off at the output ceiling is refused on both the JSON and the streamed path. Any
-  answer whose first choice reports `finish_reason: length` is `provider_output_limit_reached`, with or
-  without partial content and with or without tool calls; the partial text is discarded and never
-  reaches a caller, and a tool call the ceiling cut through is reported under that code rather than as
-  an invalid tool call. Previously such an answer was returned as a normal completion whenever it
-  carried any text or tool call, so a cut-off report or remediation diff could be used as if it were
-  whole. The job dead-letters without a retry, as an output limit already did; the fix is a higher route
+  answer whose first choice reports `length`, `max_tokens` or `model_length` as its finish reason is
+  `provider_output_limit_reached`, with or without partial content and with or without tool calls; the
+  partial text is discarded and never reaches a caller, and a tool call the ceiling cut through is
+  reported under that code rather than as an invalid tool call. Previously such an answer was returned
+  as a normal completion whenever it carried any text or tool call, so a cut-off report or remediation
+  diff could be used as if it were whole. The job dead-letters without a retry, as an output limit already did; the fix is a higher route
   `MaxOutputTokens` or a smaller task.
 - `publish_report` accepts exactly one argument shape per call (`report_json` alone, `report` alone or
   a bare report) instead of silently taking the first wrapper it found. `summary` (4000 characters),
