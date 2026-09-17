@@ -65,7 +65,7 @@ internal sealed class LocalOnnxInstalledModelReader(
 
         try
         {
-            var installed = await store.ReadInstalledAsync(options, cancellationToken);
+            var installed = await store.ReadInstalledAsync(options.CreatePin(), cancellationToken);
             if (installed is null)
             {
                 return LocalOnnxInstalledModelLookup.NotAvailable(

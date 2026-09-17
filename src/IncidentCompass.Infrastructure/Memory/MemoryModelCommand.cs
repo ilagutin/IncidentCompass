@@ -54,11 +54,11 @@ public static class MemoryModelCommand
         {
             await using var scope = services.CreateAsyncScope();
             var scopedServices = scope.ServiceProvider;
-            var options = RequireLocalModelOptions(scopedServices);
+            var pin = RequireLocalModelOptions(scopedServices).CreatePin();
             var store = scopedServices.GetRequiredService<LocalOnnxModelStore>();
             return install
-                ? await InstallAsync(store, options, output, error, cancellationToken)
-                : await ReportStatusAsync(scopedServices, store, options, output, error, cancellationToken);
+                ? await InstallAsync(store, pin, output, error, cancellationToken)
+                : await ReportStatusAsync(scopedServices, store, pin, output, error, cancellationToken);
         }
         catch (LocalOnnxModelStoreException exception)
         {
@@ -84,23 +84,23 @@ public static class MemoryModelCommand
     /// </summary>
     private static async Task<int> InstallAsync(
         LocalOnnxModelStore store,
-        LocalOnnxEmbeddingOptions options,
+        LocalOnnxModelPin pin,
         TextWriter output,
         TextWriter error,
         CancellationToken cancellationToken)
     {
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(options.InstallTimeoutSeconds));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(pin.InstallTimeoutSeconds));
         using var installCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
         LocalOnnxModelInstallResult result;
         try
         {
-            result = await store.InstallConfiguredAsync(options, installCancellation.Token);
+            result = await store.InstallConfiguredAsync(pin, installCancellation.Token);
         }
         catch (OperationCanceledException) when (timeout.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
         {
             error.WriteLine(
                 "Local embedding model command failed with " + LocalOnnxModelErrorCodes.InstallTimedOut +
-                ": the install did not complete within " + options.InstallTimeoutSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture) +
+                ": the install did not complete within " + pin.InstallTimeoutSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture) +
                 " seconds. The active manifest was not replaced.");
             return 1;
         }
@@ -114,7 +114,7 @@ public static class MemoryModelCommand
         }
 
         WriteModel(output, "Installed local embedding model", manifest);
-        var manifestPath = LocalOnnxModelLayout.GetManifestPath(Path.GetFullPath(options.ModelDirectory!));
+        var manifestPath = LocalOnnxModelLayout.GetManifestPath(Path.GetFullPath(pin.ModelDirectory!));
         if (result.PreviousManifestPath is null)
         {
             output.WriteLine("  No model was active before, so there is no previous manifest to roll back to.");
@@ -143,12 +143,12 @@ public static class MemoryModelCommand
     private static async Task<int> ReportStatusAsync(
         IServiceProvider scopedServices,
         LocalOnnxModelStore store,
-        LocalOnnxEmbeddingOptions options,
+        LocalOnnxModelPin pin,
         TextWriter output,
         TextWriter error,
         CancellationToken cancellationToken)
     {
-        var installed = await store.ReadInstalledAsync(options, cancellationToken);
+        var installed = await store.ReadInstalledAsync(pin, cancellationToken);
         var configuration = await scopedServices.GetRequiredService<ITriageConfigurationRepository>()
             .GetCurrentAsync(cancellationToken);
         var route = MemoryEmbeddingRouteResolver.Resolve(configuration);

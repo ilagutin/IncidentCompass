@@ -43,7 +43,7 @@ internal static class LocalModelTestSupport
             ModelId = modelId,
             ModelFileSha256 = modelDigest
         };
-        return new LocalOnnxInstalledModel(LocalOnnxModelStore.CreateManifest(options), "unused.onnx", "unused.model");
+        return new LocalOnnxInstalledModel(LocalOnnxModelStore.CreateManifest(options.CreatePin()), "unused.onnx", "unused.model");
     }
 
     public static LocalOnnxModelInstallState InstalledState(string modelId, string modelDigest)

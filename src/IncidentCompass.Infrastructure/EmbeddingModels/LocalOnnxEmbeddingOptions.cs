@@ -93,4 +93,22 @@ internal sealed class LocalOnnxEmbeddingOptions
     /// PostgreSQL, before the digest check is reached.
     /// </summary>
     public long MaxDownloadBytes { get; init; } = DefaultMaxDownloadBytes;
+
+    /// <summary>
+    /// These settings as the pinned artifact set the model store installs. The store knows nothing
+    /// about embeddings; this is where an embedding host says that its two files are an ONNX model
+    /// and a SentencePiece tokenizer, and carries the settings only an embedding model has.
+    /// </summary>
+    public LocalOnnxModelPin CreatePin() => new(
+        LocalOnnxModelManifest.EmbeddingKind,
+        ModelId,
+        Revision,
+        License,
+        ModelDirectory,
+        MaxDownloadBytes,
+        InstallTimeoutSeconds,
+        MaxTokens,
+        new LocalOnnxPinnedArtifact(ModelFileUrl, ModelFileSha256, LocalOnnxModelArtifact.OnnxKind),
+        new LocalOnnxPinnedArtifact(TokenizerFileUrl, TokenizerFileSha256, LocalOnnxModelArtifact.SentencePieceKind),
+        new LocalOnnxEmbeddingProfile(Dimensions, Pooling, Normalize, QueryPrefix, PassagePrefix));
 }

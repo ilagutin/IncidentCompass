@@ -19,16 +19,19 @@ internal sealed class LocalOnnxLoadedModel : IDisposable
 
     private readonly InferenceSession session;
     private readonly LocalOnnxInputEncoder encoder;
+    private readonly LocalOnnxEmbeddingProfile profile;
     private readonly bool feedsTokenTypeIds;
 
     private LocalOnnxLoadedModel(
         LocalOnnxInstalledModel installed,
         InferenceSession session,
-        LocalOnnxInputEncoder encoder)
+        LocalOnnxInputEncoder encoder,
+        LocalOnnxEmbeddingProfile profile)
     {
         Installed = installed;
         this.session = session;
         this.encoder = encoder;
+        this.profile = profile;
         feedsTokenTypeIds = session.InputMetadata.ContainsKey(TokenTypeIdsName);
     }
 
@@ -40,9 +43,13 @@ internal sealed class LocalOnnxLoadedModel : IDisposable
     {
         ArgumentNullException.ThrowIfNull(installed);
         LocalOnnxInputEncoder encoder;
+        LocalOnnxEmbeddingProfile profile;
         InferenceSession? session = null;
         try
         {
+            // Resolved once here rather than per call, so a manifest that is not an embedding
+            // manifest fails as the load failure it is instead of on the first embedding.
+            profile = installed.Manifest.GetEmbeddingProfile();
             encoder = LocalOnnxInputEncoder.Load(installed.TokenizerFilePath, installed.Manifest);
             using var sessionOptions = new SessionOptions
             {
@@ -68,7 +75,7 @@ internal sealed class LocalOnnxLoadedModel : IDisposable
                 $" {LastHiddenStateName}.");
         }
 
-        return new LocalOnnxLoadedModel(installed, session, encoder);
+        return new LocalOnnxLoadedModel(installed, session, encoder, profile);
     }
 
     public (float[] Vector, int InputTokens) Embed(string input, EmbeddingInputKind kind, CancellationToken cancellationToken)
@@ -117,14 +124,13 @@ internal sealed class LocalOnnxLoadedModel : IDisposable
         using var outputs = Run(runOptions, inputs, cancellationToken);
         var hiddenStates = outputs[0];
         var dimensions = checked((int)hiddenStates.GetTensorTypeAndShape().Shape[^1]);
-        var manifest = Installed.Manifest;
-        if (dimensions != manifest.Dimensions)
+        if (dimensions != profile.Dimensions)
         {
-            throw LocalOnnxEmbeddingErrors.DimensionsMismatch(dimensions, manifest.Dimensions);
+            throw LocalOnnxEmbeddingErrors.DimensionsMismatch(dimensions, profile.Dimensions);
         }
 
         var vector = LocalOnnxVectorPooling.MeanPool(hiddenStates.GetTensorDataAsSpan<float>(), attentionMask, dimensions);
-        if (manifest.Normalize)
+        if (profile.Normalize)
         {
             LocalOnnxVectorPooling.NormalizeInPlace(vector);
         }

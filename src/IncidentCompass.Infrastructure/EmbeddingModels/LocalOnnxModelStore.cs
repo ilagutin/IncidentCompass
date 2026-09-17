@@ -1,12 +1,13 @@
 namespace IncidentCompass.Infrastructure.EmbeddingModels;
 
 /// <summary>
-/// Makes a model directory hold a verified model, or says with a named code why it does not. It has
-/// three entry points.
+/// Makes a model directory hold the verified files of one pinned artifact set, or says with a named
+/// code why it does not. What the artifacts are for is the pin's business, not the store's: it
+/// fetches, verifies and switches the same way for every kind. It has three entry points.
 /// <list type="bullet">
 /// <item><see cref="EnsureInstalledAsync" /> is the Worker start path. An installed manifest wins:
-/// both of its files are verified, and it is never replaced by what the host options now describe. An
-/// empty directory is filled to the configured model.</item>
+/// both of its files are verified, and it is never replaced by what the pin now describes. An
+/// empty directory is filled to the pinned model.</item>
 /// <item><see cref="InstallConfiguredAsync" /> is the operator install. It places the configured
 /// artifacts beside whatever is installed and then switches the active manifest, keeping the one it
 /// replaced for rollback.</item>
@@ -24,9 +25,9 @@ namespace IncidentCompass.Infrastructure.EmbeddingModels;
 internal sealed class LocalOnnxModelStore(LocalOnnxModelFileFetcher fetcher, TimeProvider? timeProvider = null)
 {
     public Task<LocalOnnxInstalledModel> EnsureInstalledAsync(
-        LocalOnnxEmbeddingOptions options,
+        LocalOnnxModelPin pin,
         CancellationToken cancellationToken) =>
-        InModelDirectoryAsync(options, async modelDirectory =>
+        InModelDirectoryAsync(pin, async modelDirectory =>
         {
             var manifestPath = LocalOnnxModelLayout.GetManifestPath(modelDirectory);
             var installed = await LocalOnnxModelManifestSerializer.ReadAsync(manifestPath, cancellationToken);
@@ -35,8 +36,8 @@ internal sealed class LocalOnnxModelStore(LocalOnnxModelFileFetcher fetcher, Tim
                 return await VerifyInstalledAsync(modelDirectory, installed, cancellationToken);
             }
 
-            var manifest = CreateManifest(options);
-            var model = await InstallArtifactsAsync(modelDirectory, manifest, options, cancellationToken);
+            var manifest = CreateManifest(pin);
+            var model = await InstallArtifactsAsync(modelDirectory, manifest, pin, cancellationToken);
             await LocalOnnxModelManifestSerializer.WriteAtomicallyAsync(manifestPath, manifest, cancellationToken);
             return model;
         });
@@ -48,19 +49,20 @@ internal sealed class LocalOnnxModelStore(LocalOnnxModelFileFetcher fetcher, Tim
     /// previous manifest byte for byte.
     /// </summary>
     public Task<LocalOnnxModelInstallResult> InstallConfiguredAsync(
-        LocalOnnxEmbeddingOptions options,
+        LocalOnnxModelPin pin,
         CancellationToken cancellationToken) =>
-        InModelDirectoryAsync(options, async modelDirectory =>
+        InModelDirectoryAsync(pin, async modelDirectory =>
         {
             var manifestPath = LocalOnnxModelLayout.GetManifestPath(modelDirectory);
-            var configured = CreateManifest(options);
-            if (await ReadReadableManifestAsync(manifestPath, cancellationToken) == configured)
+            var configured = CreateManifest(pin);
+            var installed = await ReadReadableManifestAsync(manifestPath, cancellationToken);
+            if (installed is not null && DescribesTheSameModel(installed, configured))
             {
-                var verified = await VerifyInstalledAsync(modelDirectory, configured, cancellationToken);
+                var verified = await VerifyInstalledAsync(modelDirectory, installed, cancellationToken);
                 return new LocalOnnxModelInstallResult(verified, ManifestSwitched: false, PreviousManifestPath: null);
             }
 
-            var model = await InstallArtifactsAsync(modelDirectory, configured, options, cancellationToken);
+            var model = await InstallArtifactsAsync(modelDirectory, configured, pin, cancellationToken);
             string? previousManifestPath = null;
             if (File.Exists(manifestPath))
             {
@@ -80,9 +82,9 @@ internal sealed class LocalOnnxModelStore(LocalOnnxModelFileFetcher fetcher, Tim
     /// installed. Installs nothing.
     /// </summary>
     public Task<LocalOnnxInstalledModel?> ReadInstalledAsync(
-        LocalOnnxEmbeddingOptions options,
+        LocalOnnxModelPin pin,
         CancellationToken cancellationToken) =>
-        InModelDirectoryAsync<LocalOnnxInstalledModel?>(options, async modelDirectory =>
+        InModelDirectoryAsync<LocalOnnxInstalledModel?>(pin, async modelDirectory =>
         {
             var installed = await LocalOnnxModelManifestSerializer.ReadAsync(
                 LocalOnnxModelLayout.GetManifestPath(modelDirectory),
@@ -93,42 +95,43 @@ internal sealed class LocalOnnxModelStore(LocalOnnxModelFileFetcher fetcher, Tim
         });
 
     /// <summary>
-    /// The manifest an empty model directory is filled to, from the host options. Each artifact is
-    /// placed under its own digest.
+    /// The manifest an empty model directory is filled to, from the pin. Each artifact is placed
+    /// under its own digest, and the settings only one kind of model carries are written only for
+    /// that kind.
     /// </summary>
-    public static LocalOnnxModelManifest CreateManifest(LocalOnnxEmbeddingOptions options)
+    public static LocalOnnxModelManifest CreateManifest(LocalOnnxModelPin pin)
     {
-        ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(pin);
         return new LocalOnnxModelManifest(
             LocalOnnxModelManifest.CurrentSchemaVersion,
-            options.ModelId,
-            options.Revision,
-            new LocalOnnxModelArtifact(
-                LocalOnnxModelLayout.GetArtifactRelativePath(options.ModelFileSha256, options.ModelFileUrl),
-                options.ModelFileUrl,
-                options.ModelFileSha256,
-                LocalOnnxModelArtifact.OnnxKind),
-            new LocalOnnxModelArtifact(
-                LocalOnnxModelLayout.GetArtifactRelativePath(options.TokenizerFileSha256, options.TokenizerFileUrl),
-                options.TokenizerFileUrl,
-                options.TokenizerFileSha256,
-                LocalOnnxModelArtifact.SentencePieceKind),
-            options.Dimensions,
-            options.MaxTokens,
-            options.Pooling,
-            options.Normalize,
-            options.QueryPrefix,
-            options.PassagePrefix,
-            options.License);
+            pin.ModelId,
+            pin.Revision,
+            CreateArtifact(pin.ModelFile),
+            CreateArtifact(pin.TokenizerFile),
+            pin.MaxTokens,
+            pin.License,
+            pin.Kind,
+            pin.EmbeddingProfile?.Dimensions,
+            pin.EmbeddingProfile?.Pooling,
+            pin.EmbeddingProfile?.Normalize,
+            pin.EmbeddingProfile?.QueryPrefix,
+            pin.EmbeddingProfile?.PassagePrefix);
     }
 
+    private static LocalOnnxModelArtifact CreateArtifact(LocalOnnxPinnedArtifact artifact) =>
+        new(
+            LocalOnnxModelLayout.GetArtifactRelativePath(artifact.Sha256, artifact.Url),
+            artifact.Url,
+            artifact.Sha256,
+            artifact.Kind);
+
     private static async Task<T> InModelDirectoryAsync<T>(
-        LocalOnnxEmbeddingOptions options,
+        LocalOnnxModelPin pin,
         Func<string, Task<T>> action)
     {
-        ArgumentNullException.ThrowIfNull(options);
-        ArgumentException.ThrowIfNullOrWhiteSpace(options.ModelDirectory);
-        var modelDirectory = Path.GetFullPath(options.ModelDirectory);
+        ArgumentNullException.ThrowIfNull(pin);
+        ArgumentException.ThrowIfNullOrWhiteSpace(pin.ModelDirectory);
+        var modelDirectory = Path.GetFullPath(pin.ModelDirectory);
         try
         {
             Directory.CreateDirectory(modelDirectory);
@@ -142,6 +145,19 @@ internal sealed class LocalOnnxModelStore(LocalOnnxModelFileFetcher fetcher, Tim
                 exception);
         }
     }
+
+    /// <summary>
+    /// Whether the installed manifest and the configured one describe the same model: the same
+    /// identity, the same two artifacts, the same license and the same settings. Only the schema
+    /// version is left out of the comparison, so a manifest an older release wrote for exactly this
+    /// model is recognised as the active one. Installing over it would fetch nothing and change
+    /// nothing an operator can see, while rewriting a file on a volume that may be read-only and
+    /// advising a corpus rebuild the installed model does not need.
+    /// </summary>
+    private static bool DescribesTheSameModel(
+        LocalOnnxModelManifest installed,
+        LocalOnnxModelManifest configured) =>
+        installed with { SchemaVersion = configured.SchemaVersion } == configured;
 
     private static async Task<LocalOnnxModelManifest?> ReadReadableManifestAsync(
         string manifestPath,
@@ -161,17 +177,17 @@ internal sealed class LocalOnnxModelStore(LocalOnnxModelFileFetcher fetcher, Tim
     private async Task<LocalOnnxInstalledModel> InstallArtifactsAsync(
         string modelDirectory,
         LocalOnnxModelManifest manifest,
-        LocalOnnxEmbeddingOptions options,
+        LocalOnnxModelPin pin,
         CancellationToken cancellationToken)
     {
         LocalOnnxModelTemporaryFileSweeper.RemoveStaleDownloads(
             modelDirectory,
-            TimeSpan.FromSeconds(options.InstallTimeoutSeconds),
+            TimeSpan.FromSeconds(pin.InstallTimeoutSeconds),
             (timeProvider ?? TimeProvider.System).GetUtcNow());
         var modelFilePath = ResolveArtifactPath(modelDirectory, manifest.ModelFile);
         var tokenizerFilePath = ResolveArtifactPath(modelDirectory, manifest.TokenizerFile);
-        await EnsureArtifactAsync(manifest.ModelFile, modelFilePath, options.MaxDownloadBytes, cancellationToken);
-        await EnsureArtifactAsync(manifest.TokenizerFile, tokenizerFilePath, options.MaxDownloadBytes, cancellationToken);
+        await EnsureArtifactAsync(manifest.ModelFile, modelFilePath, pin.MaxDownloadBytes, cancellationToken);
+        await EnsureArtifactAsync(manifest.TokenizerFile, tokenizerFilePath, pin.MaxDownloadBytes, cancellationToken);
         return new LocalOnnxInstalledModel(manifest, modelFilePath, tokenizerFilePath);
     }
 

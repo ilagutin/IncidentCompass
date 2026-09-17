@@ -39,6 +39,23 @@ internal static class LocalOnnxTestArtifacts
         };
     }
 
+    /// <summary>
+    /// The same two files pinned as a model that is not an embedding model, so the store's rules can
+    /// be exercised on a pin that carries no embedding settings at all.
+    /// </summary>
+    public static LocalOnnxModelPin JudgePin(string modelDirectory) => new(
+        LocalOnnxModelManifest.RelevanceJudgeKind,
+        "test/judge",
+        "rev-1",
+        "Apache-2.0",
+        modelDirectory,
+        LocalOnnxEmbeddingOptions.DefaultMaxDownloadBytes,
+        InstallTimeoutSeconds: 900,
+        MaxTokens: 16,
+        new LocalOnnxPinnedArtifact(ModelUrl, Sha256(ModelBytes), LocalOnnxModelArtifact.OnnxKind),
+        new LocalOnnxPinnedArtifact(TokenizerUrl, Sha256(TokenizerBytes), LocalOnnxModelArtifact.SentencePieceKind),
+        EmbeddingProfile: null);
+
     public static ScriptedHttpMessageHandler ServingBoth() =>
         ScriptedHttpMessageHandler.Serving(new Dictionary<string, byte[]>(StringComparer.Ordinal)
         {

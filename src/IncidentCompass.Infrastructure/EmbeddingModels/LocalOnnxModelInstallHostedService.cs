@@ -41,7 +41,7 @@ internal sealed partial class LocalOnnxModelInstallHostedService(
         using var installCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
         try
         {
-            var installed = await store.EnsureInstalledAsync(options, installCancellation.Token);
+            var installed = await store.EnsureInstalledAsync(options.CreatePin(), installCancellation.Token);
             installState.RecordInstalled(installed);
             LogInstalled(
                 logger,

@@ -61,7 +61,7 @@ internal sealed class LocalOnnxFixtureModel : IDisposable
             var options = OptionsFor(fixtureManifest, directory.FullPath);
             PlaceFixtureFiles(fixtureManifest, directory.FullPath);
             using var handler = ScriptedHttpMessageHandler.Refusing();
-            var installed = await LocalOnnxTestArtifacts.Store(handler).EnsureInstalledAsync(options, cancellationToken);
+            var installed = await LocalOnnxTestArtifacts.Store(handler).EnsureInstalledAsync(options.CreatePin(), cancellationToken);
             return new LocalOnnxFixtureModel(directory, fixtureManifest, options, installed);
         }
         catch
@@ -76,6 +76,7 @@ internal sealed class LocalOnnxFixtureModel : IDisposable
         string modelDirectory,
         int installTimeoutSeconds = 900)
     {
+        var profile = manifest.GetEmbeddingProfile();
         return new LocalOnnxEmbeddingOptions
         {
             InstallTimeoutSeconds = installTimeoutSeconds,
@@ -86,12 +87,12 @@ internal sealed class LocalOnnxFixtureModel : IDisposable
             ModelFileSha256 = manifest.ModelFile.Sha256,
             TokenizerFileUrl = manifest.TokenizerFile.Url,
             TokenizerFileSha256 = manifest.TokenizerFile.Sha256,
-            Dimensions = manifest.Dimensions,
+            Dimensions = profile.Dimensions,
             MaxTokens = manifest.MaxTokens,
-            QueryPrefix = manifest.QueryPrefix,
-            PassagePrefix = manifest.PassagePrefix,
-            Pooling = manifest.Pooling,
-            Normalize = manifest.Normalize,
+            QueryPrefix = profile.QueryPrefix,
+            PassagePrefix = profile.PassagePrefix,
+            Pooling = profile.Pooling,
+            Normalize = profile.Normalize,
             License = manifest.License
         };
     }

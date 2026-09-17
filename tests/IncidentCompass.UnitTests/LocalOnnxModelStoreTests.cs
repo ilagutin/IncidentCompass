@@ -26,9 +26,9 @@ public sealed class LocalOnnxModelStoreTests : IDisposable
                 : LocalOnnxTestArtifacts.TokenizerBytes;
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(body) });
         });
-        var options = Options();
+        var pin = Pin();
 
-        var installed = await LocalOnnxTestArtifacts.Store(handler).EnsureInstalledAsync(options, TestContext.Current.CancellationToken);
+        var installed = await LocalOnnxTestArtifacts.Store(handler).EnsureInstalledAsync(pin, TestContext.Current.CancellationToken);
 
         Assert.False(manifestExistedDuringFetch);
         Assert.Equal(2, handler.RequestedUris.Count);
@@ -37,7 +37,7 @@ public sealed class LocalOnnxModelStoreTests : IDisposable
         Assert.NotEqual(Path.GetDirectoryName(installed.ModelFilePath), Path.GetDirectoryName(installed.TokenizerFilePath));
         Assert.Equal(LocalOnnxTestArtifacts.ModelBytes, await File.ReadAllBytesAsync(installed.ModelFilePath, TestContext.Current.CancellationToken));
         Assert.Equal(LocalOnnxTestArtifacts.TokenizerBytes, await File.ReadAllBytesAsync(installed.TokenizerFilePath, TestContext.Current.CancellationToken));
-        Assert.Equal(LocalOnnxModelStore.CreateManifest(options), installed.Manifest);
+        Assert.Equal(LocalOnnxModelStore.CreateManifest(pin), installed.Manifest);
         Assert.Equal(installed.Manifest, await ReadManifestAsync());
         Assert.Empty(LeftoverTemporaryFiles());
     }
@@ -45,7 +45,7 @@ public sealed class LocalOnnxModelStoreTests : IDisposable
     [Fact]
     public void CreateManifest_KeysEachArtifactUnderItsOwnDigest()
     {
-        var manifest = LocalOnnxModelStore.CreateManifest(Options());
+        var manifest = LocalOnnxModelStore.CreateManifest(Pin());
 
         Assert.Equal(
             "artifacts/" + LocalOnnxTestArtifacts.Sha256(LocalOnnxTestArtifacts.ModelBytes) + "/model.onnx",
@@ -65,7 +65,7 @@ public sealed class LocalOnnxModelStoreTests : IDisposable
             _ => Ok(LocalOnnxTestArtifacts.TokenizerBytes)
         }));
 
-        var installed = await LocalOnnxTestArtifacts.Store(handler).EnsureInstalledAsync(Options(), TestContext.Current.CancellationToken);
+        var installed = await LocalOnnxTestArtifacts.Store(handler).EnsureInstalledAsync(Pin(), TestContext.Current.CancellationToken);
 
         Assert.Equal(3, handler.RequestedUris.Count);
         Assert.Equal(LocalOnnxTestArtifacts.ModelBytes, await File.ReadAllBytesAsync(installed.ModelFilePath, TestContext.Current.CancellationToken));
@@ -106,7 +106,7 @@ public sealed class LocalOnnxModelStoreTests : IDisposable
     {
         using var handler = LocalOnnxTestArtifacts.ServingBoth();
 
-        var exception = await InstallExpectingFailureAsync(handler, Options(maxDownloadBytes: 1000));
+        var exception = await InstallExpectingFailureAsync(handler, Pin(maxDownloadBytes: 1000));
 
         Assert.Equal(LocalOnnxModelErrorCodes.DownloadTooLarge, exception.ErrorCode);
         Assert.Contains("declares 4096 bytes", exception.Message, StringComparison.Ordinal);
@@ -121,7 +121,7 @@ public sealed class LocalOnnxModelStoreTests : IDisposable
             Content = new StreamContent(new UndeclaredLengthStream(LocalOnnxTestArtifacts.ModelBytes))
         }));
 
-        var exception = await InstallExpectingFailureAsync(handler, Options(maxDownloadBytes: 1000));
+        var exception = await InstallExpectingFailureAsync(handler, Pin(maxDownloadBytes: 1000));
 
         Assert.Equal(LocalOnnxModelErrorCodes.DownloadTooLarge, exception.ErrorCode);
         Assert.Contains("ran past", exception.Message, StringComparison.Ordinal);
@@ -162,10 +162,47 @@ public sealed class LocalOnnxModelStoreTests : IDisposable
         await PlaceAsync(LocalOnnxTestArtifacts.TokenizerUrl, LocalOnnxTestArtifacts.TokenizerBytes);
         using var handler = ScriptedHttpMessageHandler.Refusing();
 
-        var installed = await LocalOnnxTestArtifacts.Store(handler).EnsureInstalledAsync(Options(), TestContext.Current.CancellationToken);
+        var installed = await LocalOnnxTestArtifacts.Store(handler).EnsureInstalledAsync(Pin(), TestContext.Current.CancellationToken);
 
         Assert.Empty(handler.RequestedUris);
         Assert.Equal(installed.Manifest, await ReadManifestAsync());
+    }
+
+    /// <summary>
+    /// The store installs a pinned artifact set that is not an embedding model through the same one
+    /// path: files already in place are verified and never fetched, and the manifest it writes names
+    /// the kind and carries none of the embedding settings.
+    /// </summary>
+    [Fact]
+    public async Task EnsureInstalled_OnAPinThatIsNotAnEmbeddingPin_VerifiesPreplacedFilesAndWritesItsKind()
+    {
+        await PlaceAsync(LocalOnnxTestArtifacts.ModelUrl, LocalOnnxTestArtifacts.ModelBytes);
+        await PlaceAsync(LocalOnnxTestArtifacts.TokenizerUrl, LocalOnnxTestArtifacts.TokenizerBytes);
+        using var handler = ScriptedHttpMessageHandler.Refusing();
+
+        var installed = await LocalOnnxTestArtifacts.Store(handler)
+            .EnsureInstalledAsync(JudgePin(), TestContext.Current.CancellationToken);
+
+        Assert.Empty(handler.RequestedUris);
+        Assert.Equal(LocalOnnxModelManifest.RelevanceJudgeKind, installed.Manifest.Kind);
+        Assert.Equal(LocalOnnxModelManifest.CurrentSchemaVersion, installed.Manifest.SchemaVersion);
+        Assert.Null(installed.Manifest.Dimensions);
+        Assert.Equal(installed.Manifest, await ReadManifestAsync());
+        Assert.Empty(LeftoverTemporaryFiles());
+    }
+
+    [Fact]
+    public async Task EnsureInstalled_OnAPinThatIsNotAnEmbeddingPin_RefusesAWrongDigestWithTheSameCode()
+    {
+        var operatorBytes = LocalOnnxTestArtifacts.CreateBytes(2048, seed: 31);
+        await PlaceAsync(LocalOnnxTestArtifacts.ModelUrl, operatorBytes);
+        using var handler = ScriptedHttpMessageHandler.Refusing();
+
+        var exception = await InstallExpectingFailureAsync(handler, JudgePin());
+
+        Assert.Equal(LocalOnnxModelErrorCodes.DigestMismatch, exception.ErrorCode);
+        Assert.Empty(handler.RequestedUris);
+        Assert.False(File.Exists(ManifestPath));
     }
 
     [Fact]
@@ -188,7 +225,7 @@ public sealed class LocalOnnxModelStoreTests : IDisposable
     {
         using (var installHandler = LocalOnnxTestArtifacts.ServingBoth())
         {
-            await LocalOnnxTestArtifacts.Store(installHandler).EnsureInstalledAsync(Options(), TestContext.Current.CancellationToken);
+            await LocalOnnxTestArtifacts.Store(installHandler).EnsureInstalledAsync(Pin(), TestContext.Current.CancellationToken);
         }
 
         var manifestBytes = await File.ReadAllBytesAsync(ManifestPath, TestContext.Current.CancellationToken);
@@ -207,7 +244,7 @@ public sealed class LocalOnnxModelStoreTests : IDisposable
     {
         using (var installHandler = LocalOnnxTestArtifacts.ServingBoth())
         {
-            await LocalOnnxTestArtifacts.Store(installHandler).EnsureInstalledAsync(Options(), TestContext.Current.CancellationToken);
+            await LocalOnnxTestArtifacts.Store(installHandler).EnsureInstalledAsync(Pin(), TestContext.Current.CancellationToken);
         }
 
         File.Delete(ArtifactPath(LocalOnnxTestArtifacts.TokenizerUrl));
@@ -228,7 +265,7 @@ public sealed class LocalOnnxModelStoreTests : IDisposable
     {
         using (var installHandler = LocalOnnxTestArtifacts.ServingBoth())
         {
-            await LocalOnnxTestArtifacts.Store(installHandler).EnsureInstalledAsync(Options(), TestContext.Current.CancellationToken);
+            await LocalOnnxTestArtifacts.Store(installHandler).EnsureInstalledAsync(Pin(), TestContext.Current.CancellationToken);
         }
 
         var manifestBytes = await File.ReadAllBytesAsync(ManifestPath, TestContext.Current.CancellationToken);
@@ -241,7 +278,7 @@ public sealed class LocalOnnxModelStoreTests : IDisposable
         };
         using var handler = ScriptedHttpMessageHandler.Refusing();
 
-        var installed = await LocalOnnxTestArtifacts.Store(handler).EnsureInstalledAsync(otherModel, TestContext.Current.CancellationToken);
+        var installed = await LocalOnnxTestArtifacts.Store(handler).EnsureInstalledAsync(otherModel.CreatePin(), TestContext.Current.CancellationToken);
 
         Assert.Equal("test/model", installed.Manifest.Id);
         Assert.Empty(handler.RequestedUris);
@@ -251,7 +288,7 @@ public sealed class LocalOnnxModelStoreTests : IDisposable
     [Fact]
     public async Task EnsureInstalled_RefusesAManifestPathThatLeavesTheModelDirectory()
     {
-        var manifest = LocalOnnxModelStore.CreateManifest(Options());
+        var manifest = LocalOnnxModelStore.CreateManifest(Pin());
         await LocalOnnxModelManifestSerializer.WriteAtomicallyAsync(
             ManifestPath,
             manifest with { ModelFile = manifest.ModelFile with { Path = "../outside/model.onnx" } },
@@ -285,15 +322,17 @@ public sealed class LocalOnnxModelStoreTests : IDisposable
         cancellation.CancelAfter(TimeSpan.FromMilliseconds(200));
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
-            LocalOnnxTestArtifacts.Store(handler).EnsureInstalledAsync(Options(), cancellation.Token));
+            LocalOnnxTestArtifacts.Store(handler).EnsureInstalledAsync(Pin(), cancellation.Token));
 
         AssertNothingInstalled();
     }
 
     private string ManifestPath => LocalOnnxModelLayout.GetManifestPath(directory.FullPath);
 
-    private LocalOnnxEmbeddingOptions Options(long maxDownloadBytes = LocalOnnxEmbeddingOptions.DefaultMaxDownloadBytes) =>
-        LocalOnnxTestArtifacts.Options(directory.FullPath, maxDownloadBytes);
+    private LocalOnnxModelPin Pin(long maxDownloadBytes = LocalOnnxEmbeddingOptions.DefaultMaxDownloadBytes) =>
+        LocalOnnxTestArtifacts.Options(directory.FullPath, maxDownloadBytes).CreatePin();
+
+    private LocalOnnxModelPin JudgePin() => LocalOnnxTestArtifacts.JudgePin(directory.FullPath);
 
     private string ArtifactPath(string url)
     {
@@ -314,9 +353,9 @@ public sealed class LocalOnnxModelStoreTests : IDisposable
 
     private async Task<LocalOnnxModelStoreException> InstallExpectingFailureAsync(
         HttpMessageHandler handler,
-        LocalOnnxEmbeddingOptions? options = null) =>
+        LocalOnnxModelPin? pin = null) =>
         await Assert.ThrowsAsync<LocalOnnxModelStoreException>(() =>
-            LocalOnnxTestArtifacts.Store(handler).EnsureInstalledAsync(options ?? Options(), TestContext.Current.CancellationToken));
+            LocalOnnxTestArtifacts.Store(handler).EnsureInstalledAsync(pin ?? Pin(), TestContext.Current.CancellationToken));
 
     private async Task<LocalOnnxModelManifest?> ReadManifestAsync() =>
         await LocalOnnxModelManifestSerializer.ReadAsync(ManifestPath, TestContext.Current.CancellationToken);
