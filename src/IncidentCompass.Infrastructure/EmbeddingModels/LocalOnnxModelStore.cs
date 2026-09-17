@@ -118,6 +118,28 @@ internal sealed class LocalOnnxModelStore(LocalOnnxModelFileFetcher fetcher, Tim
             pin.EmbeddingProfile?.PassagePrefix);
     }
 
+    /// <summary>
+    /// Whether an installed manifest and a manifest built from a pin describe the same model: the
+    /// same identity, the same two artifacts, the same license and the same settings. Only the
+    /// schema version is left out of the comparison, so a manifest an older release wrote for
+    /// exactly this model is recognised as the model the pin names. Installing over it would fetch
+    /// nothing and change nothing an operator can see, while rewriting a file on a volume that may
+    /// be read-only and advising a corpus rebuild the installed model does not need.
+    /// <para>
+    /// This is the one place that rule is written. Every caller that has to ask whether a model
+    /// directory already holds the pinned model asks here, because a second copy of the rule is a
+    /// second answer: the first one drifted the moment the schema changed.
+    /// </para>
+    /// </summary>
+    internal static bool DescribesTheSameModel(
+        LocalOnnxModelManifest installed,
+        LocalOnnxModelManifest configured)
+    {
+        ArgumentNullException.ThrowIfNull(installed);
+        ArgumentNullException.ThrowIfNull(configured);
+        return installed with { SchemaVersion = configured.SchemaVersion } == configured;
+    }
+
     private static LocalOnnxModelArtifact CreateArtifact(LocalOnnxPinnedArtifact artifact) =>
         new(
             LocalOnnxModelLayout.GetArtifactRelativePath(artifact.Sha256, artifact.Url),
@@ -145,19 +167,6 @@ internal sealed class LocalOnnxModelStore(LocalOnnxModelFileFetcher fetcher, Tim
                 exception);
         }
     }
-
-    /// <summary>
-    /// Whether the installed manifest and the configured one describe the same model: the same
-    /// identity, the same two artifacts, the same license and the same settings. Only the schema
-    /// version is left out of the comparison, so a manifest an older release wrote for exactly this
-    /// model is recognised as the active one. Installing over it would fetch nothing and change
-    /// nothing an operator can see, while rewriting a file on a volume that may be read-only and
-    /// advising a corpus rebuild the installed model does not need.
-    /// </summary>
-    private static bool DescribesTheSameModel(
-        LocalOnnxModelManifest installed,
-        LocalOnnxModelManifest configured) =>
-        installed with { SchemaVersion = configured.SchemaVersion } == configured;
 
     private static async Task<LocalOnnxModelManifest?> ReadReadableManifestAsync(
         string manifestPath,

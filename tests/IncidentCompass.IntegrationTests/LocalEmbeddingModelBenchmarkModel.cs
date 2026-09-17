@@ -99,7 +99,13 @@ internal sealed class LocalEmbeddingModelBenchmarkModel : IDisposable
         var installed = await store.ReadInstalledAsync(options.CreatePin(), cancellationToken)
             ?? throw new InvalidOperationException("The model store reports no installed model after install.");
         var installSeconds = Stopwatch.GetElapsedTime(started).TotalSeconds;
-        if (installed.Manifest != LocalOnnxModelStore.CreateManifest(options.CreatePin()))
+        // The install keeps whatever manifest it finds rather than refusing one, so a cache directory
+        // holding another model would be measured under the pinned model's name. The store's own rule
+        // answers that, so a manifest an older release wrote for this very model is not mistaken for
+        // another model.
+        if (!LocalOnnxModelStore.DescribesTheSameModel(
+                installed.Manifest,
+                LocalOnnxModelStore.CreateManifest(options.CreatePin())))
         {
             throw new InvalidOperationException(
                 "The model directory for " + shortName + " holds another manifest than the pinned one.");

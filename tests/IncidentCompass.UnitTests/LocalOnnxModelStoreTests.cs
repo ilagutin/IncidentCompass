@@ -55,6 +55,31 @@ public sealed class LocalOnnxModelStoreTests : IDisposable
             manifest.TokenizerFile.Path);
     }
 
+    /// <summary>
+    /// The one rule every caller asks when it has to know whether a model directory already holds
+    /// the pinned model. The schema version alone is left out of it, so the same model written by an
+    /// older release is the same model; nothing else is forgiven, because a directory holding a
+    /// different model must never be taken for the pinned one.
+    /// </summary>
+    [Fact]
+    public void DescribesTheSameModel_LeavesOutTheSchemaVersionAndNothingElse()
+    {
+        var configured = LocalOnnxModelStore.CreateManifest(Pin());
+        var olderSchema = configured with { SchemaVersion = LocalOnnxModelManifest.LegacyEmbeddingSchemaVersion };
+
+        Assert.True(LocalOnnxModelStore.DescribesTheSameModel(configured, configured));
+        Assert.True(LocalOnnxModelStore.DescribesTheSameModel(olderSchema, configured));
+        Assert.False(LocalOnnxModelStore.DescribesTheSameModel(
+            olderSchema with { Id = "test/other-model" },
+            configured));
+        Assert.False(LocalOnnxModelStore.DescribesTheSameModel(
+            olderSchema with { ModelFile = configured.ModelFile with { Sha256 = new string('a', 64) } },
+            configured));
+        Assert.False(LocalOnnxModelStore.DescribesTheSameModel(
+            olderSchema with { Dimensions = configured.Dimensions * 2 },
+            configured));
+    }
+
     [Fact]
     public async Task EnsureInstalled_FollowsAnHttpsRedirect()
     {
