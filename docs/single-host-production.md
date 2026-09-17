@@ -187,6 +187,10 @@ docker @compose run --rm worker memory status
 docker @compose run --rm worker memory rebuild
 ```
 
+Add `--no-deps` when `.env.production` or a compose file changed since the services started: without
+it `docker compose run` first recreates the services the Worker depends on, the running API included,
+with the changed configuration. "Changing the installed model" below depends on that.
+
 `memory status` exits 1 when a rebuild is needed, and when the installed local embedding model cannot
 serve the configured route, and 0 otherwise. `docs/quickstart.md`, "Changing The Embedding Route",
 describes what a rebuild publishes and what it leaves current when it fails.
@@ -312,23 +316,33 @@ file.
 A running Worker keeps the install state it read when it started, so every procedure that changes the
 volume ends by restarting the Worker:
 
-1. `docker @compose run --rm worker memory model install`.
-2. Set `INCIDENTCOMPASS_EMBEDDINGS_MODEL` in `.env.production` to the installed model's id if it changed,
-   and rerun preflight.
-3. `docker @compose run --rm worker memory rebuild`, which re-embeds every reviewed file under the new
-   model's encoded identity and publishes one new generation.
-4. `docker @compose up --detach --force-recreate worker`.
+1. `docker @compose run --rm --no-deps worker memory model install`. The running Worker keeps the model
+   it verified at start, so the previous corpus stays retrievable and jobs keep completing.
+2. Wait until no triage job is waiting or running, then `docker @compose stop worker`. Jobs that arrive
+   from here on wait in the queue.
+3. Set `INCIDENTCOMPASS_EMBEDDINGS_MODEL` in `.env.production` to the installed model's id if it changed,
+   rerun preflight, and recreate the API alone so new jobs name the new route model:
+   `docker @compose up --detach --no-deps --force-recreate api`.
+4. `docker @compose run --rm --no-deps worker memory rebuild`, which re-embeds every reviewed file under
+   the new model's encoded identity and publishes one new generation.
+5. `docker @compose up --detach --no-deps --force-recreate worker`. The Worker verifies the new model at
+   start and claims the jobs that waited.
 
-**Known limitation: steps 2 to 4 are a window in which memory searches dead-letter.** After step 2
-changes `INCIDENTCOMPASS_EMBEDDINGS_MODEL`, a `docker @compose run --rm worker memory status` or the
-`memory rebuild` of step 3 recreates the running API with the new route model, while the running Worker
-keeps the model it verified at start until step 4 restarts it. Every triage job that reaches
-`memory_search` in that window has its embedding call refused, spends its attempts and is dead-lettered
-with `memory_embedding_model_mismatch`. Step 1 alone leaves the previous corpus retrievable. Run steps 2
-to 4 back to back, or stop the long-running Worker until step 4 so it claims nothing, and expect any
-job that reaches `memory_search` in between to dead-letter.
+Every one-off command carries `--no-deps`. Without it, `docker compose run` first brings the services
+the Worker depends on in line with the changed configuration, which recreates the running API with the
+new route model at a moment the procedure did not choose. The order matters for the same reason: a job
+is pinned to the route model of the API that created it, and the Worker refuses an embedding call whose
+model is not the one it has installed.
 
-The restart in step 4 is also what updates the reported state: a `memory rebuild` run as a command does
+**Known limitation: a job created before step 3 and not finished before step 5 dead-letters.** Its
+configuration snapshot names the previous model, the restarted Worker has the new one, so its
+`memory_search` call is refused, it spends its attempts and is dead-lettered with
+`memory_embedding_model_mismatch`. That is why step 2 waits for the queue to drain, and on a host that
+keeps receiving signals a job can still slip in between the last check and the stop. Nothing requeues
+such a job under the new configuration. When the model id does not change, as when a new release moves
+the pinned default's files, step 3 changes nothing and no job is affected.
+
+The restart in step 5 is also what updates the reported state: a `memory rebuild` run as a command does
 not update the synchronization status the API reads, so the API keeps reporting the old state until the
 restarted Worker's start pass records the new one.
 
@@ -337,15 +351,21 @@ the previous manifest and start the Worker again:
 
 ```powershell
 docker @compose stop worker
-docker @compose run --rm --entrypoint cp worker /app/models/manifest.previous.json /app/models/manifest.json
+docker @compose run --rm --no-deps --entrypoint cp worker /app/models/manifest.previous.json /app/models/manifest.json
 docker @compose start worker
 ```
 
 If no `memory rebuild` ran since the install, the previous corpus generation is still current and matches
 the restored model again. If one ran, the current corpus was built with the newer model, and the Worker
 reports `memory_embedding_route_changed` until `memory rebuild` re-embeds it with the restored one;
-restart the Worker after that rebuild, as above. If the install came with a changed
-`INCIDENTCOMPASS_EMBEDDINGS_MODEL`, set it back as well.
+restart the Worker after that rebuild, as above.
+
+If the install came with a changed `INCIDENTCOMPASS_EMBEDDINGS_MODEL`, the rollback is the change
+procedure again with the previous values, and `start` is not enough, because a started container keeps
+the environment it was created with. With the Worker stopped and the manifest restored, set the variable
+back (and drop the override file if the previous model was the pinned default), recreate the API alone,
+run `memory rebuild` with `--no-deps` if one ran since the install, and recreate the Worker, as in steps
+3 to 5. The same limitation applies to a job created while the API still named the newer model.
 
 **When the model cannot serve the route.** Two states are reported instead of a corpus change. Neither
 stops the Worker and neither touches the corpus: the seed pass publishes nothing, the previous generation
