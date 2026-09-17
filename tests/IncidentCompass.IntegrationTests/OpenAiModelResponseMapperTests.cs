@@ -75,18 +75,23 @@ public sealed class OpenAiModelResponseMapperTests
 
     /// <summary>
     /// Half an answer is not an answer: the partial text is discarded rather than returned, and the
-    /// call is still accounted, because the provider generated and charged for it.
+    /// call is still accounted, because the provider generated and charged for it. All three recognised
+    /// finish reasons name the same cut: <c>length</c> is the OpenAI wire value, and <c>max_tokens</c>
+    /// and <c>model_length</c> are what some OpenAI-compatible layers report for it.
     /// </summary>
-    [Fact]
-    public void ResponseMapper_RefusesLengthWithPartialContent()
+    [Theory]
+    [InlineData("length")]
+    [InlineData("MAX_Tokens")]
+    [InlineData("model_length")]
+    public void ResponseMapper_RefusesAnOutputLimitFinishWithPartialContent(string finishReason)
     {
-        const string responseContent = """
+        var responseContent = $$"""
             {
               "model": "reasoning-model",
               "choices": [
                 {
                   "message": { "content": "--- a/src/App.cs\n+++ b/src/App.cs\n@@ -1,2 +1,2 @@\n-old" },
-                  "finish_reason": "length"
+                  "finish_reason": "{{finishReason}}"
                 }
               ],
               "usage": {
@@ -104,6 +109,31 @@ public sealed class OpenAiModelResponseMapperTests
         Assert.Equal("provider_output_limit_reached", exception.ErrorCode);
         Assert.Equal(new AiModelUsage(40, 8000, 8040), exception.Usage);
         Assert.Equal("reasoning-model", exception.ReturnedModel);
+    }
+
+    /// <summary>
+    /// Only those three finish reasons are read as a cut. A completion a provider ended for another
+    /// reason keeps whatever the mapper already did with it, which is to return it as a completion.
+    /// </summary>
+    [Fact]
+    public void ResponseMapper_DoesNotReadAContentFilterFinishAsTheOutputLimit()
+    {
+        const string responseContent = """
+            {
+              "model": "filtered-model",
+              "choices": [
+                {
+                  "message": { "content": "as far as it got" },
+                  "finish_reason": "content_filter"
+                }
+              ]
+            }
+            """;
+
+        var response = OpenAiModelResponseMapper.Map(responseContent, CreateRequest("requested-model"));
+
+        Assert.Equal("as far as it got", response.Content);
+        Assert.Equal("filtered-model", response.Model);
     }
 
     /// <summary>

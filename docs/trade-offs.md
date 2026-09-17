@@ -378,7 +378,8 @@ and the answer; `report-chat` uses the same bound for a consistent shipped profi
 reasoning and final-answer tokens share that output allowance.
 
 A verbose model that runs into that allowance is refused rather than half-answered: a completion the
-provider finished on `length` becomes `provider_output_limit_reached`, its partial text is discarded
+provider finished on `length`, `max_tokens` or `model_length` becomes
+`provider_output_limit_reached`, its partial text is discarded
 and the job dead-letters without a retry, because the same request would be cut at the same place. The
 fix is the operator's, not a retry: raise the route's `MaxOutputTokens` up to what the model allows, or
 give the call a smaller task.

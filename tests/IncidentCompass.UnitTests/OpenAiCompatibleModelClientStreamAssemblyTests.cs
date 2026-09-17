@@ -231,12 +231,20 @@ public sealed class OpenAiCompatibleModelClientStreamAssemblyTests
         Assert.Equal(9, exception.Usage?.OutputTokens);
     }
 
-    [Fact]
-    public async Task CompleteAsync_LengthFinishWithPartialContent_IsTheOutputLimit()
+    /// <summary>
+    /// The streamed path reads the same three finish reasons as the cut they name: <c>length</c> is the
+    /// OpenAI wire value, and <c>max_tokens</c> and <c>model_length</c> are what some OpenAI-compatible
+    /// layers report for it.
+    /// </summary>
+    [Theory]
+    [InlineData("length")]
+    [InlineData("max_Tokens")]
+    [InlineData("Model_Length")]
+    public async Task CompleteAsync_OutputLimitFinishWithPartialContent_IsTheOutputLimit(string finishReason)
     {
         var exception = await FailStreamAsync(
             Event("""{"choices":[{"index":0,"delta":{"content":"--- a/src/App.cs\n+++ b/src/App.cs\n@@ -1,2 +1,2 @@\n-old"}}]}"""),
-            Event("""{"choices":[{"index":0,"delta":{},"finish_reason":"length"}]}"""),
+            Event($$"""{"choices":[{"index":0,"delta":{},"finish_reason":"{{finishReason}}"}]}"""),
             Event("""{"choices":[],"usage":{"prompt_tokens":40,"completion_tokens":8000,"total_tokens":8040}}"""),
             Done);
 
@@ -244,6 +252,20 @@ public sealed class OpenAiCompatibleModelClientStreamAssemblyTests
         Assert.Equal("provider_output_limit_reached", exception.ErrorCode);
         Assert.Equal(8000, exception.Usage?.OutputTokens);
         Assert.DoesNotContain("src/App.cs", exception.ToString(), StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A finish reason that is not one of those three is not a cut, and the stream keeps whatever the
+    /// mapping already did with it.
+    /// </summary>
+    [Fact]
+    public async Task CompleteAsync_ContentFilterFinishWithContent_IsNotTheOutputLimit()
+    {
+        var response = await CompleteStreamAsync(
+            Event("""{"choices":[{"index":0,"delta":{"content":"as far as it got"},"finish_reason":"content_filter"}]}"""),
+            Done);
+
+        Assert.Equal("as far as it got", response.Content);
     }
 
     [Fact]

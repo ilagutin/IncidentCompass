@@ -8,6 +8,15 @@ namespace IncidentCompass.Infrastructure.ModelGateway.OpenAi;
 
 internal static class OpenAiModelResponseMapper
 {
+    /// <summary>
+    /// The finish reasons that mean the answer ran into its output ceiling. <c>length</c> is the OpenAI
+    /// wire value; <c>max_tokens</c> and <c>model_length</c> are what some OpenAI-compatible layers
+    /// report for the same cut. Exactly these three, compared case-insensitively and in full: any other
+    /// finish reason is not a cut and is not matched by pattern or prefix.
+    /// </summary>
+    private static readonly HashSet<string> OutputLimitFinishReasons =
+        new(StringComparer.OrdinalIgnoreCase) { "length", "max_tokens", "model_length" };
+
     public static AiModelResponse Map(
         string responseContent,
         AiModelRequest request)
@@ -23,11 +32,11 @@ internal static class OpenAiModelResponseMapper
     /// stream. Content, tool-call and empty-answer rules are this one code path for both shapes.
     /// </summary>
     /// <remarks>
-    /// A first choice that finished on <c>length</c> ran into its output ceiling, so whatever arrived is
-    /// half of an answer and is refused before it is read any further: the partial text is discarded and
-    /// never returned, and a tool call whose arguments the ceiling cut through is reported as the output
-    /// limit it is rather than as a malformed tool call. Usage and the returned model are still carried
-    /// on the failure, because the call was generated and is paid for.
+    /// A first choice that finished on one of <see cref="OutputLimitFinishReasons"/> ran into its output
+    /// ceiling, so whatever arrived is half of an answer and is refused before it is read any further:
+    /// the partial text is discarded and never returned, and a tool call whose arguments the ceiling cut
+    /// through is reported as the output limit it is rather than as a malformed tool call. Usage and the
+    /// returned model are still carried on the failure, because the call was generated and is paid for.
     /// </remarks>
     public static AiModelResponse Map(
         OpenAiChatCompletionResponse? completion,
@@ -37,7 +46,7 @@ internal static class OpenAiModelResponseMapper
         var usage = MapUsage(completion?.Usage);
         var choices = completion?.Choices;
         var choice = choices is { Count: > 0 } ? choices[0] : null;
-        if (string.Equals(choice?.FinishReason, "length", StringComparison.OrdinalIgnoreCase))
+        if (IsOutputLimitFinish(choice?.FinishReason))
         {
             throw OpenAiModelErrorMapper.OutputLimitReached(usage, returnedModel);
         }
@@ -69,6 +78,11 @@ internal static class OpenAiModelResponseMapper
                 usage.CompletionTokens,
                 usage.TotalTokens,
                 usage.CompletionTokensDetails?.ReasoningTokens);
+    }
+
+    private static bool IsOutputLimitFinish(string? finishReason)
+    {
+        return finishReason is not null && OutputLimitFinishReasons.Contains(finishReason);
     }
 
     private static AiToolCall[] MapToolCalls(
