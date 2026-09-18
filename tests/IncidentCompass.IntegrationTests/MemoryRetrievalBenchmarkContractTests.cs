@@ -274,10 +274,10 @@ public sealed class MemoryRetrievalBenchmarkContractTests
     }
 
     [Fact]
-    public void BenchmarkRecordContract_NamesSchemaThreeAndItsBenchmarkId()
+    public void BenchmarkRecordContract_NamesSchemaFourAndItsBenchmarkId()
     {
-        Assert.Equal(3, LocalEmbeddingModelBenchmarkContract.SchemaVersion);
-        Assert.Equal("local-embedding-model-benchmark-v3", LocalEmbeddingModelBenchmarkContract.Benchmark);
+        Assert.Equal(4, LocalEmbeddingModelBenchmarkContract.SchemaVersion);
+        Assert.Equal("local-embedding-model-benchmark-v4", LocalEmbeddingModelBenchmarkContract.Benchmark);
     }
 
     [Fact]

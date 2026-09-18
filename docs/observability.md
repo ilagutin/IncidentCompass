@@ -75,6 +75,7 @@ leased work was abandoned for an unrequested reason and is reported rather than 
 | 2320 | Information | The local relevance judge is installed and verified at Worker start; carries the model id, the revision and the first 16 characters of the model file's SHA-256. |
 | 2321 | Warning | The local relevance judge is not available; carries the install error code and its detail. Relevance calls are refused until an install succeeds. |
 | 2322 | Information | This host configures no relevance judge model directory, so none is installed and every relevance call is refused with `relevance_judge_not_configured`; carries the setting name. Written once at Worker start, and only on a host that runs no judge, because nothing else would make that state visible in the log. |
+| 2323 | Warning | This Worker runs the mock relevance judge, a deterministic stand-in that is not a governance boundary and must never run on a production host; carries the setting name. Written once at every Worker start that composes it, because a mock confirmation is otherwise indistinguishable from a real one. |
 | 2401 | Warning | Telegram notification provider returned a bounded failure code. |
 | 2501 | Warning | GitHub issue provider returned a bounded failure code. |
 | 2601 | Warning | PostgreSQL was not accepting connections yet; the failed attempt number, the wait before the next one and the exception type only, never the endpoint or the credential. |
@@ -179,12 +180,12 @@ relevance-judge scores, credentials or raw provider error strings.
 The two local models are logged only where they are installed. Events 2310, 2311, 2320, 2321 and 2322
 carry model ids, revisions, a 16-character digest prefix, a bounded install error code with its
 authored detail and one host setting name, which is the same class of value the model store already
-writes. No query, no candidate chunk and no score reaches that pass at all. The relevance judge has no
+writes. Event 2323 carries only the setting name that selected the mock judge. No query, no candidate chunk and no score reaches that pass at all. The relevance judge has no
 log event of its own outside it: a score is a number about one query and one document together, so a
 log of scores would say which documents a query was close to, which is memory document text by another
-route. A judged `memory_search` result reports its per-item `judgeScore` to the calling role and stores
-it in that call's durable artifacts under the same redaction as the rest of the payload; it is never
-written to the application log at any level.
+route. A judged `memory_search` result reports its per-item `judgeScore` and `confirmationScore` to the
+calling role and stores them in that call's durable artifacts under the same redaction as the rest of
+the payload; neither is ever written to the application log at any level.
 
 The worker-output reprompt event is a narrow exception to the general absence of validation detail:
 it carries at most 20 validator diagnostics. Each uses fixed validator wording and an

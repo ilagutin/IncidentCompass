@@ -1,4 +1,5 @@
 using IncidentCompass.Infrastructure;
+using IncidentCompass.Infrastructure.Relevance;
 using Microsoft.AspNetCore.Hosting;
 
 namespace IncidentCompass.IntegrationTests;
@@ -9,6 +10,18 @@ internal static class IntegrationTestHostBuilderExtensions
     {
         builder.UseSetting("IncidentCompass:ModelGateway:Provider", "Mock");
         builder.UseSetting("IncidentCompass:Embeddings:Provider", "Mock");
+        return builder;
+    }
+
+    /// <summary>
+    /// Composes the mock stack's relevance judge, the way <c>compose.mock.yml</c> does. It must be
+    /// applied together with <see cref="UseWorkerModelHost" />, which is where the judge is composed.
+    /// A host that expects a memory-based known-incident report needs a judge, because a call no judge
+    /// judged confirms nothing.
+    /// </summary>
+    public static IWebHostBuilder UseMockRelevanceJudge(this IWebHostBuilder builder)
+    {
+        builder.UseSetting(RelevanceJudgeOptions.ProviderKey, RelevanceJudgeOptions.MockProvider);
         return builder;
     }
 

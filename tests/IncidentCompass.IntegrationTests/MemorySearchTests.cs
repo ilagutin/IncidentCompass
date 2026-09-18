@@ -229,7 +229,9 @@ public sealed class MemorySearchTests(PostgresRepositoryFixture postgres)
     [DockerAvailableFact]
     public async Task ProcessClaimedAsync_KnownTimeoutDelegatesMemoryAndThreadsRetrievedArtifactIds()
     {
-        using var scope = await CreateScopeAsync();
+        // A memory-based known-incident report needs a confirmed match, and only a relevance judge
+        // confirms, so this host runs the mock stack's judge, as the mock stack itself does.
+        using var scope = await CreateScopeAsync(mockRelevanceJudge: true);
         await SeedCheckoutRunbookAsync(scope.Factory);
         var ingested = await PostIngestAsync(scope.Client, TesterEnvelope("payments-api", "TimeoutException", "Checkout timed out while calling inventory", "/checkout"));
 
@@ -290,9 +292,16 @@ public sealed class MemorySearchTests(PostgresRepositoryFixture postgres)
         Assert.Contains(decisions, row => row.EventType == "PolicyDecision" && row.ToolName == "memory_search" && row.Decision == "Denied" && row.DecisionReason!.StartsWith("rate_cap_exceeded:", StringComparison.Ordinal));
     }
 
+    /// <summary>
+    /// A host that mocks every model. <paramref name="mockRelevanceJudge" /> also composes the mock
+    /// stack's relevance judge, for a test that expects a confirmed match; without it the host runs no
+    /// judge, admits as it always has and confirms nothing, which is what the retrieval, repetition and
+    /// no-match tests here exercise.
+    /// </summary>
     internal async Task<TestScope> CreateScopeAsync(
         string? configPath = null,
-        Action<IServiceCollection>? configureServices = null)
+        Action<IServiceCollection>? configureServices = null,
+        bool mockRelevanceJudge = false)
     {
         var connectionString = await CreateSchemaAsync();
         await PostgresTriageJobTestIsolation.CompleteClaimableJobsAsync(connectionString);
@@ -303,6 +312,11 @@ public sealed class MemorySearchTests(PostgresRepositoryFixture postgres)
             builder.UseSetting("ConnectionStrings:IncidentCompass", connectionString);
             builder.UseExplicitMockProviders();
             builder.UseWorkerModelHost();
+            if (mockRelevanceJudge)
+            {
+                builder.UseMockRelevanceJudge();
+            }
+
             if (configPath is not null)
             {
                 builder.UseSetting("IncidentCompass:ConfigSource:Path", configPath);

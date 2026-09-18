@@ -11,9 +11,9 @@ namespace IncidentCompass.Application.Memory;
 /// no lexical gate left to leave anything empty.
 /// </para>
 /// <para>
-/// When it is false nothing was judged and the pre-judge path runs unchanged.
-/// <see cref="Limitation" /> is set only for the deployment shape of that, a host with no judge
-/// installed, so the model reads why its result is not judged rather than assuming it was.
+/// When it is false nothing was judged: the pre-judge admission path runs unchanged, and nothing
+/// returned is confirmed. <see cref="Limitation" /> says so, whether the host has no judge or the
+/// judge is turned off, so the model reads why its result is not judged rather than assuming it was.
 /// </para>
 /// </remarks>
 internal sealed record MemoryRelevanceJudgement(
@@ -24,7 +24,7 @@ internal sealed record MemoryRelevanceJudgement(
     /// <summary>The judge was not asked, or this host has none to ask.</summary>
     public static MemoryRelevanceJudgement NotJudged(string? limitation) => new(false, [], limitation);
 
-    /// <summary>The judge answered, and these are the candidates its two thresholds admitted.</summary>
+    /// <summary>The judge answered, and these are the candidates its floor admitted.</summary>
     public static MemoryRelevanceJudgement Admitting(IReadOnlyList<MemoryRelevanceJudgedCandidate> admitted) =>
         new(true, admitted, null);
 }

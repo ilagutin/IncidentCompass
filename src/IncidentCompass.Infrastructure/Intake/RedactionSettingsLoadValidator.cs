@@ -21,9 +21,19 @@ internal static class RedactionSettingsLoadValidator
     /// classification. It is refused at load for the same reason a role output schema that types a
     /// secret-named property as a non-string is refused: the configuration defeats itself.
     /// </para>
+    /// <para>
+    /// <c>confirmationScore</c> is the relevance judge's score the band was decided from. Redacting it
+    /// would leave every judged band on the artifact and in the tool result without the number that
+    /// explains it, so a reviewer could no longer tell a band the judge confirmed from one it did not.
+    /// It is reserved with the band for that reason.
+    /// </para>
     /// </summary>
     private static readonly HashSet<string> ReservedAttributeKeys =
-        new HashSet<string>(StringComparer.OrdinalIgnoreCase) { MemoryRetrievalConfidence.PayloadPropertyName };
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            MemoryRetrievalConfidence.PayloadPropertyName,
+            MemoryRetrievalConfidence.ConfirmationScorePropertyName
+        };
 
     public static void Validate(RedactionSettings settings)
     {
@@ -65,7 +75,9 @@ internal static class RedactionSettingsLoadValidator
                     section,
                     key,
                     "an attribute key that is not " + MemoryRetrievalConfidence.PayloadPropertyName +
-                        "; redacting the retrieval band would make every confirmed memory match stop confirming");
+                        " or " + MemoryRetrievalConfidence.ConfirmationScorePropertyName +
+                        "; redacting the retrieval band or the score it was decided from would make every" +
+                        " confirmed memory match stop confirming or stop explaining why it does");
             }
         }
     }

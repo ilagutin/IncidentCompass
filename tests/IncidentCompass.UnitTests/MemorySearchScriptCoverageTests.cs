@@ -88,7 +88,7 @@ public sealed class MemorySearchScriptCoverageTests
         Assert.Equal(2, support.MatchedQueryWords);
         Assert.True(support.IsSupported);
         Assert.False(support.IsFullyCovered);
-        Assert.Equal(MemoryRetrievalConfidence.Medium, MemoryRetrievalConfidence.Band(support, vectorOnly: false));
+        Assert.Equal(MemoryRetrievalConfidence.Medium, MemoryRetrievalConfidence.JudgedBand(confirmed: true, support));
     }
 
     [Fact]
@@ -121,8 +121,8 @@ public sealed class MemorySearchScriptCoverageTests
         var support = MemorySearchLexicalFilter.Evaluate("checkout timeout inventory", EnglishChunk);
 
         Assert.True(support.IsFullyCovered);
-        Assert.Equal(MemoryRetrievalConfidence.High, MemoryRetrievalConfidence.Band(support, vectorOnly: false));
-        Assert.Equal(MemoryRetrievalConfidence.Low, MemoryRetrievalConfidence.Band(support, vectorOnly: true));
+        Assert.Equal(MemoryRetrievalConfidence.High, MemoryRetrievalConfidence.JudgedBand(confirmed: true, support));
+        Assert.Equal(MemoryRetrievalConfidence.Low, MemoryRetrievalConfidence.JudgedBand(confirmed: false, support));
     }
 
     [Fact]

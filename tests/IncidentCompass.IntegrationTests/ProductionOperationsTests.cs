@@ -24,7 +24,10 @@ public sealed class ProductionOperationsTests
         { "INCIDENTCOMPASS_EMBEDDINGS_PROVIDER_ID", "local-oai" },
         { "INCIDENTCOMPASS_SOURCE_ROOT", "relative/source" },
         { "INCIDENTCOMPASS_GITHUB_TOKEN", null },
-        { "INCIDENTCOMPASS_TELEGRAM_ENABLED", "true" }
+        { "INCIDENTCOMPASS_TELEGRAM_ENABLED", "true" },
+        { "INCIDENTCOMPASS_RELEVANCE_JUDGE_PROVIDER", "Mock" },
+        { "IncidentCompass__RelevanceJudge__Provider", "Mock" },
+        { "INCIDENTCOMPASS_RELEVANCE_JUDGE_PROVIDER", "mock" }
     };
 
     /// <summary>
@@ -368,6 +371,13 @@ public sealed class ProductionOperationsTests
         Assert.Equal("intfloat/multilingual-e5-small", workerEnvironment.GetProperty("INCIDENTCOMPASS_EMBEDDINGS_MODEL").GetString());
         Assert.Equal(string.Empty, workerEnvironment.GetProperty("IncidentCompass__Embeddings__OpenAiCompatible__BaseUrl").GetString());
         Assert.Equal(string.Empty, workerEnvironment.GetProperty("IncidentCompass__Embeddings__OpenAiCompatible__ApiKey").GetString());
+
+        // The judge is pinned to the shipped local model, never the mock, and gets its own directory
+        // inside the model volume.
+        Assert.Equal("LocalOnnx", workerEnvironment.GetProperty("IncidentCompass__RelevanceJudge__Provider").GetString());
+        Assert.Equal(
+            "/app/models/relevance-judge",
+            workerEnvironment.GetProperty("IncidentCompass__RelevanceJudge__LocalOnnx__ModelDirectory").GetString());
 
         var modelMount = Assert.Single(
             services.GetProperty("worker").GetProperty("volumes").EnumerateArray(),

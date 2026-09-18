@@ -21,6 +21,7 @@ public sealed partial class ShippedEmbeddingDefaultTests
     private const string ProviderIdDefault = "INCIDENTCOMPASS_EMBEDDINGS_PROVIDER_ID: ${INCIDENTCOMPASS_EMBEDDINGS_PROVIDER_ID:-local-embed}";
     private const string ModelDirectory = "IncidentCompass__Embeddings__LocalOnnx__ModelDirectory: /app/models";
     private const string JudgeModelDirectory = "IncidentCompass__RelevanceJudge__LocalOnnx__ModelDirectory";
+    private const string JudgeProvider = "IncidentCompass__RelevanceJudge__Provider";
 
     [Fact]
     public void ShippedConfiguration_RoutesMemoryEmbeddingsToTheLocalModelAndKeepsChatOnTheOpenAiProvider()
@@ -81,26 +82,47 @@ public sealed partial class ShippedEmbeddingDefaultTests
     }
 
     /// <summary>
-    /// Compose merges <c>environment</c> maps, so every overlay applied on top of the demo file
-    /// inherits the judge's model directory from it. The two overlays whose whole point is to run
-    /// without an in-process model must reset it: the embedding install is gated on the embedding
-    /// provider, which is what keeps them at zero bytes downloaded today, but the judge's install is
-    /// gated on its directory, so an inherited directory would have each of them fetch the pinned
-    /// cross-encoder, which is over half a gigabyte, on a fresh volume.
+    /// The mock stack mocks every model, so its worker runs the mock relevance judge: confirmation
+    /// needs a judge, and without one the mock demo could never reach a memory-based known-incident
+    /// report. Compose merges <c>environment</c> maps, so the overlay also resets the local judge's
+    /// model directory it would inherit from the demo file; the mock judge composes no install pass,
+    /// and the reset keeps that true even if the provider line is ever removed.
     /// </summary>
-    [Theory]
-    [InlineData("compose.mock.yml")]
-    [InlineData("compose.evaluation.yml")]
-    public void ModellessOverlay_ResetsTheRelevanceJudgeModelDirectoryItWouldInheritFromTheDemoFile(string fileName)
+    [Fact]
+    public void MockOverlay_RunsTheMockRelevanceJudgeAndResetsTheLocalJudgeModelDirectory()
     {
+        var worker = ReadServiceBlock("compose.mock.yml", "worker");
+
+        Assert.Contains(JudgeProvider + ": Mock", worker, StringComparison.Ordinal);
+        Assert.Contains(JudgeModelDirectory + ": \"\"", worker, StringComparison.Ordinal);
+        Assert.DoesNotContain(JudgeProvider, ReadServiceBlock("compose.mock.yml", "api"), StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The evaluation stack is where real-model evaluations run, so it runs the product as shipped,
+    /// relevance judge included: it inherits the demo file's judge directory rather than resetting it,
+    /// and names no other judge provider. Without a judge nothing retrieved from memory is confirmed,
+    /// and its known and stale cases could never reach a memory-based known-incident report with any
+    /// real model. The cost is the cross-encoder's install on a fresh volume, about 544 MiB.
+    /// <para>
+    /// The check is textual, because rendering the merged configuration needs Docker and this class
+    /// runs without it. It does not catch a directory reset or a provider set in a way these string
+    /// searches miss, such as a YAML anchor, an <c>env_file</c> entry or a later override file; the
+    /// production stack's rendered configuration is asserted in <c>ProductionOperationsTests</c>.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void EvaluationOverlay_InheritsTheShippedRelevanceJudge()
+    {
+        var worker = ReadServiceBlock("compose.evaluation.yml", "worker");
+
         Assert.Contains(
             JudgeModelDirectory + ": /app/models/relevance-judge",
             ReadServiceBlock("docker-compose.yml", "worker"),
             StringComparison.Ordinal);
-        Assert.Contains(
-            JudgeModelDirectory + ": \"\"",
-            ReadServiceBlock(fileName, "worker"),
-            StringComparison.Ordinal);
+        Assert.DoesNotContain(JudgeModelDirectory, worker, StringComparison.Ordinal);
+        Assert.DoesNotContain(JudgeProvider, worker, StringComparison.Ordinal);
+        Assert.DoesNotContain(JudgeProvider, Read("docker-compose.yml"), StringComparison.Ordinal);
     }
 
     [Fact]

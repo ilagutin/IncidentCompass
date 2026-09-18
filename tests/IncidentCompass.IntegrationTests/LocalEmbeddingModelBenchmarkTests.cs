@@ -19,6 +19,14 @@ namespace IncidentCompass.IntegrationTests;
 /// product's model store under <c>INCIDENTCOMPASS_EMBEDDING_MODEL_CACHE</c>, one directory per model.
 /// The result is one JSON document, written to the test output and to
 /// <c>INCIDENTCOMPASS_EMBEDDING_BENCHMARK_OUTPUT</c> when it is set.
+/// <para>
+/// It runs on the version 3 corpus, whose every query carries the trigger signal it stands for, and the
+/// production pipeline runs each query with that signal, built the way intake builds it, exactly as the
+/// product does. The pipeline here composes no relevance judge, because it compares embedding models,
+/// and confirmation needs a judge, so every band it reports is <c>low</c> by construction: its band
+/// counts record that, and its hard-negative confirmed count is zero for the same reason. Confirmation
+/// is measured by <c>MemorySearchRelevanceJudgeBenchmarkTests</c>, which runs the real judge.
+/// </para>
 /// </summary>
 [Collection(PostgresRepositoryCollection.CollectionName)]
 public sealed class LocalEmbeddingModelBenchmarkTests(PostgresRepositoryFixture postgres)
@@ -38,8 +46,8 @@ public sealed class LocalEmbeddingModelBenchmarkTests(PostgresRepositoryFixture 
         var cancellationToken = TestContext.Current.CancellationToken;
         var startedAt = DateTimeOffset.UtcNow;
         var repoRoot = RepositoryRootLocator.Find();
-        var corpus = MemoryRetrievalBenchmarkCorpus.LoadV2(repoRoot);
-        var multilingual = MemoryRetrievalMultilingualQueries.LoadV2(repoRoot);
+        var corpus = MemoryRetrievalBenchmarkCorpus.LoadV3(repoRoot);
+        var multilingual = MemoryRetrievalMultilingualQueries.LoadV3(repoRoot);
         var groups = new (string Name, MemoryRetrievalBenchmarkCorpus Corpus)[]
         {
             ("en", corpus),

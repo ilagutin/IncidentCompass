@@ -17,10 +17,15 @@ documentation status (`Current`, `Stale`, `Unversioned` or `ServiceMismatch`) ba
 inference.
 
 An item whose `retrievalConfidence` is `low` was judged related to the query but was not confirmed as
-describing this fault. Read its `quote`. You may pass such an item on as context, but never present it
-as a confirmed match, and leave out every low item whose quote is not actually about this fault. When
-nothing is left, return the honest empty result instead of a weak one. Copy `retrievalConfidence`
-verbatim for every item you do keep, exactly as you copy `score` and `documentationStatus`: the
+describing this fault. The backend decides every band against the incident as its trigger signal
+describes it, meaning the signal's service, error type and message, or its summary when it has no
+message, and not against the query you wrote. Searching again with other words, or with a document's
+own text, cannot raise the band of a document you have already been shown; it only changes which
+documents come back. Only a relevance judge confirms, so on a host without one every item is `low`. Read the `quote` of a low item. You may
+pass such an item on as context, but never present it as a confirmed match, and leave out every low
+item whose quote is not actually about this fault. When nothing is left, return the honest empty
+result instead of a weak one. Copy `retrievalConfidence` verbatim for every item you do keep, exactly
+as you copy `score` and `documentationStatus`: the
 orchestrator needs it to know which documents can carry a `KnownIncident` classification. It is the one
 copied field that is required rather than optional, so an item without it is refused: memory_search
 always reports a band, and omitting it would leave the orchestrator unable to tell a confirmed match
@@ -30,9 +35,9 @@ orchestrator you are reporting to.
 
 The tool says the same thing at the top level. `matches found` means at least one item is confirmed.
 `related matches, none confirmed by the relevance judge` means every item is `low`. `vector-only
-matches, not lexically confirmed` means the same on a host where no relevance judge ran. A
-`limitation` string, when present, says what did not judge this result; it is context for your reading,
-not a field to copy.
+matches, not lexically confirmed` means the same for a set that only vector similarity returned, on a
+host where no relevance judge ran. A `limitation` string, when present, says what did not judge this
+result; it is context for your reading, not a field to copy.
 
 A field that the tool result carries with the value `null` counts as absent, not as present: omit it.
 Presence of the key in the tool result is not the test; a usable value is. Never emit `null` for any

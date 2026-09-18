@@ -1527,13 +1527,34 @@ memory payload with no band recorded does not count as confirmed. The durable `T
 `memory_search` call counts as memory-backed too: it holds the same titles and quotes as that call's
 per-item artifacts, and it carries no band, so a `KnownIncident` cannot rest on it alone.
 
-The limit of what the band proves is worth stating. It says the relevance judge found the document
-relevant to the query that was asked, and the query is written by the model from the incident. A
-query that repeats a document's own wording will score highly against that document, so a model can
-raise a band by re-querying with text it has already been shown, and an error message crafted to
-paraphrase a runbook can do the same from untrusted telemetry. The rule therefore bounds what an
-unconfirmed document is allowed to justify; it does not prove that a confirmed document describes the
-fault. The LLM is not a security boundary here either.
+The limit of what the band proves is worth stating. It says the relevance judge scored the document
+at or above the confirm score against the fault query, which the backend builds from the trigger
+signal's service name, error type and error message, or from its summary when there is no message and
+the sender supplied one. The model's own query decides only which documents come back, so a model
+cannot raise the band of a document it has already been shown by re-querying with that document's
+wording. The fault query is built from fields the sender of the signal supplied, though, so an error
+message crafted to paraphrase a runbook can still earn a confirmation from untrusted telemetry, and on
+a user or manual report the fault query carries the reporter's own summary, so a `KnownIncident`
+report resting on memory is only as trustworthy as the reporter. Without a relevance judge nothing is
+confirmed at all. The rule therefore bounds what an unconfirmed document is allowed to justify; it does
+not prove that a confirmed document describes the fault. What bounds crafted telemetry is the approval
+gate, not the band: a ticket, a ticket update, a code write, a branch push and a pull request each wait
+for a person, because a notification is the only action category policy may approve on its own. The
+remediation diff pass is the exception that needs no approval, and it spends model budget and writes
+only a disposable copy of the checkout when an operator has switched it on. The LLM is not a security
+boundary here either.
+
+The mock relevance judge is the one judge that is not a relevance judgement at all. Selected with
+`IncidentCompass:RelevanceJudge:Provider: Mock`, it confirms a returned document whenever the document
+names an error type the fault names, such as `TimeoutException`, and a confirmation it produces is
+indistinguishable from a real one in the tool output and the stored artifact. It exists so the mock
+stack, which mocks every model, runs the same judged path as the product, and it must never run on a
+production host. Four things stop it there: `compose.production.yml` pins
+`IncidentCompass__RelevanceJudge__Provider: LocalOnnx` on the worker rather than reading it from a
+variable; `scripts/production-preflight.ps1` refuses an environment entry naming any other judge
+provider and checks the rendered worker's provider is `LocalOnnx`; a Worker that composes the mock
+logs event 2323 at Warning on every start; and `memory model status` and `memory model install` report
+it as the mock and exit 1, never as a ready judge.
 
 A refusal is still allowed to say what it refused over. The diagnostic a refused `publish_report`
 hands back to the orchestrator is matched against a closed allowlist of backend-authored strings

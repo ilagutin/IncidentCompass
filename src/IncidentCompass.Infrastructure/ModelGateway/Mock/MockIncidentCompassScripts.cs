@@ -10,8 +10,8 @@ internal static class MockIncidentCompassScripts
 {
     /// <summary>
     /// The band memory_search gives an item nothing confirmed: one the relevance judge admitted
-    /// without confirming, or, on a host that runs no judge, one the vector-only fallback returned.
-    /// The mock reads the band rather than the message, so it stays correct under both.
+    /// without confirming, or, on a call no judge judged, every item. The mock reads the band rather
+    /// than the message, so it stays correct under both.
     /// </summary>
     private const string UnconfirmedBand = "low";
 

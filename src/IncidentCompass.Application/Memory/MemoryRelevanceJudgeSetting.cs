@@ -26,11 +26,35 @@ internal static class MemoryRelevanceJudgeSetting
     public const MemoryRelevanceJudgeMode DefaultMode = MemoryRelevanceJudgeMode.On;
 
     /// <summary>
-    /// The default confirm threshold, measured for the pinned cross-encoder on the retrieval
-    /// benchmark corpus: every positive query's answer scored above it, and every off-topic passage
-    /// scored well below it.
+    /// The default confirm threshold. A returned document whose judge score against the fault query
+    /// reaches it is confirmed.
+    /// <para>
+    /// It was re-measured against the fault query, because that is what now decides confirmation. The
+    /// earlier 1.15 was measured against the role's own query and does not transfer to fault text.
+    /// Swept through the real <c>memory_search</c> on the retrieval benchmark corpus in English, Polish
+    /// and Russian, the value that keeps every hard negative and every attack query unconfirmed while
+    /// confirming every English and Russian incident-shaped positive lies in the window (0.60, 0.90].
+    /// </para>
+    /// <para>
+    /// <b>The lower bound.</b> At 0.55 and below an English hard negative is confirmed; from 0.60 up no
+    /// hard negative is confirmed in any language, and the attack leg, where a role re-queries with a
+    /// document's own text, confirms nothing in any language.
+    /// </para>
+    /// <para>
+    /// <b>The upper bound.</b> Russian incident-shaped positives are confirmed 6 of 6 up to 0.90 and 5
+    /// of 6 from 0.95. English incident-shaped positives are 6 of 6 across the window.
+    /// </para>
+    /// <para>
+    /// The default sits in the middle of that window, about 0.15 from each side.
+    /// </para>
+    /// <para>
+    /// <b>Polish stays at 4 of 6.</b> Polish incident-shaped positives are 5 of 6 at 0.50 and below and
+    /// 4 of 6 from 0.55 up to 1.20. The fifth Polish positive scores below the English hard negative, so
+    /// no value confirms it without also confirming that hard negative. The release keeps the hard
+    /// negative out; the two unconfirmed Polish answers are still returned, banded as related context.
+    /// </para>
     /// </summary>
-    public const double DefaultConfirmScore = 1.15;
+    public const double DefaultConfirmScore = 0.75;
 
     /// <summary>
     /// The default floor. A candidate the judge scores below it is dropped, not banded.

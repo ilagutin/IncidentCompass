@@ -1,20 +1,32 @@
 using System.Text.Json;
 using IncidentCompass.Application.Core.ModelClients;
+using IncidentCompass.Application.Memory;
 
 namespace IncidentCompass.Infrastructure.ModelGateway.Mock;
 
 internal static class MockIncidentCompassMemoryQuery
 {
+    /// <summary>
+    /// The mock role's query is the backend's own fault query, read back out of the prompt: the
+    /// service, the error type and the error message, with the summary standing in for a blank message,
+    /// composed by <see cref="MemoryFaultQuery.Compose" />. That is also what the memory role
+    /// instructions tell a real role to search with.
+    /// <para>
+    /// One case differs. The fault query leaves out a summary intake synthesized itself, which it
+    /// recognizes by recomputing the synthesis from the signal's operation and route, and the prompt
+    /// carries neither, so for a structured signal with an error type and no message the mock still
+    /// sends that synthesized summary. The mock's query only decides admission; the band is decided
+    /// against the backend's fault query either way.
+    /// </para>
+    /// </summary>
     public static string CreateSearchArguments(AiModelRequest request)
     {
         var prompt = request.Messages.LastOrDefault(static message => message.Role == AiMessageRole.User)?.Content ?? string.Empty;
-        var query = string.Join(' ', new[]
-        {
+        var query = MemoryFaultQuery.Compose(
             ReadPromptValue(prompt, "- service:"),
-            ReadPromptValue(prompt, "- summary:"),
             ReadPromptValue(prompt, "- errorType:"),
-            ReadPromptValue(prompt, "- errorMessage:")
-        }.Where(static value => !string.IsNullOrWhiteSpace(value)));
+            ReadPromptValue(prompt, "- errorMessage:"),
+            ReadPromptValue(prompt, "- summary:"));
 
         return JsonSerializer.Serialize(new
         {

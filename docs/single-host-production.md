@@ -234,15 +234,22 @@ a fresh volume is writable by the Worker and it creates the judge's subdirectory
 `scripts/postgres-backup.ps1` does not back the volume up, because its contents are reproducible from
 the pinned sources; `down --volumes` deletes it and the next start downloads both models again.
 
-**The judge's directory is what turns the judge on.**
-`IncidentCompass__RelevanceJudge__LocalOnnx__ModelDirectory` is the only setting that decides whether
-this Worker runs a judge, because the judge has no provider setting to decide it with.
-`docker-compose.yml` and `compose.production.yml` set it to `/app/models/relevance-judge`;
-`compose.mock.yml` and `compose.evaluation.yml` reset it to the empty string, because those stacks
-exist to run without downloading a model. A Worker that names no directory starts normally and runs no
-judge: every judge call is refused with `relevance_judge_not_configured`, `memory_search` keeps the
-behaviour it had before the judge existed and says so in a top-level `limitation` string, and both
-`memory model status` and `memory model install` report the missing judge and exit 1.
+**The judge's directory is what turns the local judge on.**
+`IncidentCompass__RelevanceJudge__Provider` chooses the judge: `LocalOnnx`, the default, or `Mock`, a
+deterministic stand-in that needs no model and is not a governance boundary; any other value stops the
+Worker at start. `compose.production.yml` pins it to `LocalOnnx` rather than reading a variable, the
+production preflight refuses an environment entry naming any other judge provider and checks the
+rendered worker's value, a Worker running the mock logs event 2323 at Warning on every start, and
+`memory model status` reports a mock judge as the mock and exits 1. With the local judge, `IncidentCompass__RelevanceJudge__LocalOnnx__ModelDirectory`
+decides whether this Worker runs one. `docker-compose.yml` and `compose.production.yml` set it to
+`/app/models/relevance-judge`, and `compose.evaluation.yml` inherits it, so real-model evaluations run
+the product as shipped at the cost of the judge's download on a fresh volume. `compose.mock.yml` sets
+the provider to `Mock` and resets the directory to the empty string, because that stack mocks every
+model and downloads none. A Worker with the local judge and no directory starts normally and runs no
+judge: every judge call is refused with `relevance_judge_not_configured`, `memory_search` still
+retrieves and admits but confirms nothing and says so in a top-level `limitation` string, so no
+memory-based `KnownIncident` report can be published, and both `memory model status` and
+`memory model install` report the missing judge and exit 1.
 
 **First start.** A Worker starting on an empty volume downloads the two files, about 123 MB, over HTTPS
 from `huggingface.co` and the HTTPS location it redirects to, verifies both digests and writes the

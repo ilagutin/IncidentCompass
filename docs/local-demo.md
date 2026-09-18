@@ -202,7 +202,17 @@ produced, and states what they do not establish.
 
 The evaluation stack embeds through that server, not through the in-process model:
 `compose.evaluation.yml` selects the OpenAI-compatible embedding adapter, because the evaluation
-configuration's memory route names `local-oai`. Run the evaluator against a host-side
+configuration's memory route names `local-oai`. It runs the shipped relevance judge, though, because
+without a judge nothing retrieved from memory is confirmed and the known and stale cases could not
+reach a memory-based known-incident report. On an empty model volume the Worker downloads the judge,
+about 544 MiB, on its first start, bounded by a 1800-second install timeout, while the tester's
+per-attempt deadline is 660 seconds and it starts as soon as the Worker process exists. A first run on a
+slow link can therefore record attempts that failed only because the judge was still downloading. On an
+empty volume, start the tester only once the judge is installed and verified: the Worker logs event
+2320 when it is, and `memory model status`, run in a one-off worker container of the evaluation stack,
+then prints `Local relevance judge: BAAI/bge-reranker-v2-m3` with no judge problem after it. On this
+stack that command still exits 1 even when the judge is ready, because its embedding half reports that
+the embedding provider is not the in-process model, so wait for the judge line rather than for exit 0. Run the evaluator against a host-side
 OpenAI-compatible chat and embedding provider with:
 
 ~~~powershell

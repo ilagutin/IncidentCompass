@@ -299,11 +299,12 @@ relevance judge judged the call.
 A relevance judge, when one is installed, is the admission authority for every query. It is a
 cross-encoder behind the `IMemoryRelevanceJudge` port: it reads one query with one candidate chunk and
 scores how relevant that chunk is to that query, on its own model's scale. Two thresholds turn those
-scores into three outcomes: at or above `Tools.memory_search.RelevanceConfirmScore` the match is
-confirmed, between that and `Tools.memory_search.RelevanceFloorScore` it is admitted as related but
-unconfirmed, and below the floor it is dropped, so an off-topic query in any language returns nothing.
+scores into three outcomes: below `Tools.memory_search.RelevanceFloorScore` a candidate is dropped, so
+an off-topic query in any language returns nothing; every other candidate is admitted, and a returned
+match is confirmed only when a second judgement, described below, reaches
+`Tools.memory_search.RelevanceConfirmScore`.
 `Tools.memory_search.RelevanceJudge` takes `off` or `on`; all three keys are optional, an absent
-`RelevanceJudge` means `on`, an absent floor means `-0.25` and an absent confirm score means `1.15`,
+`RelevanceJudge` means `on`, an absent floor means `-0.25` and an absent confirm score means `0.75`,
 and no shipped or sample configuration sets any of them. The default floor is tuned so that an
 off-topic query returns nothing. That is the stronger of the two guarantees and the one the defaults
 keep: on the benchmark corpus it costs one redundant secondary chunk of one query whose primary chunk
@@ -314,8 +315,11 @@ identifiers passes the gate fully and is reported as confirmed.
 
 `on` does not mean "require". Exactly two states are a host that is not running a judge at all: no
 judge model directory is configured, and nothing is installed in the configured one yet. Those keep
-the pre-judge behaviour and report it in a top-level `limitation` string, which is the shape every
-mock, evaluation and integration-test host is in. Every other state propagates with its own named
+the pre-judge admission, confirm nothing, and say so in a top-level `limitation` string, as does
+`RelevanceJudge: off`. The shipped compose files run the local judge, the evaluation stack included;
+the mock stack runs a deterministic mock judge, chosen by `IncidentCompass:RelevanceJudge:Provider`, so
+it takes the same judged path; integration-test hosts compose a judge where a test needs a confirmed
+match. Every other state propagates with its own named
 error code and nothing falls back, because a host whose judge does not verify is broken rather than
 judge-less: a digest mismatch, a missing model file, a failed fetch, an oversized download, an install
 still running, an install timeout, an invalid manifest, an unreadable model store, a model that is not
@@ -344,16 +348,29 @@ finite number, or a set of scores that does not match the candidates one for one
 rather than used: a NaN compares false against both thresholds and would otherwise be admitted as an
 unconfirmed match.
 
-`retrievalConfidence` reports how a returned item was admitted, not how high its vector score was. On a
-judged call: `high` when the judge confirmed and every counted query word was eligible and occurs in
-the chunk, `medium` when the judge confirmed alone, and `low` when the judge admitted without
-confirming, so a band never claims more than the weaker of the two judgements says. On an unjudged call
-the three bands keep their pre-judge meanings, with `low` for a vector-only fallback result. The
-numeric `score` is the same vector similarity it has always been, and the judge's own score is reported
-beside it as `judgeScore`, null when nothing judged. The tool's top-level `message` is `matches found`
-when at least one item is confirmed, `related matches, none confirmed by the relevance judge` for a
-judged set in which none is, `vector-only matches, not lexically confirmed` for an unjudged fallback
-result, and `no matches` for none; `matched` and `noMatchReason` are unchanged.
+`retrievalConfidence` reports whether a returned item was confirmed as describing the incident, not how
+high its vector score was and not how well it answered the role's query. Admission and order answer the
+query the role wrote; the band answers a fault query the backend builds from fields the signal's sender
+supplied: its service name, error type and error message, joined in that order, blank parts skipped,
+with the summary in place of a blank message, and cut to the same 1016-character bound. That is the
+query the memory role is told to write. The role cannot rewrite those fields, so re-querying with a
+document's own text cannot raise the band of a document it has already been shown; it only changes
+which documents come back. A re-triage confirms against the fault's original trigger signal, because
+that is the signal the investigation context loads. On a judged call the returned items, and only those, are
+scored a second time against the fault query: `high` when that score reaches the confirm score and every
+counted word of the fault query occurs in the chunk, `medium` when the score reaches it alone, and `low`
+otherwise, so a band never claims more than the weaker of the two judgements says. The floor is not
+applied to the second score, and the second call fails exactly as the first does, except that a judge
+reporting itself absent on the second call confirms nothing and says so rather than falling back. On a
+call no judge judged every item is `low`: there is no lexical confirmation, because word overlap with a
+short or foreign-script fault query confirms on a single shared word. A context with no trigger signal,
+or a fault query with no counted word, bands everything `low` as well. The numeric `score` is the same vector similarity it has
+always been; the judge's score for the role's query is reported beside it as `judgeScore` and its score
+for the fault query as `confirmationScore`, each null when no judge scored it. The tool's top-level
+`message` is `matches found` when at least one item is confirmed, `vector-only matches, not lexically
+confirmed` for an unconfirmed vector-only fallback result, `related matches, none confirmed by the
+relevance judge` for any other set in which none is, and `no matches` for none; `matched` and
+`noMatchReason` are unchanged.
 
 Ordering keeps the combination the reranker already applied, with the judge's score substituted for the
 vector score as the base term when a judge judged. The documentation boost keeps its values and

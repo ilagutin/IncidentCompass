@@ -14,8 +14,10 @@ internal static class MemorySearchMessage
     public const string NoMatches = "no matches";
 
     /// <summary>
-    /// A judged set in which the relevance judge confirmed none of the items. Every item is banded
-    /// <c>low</c>.
+    /// A set none of whose items was confirmed against the fault, other than a vector-only fallback
+    /// set. Every item is banded <c>low</c>. On a judged call that means the judge confirmed none of
+    /// them; on an unjudged call nothing is ever confirmed, so every lexically admitted set reports this
+    /// sentence, which is literally true there because no judge ran.
     /// </summary>
     public const string RelatedMatches = "related matches, none confirmed by the relevance judge";
 

@@ -63,9 +63,18 @@ internal sealed class LegacyMemoryRetrievalStrategy(
     }
 }
 
+/// <summary>
+/// Runs every corpus query through the real <c>memory_search</c> tool. Each query's context carries the
+/// trigger signal its fixture names, built by <see cref="MemoryRetrievalBenchmarkTriggerSignal" />, so the
+/// reported band is decided against the production fault query; a corpus that predates signals runs
+/// with none, and every band it reports is then <c>low</c>. <paramref name="signalFor" /> replaces that
+/// signal for a leg that has to reproduce another rule, and is never a product setting.
+/// </summary>
 internal sealed class ProductionMemoryRetrievalStrategy(
     IImmediateAgentTool memorySearchTool,
-    TriageConfiguration configuration) : IMemoryRetrievalBenchmarkStrategy
+    TriageConfiguration configuration,
+    Func<MemoryRetrievalBenchmarkCorpus, MemoryRetrievalBenchmarkQuery, Signal?>? signalFor = null)
+    : IMemoryRetrievalBenchmarkStrategy
 {
     public async Task<IReadOnlyList<MemoryRetrievalQueryResult>> ExecuteAsync(
         MemoryRetrievalBenchmarkCorpus corpus,
@@ -86,7 +95,13 @@ internal sealed class ProductionMemoryRetrievalStrategy(
             }
 
             var execution = await memorySearchTool.ExecuteAsync(
-                CreateContext(benchmarkConfiguration, corpus, query),
+                CreateContext(
+                    benchmarkConfiguration,
+                    corpus,
+                    query,
+                    signalFor is null
+                        ? MemoryRetrievalBenchmarkTriggerSignal.For(corpus.TenantId, query)
+                        : signalFor(corpus, query)),
                 validation.SanitizedArguments,
                 cancellationToken);
             if (execution.Status != ToolExecutionStatus.Succeeded)
@@ -109,7 +124,8 @@ internal sealed class ProductionMemoryRetrievalStrategy(
     private static AgentToolExecutionContext CreateContext(
         TriageConfiguration configuration,
         MemoryRetrievalBenchmarkCorpus corpus,
-        MemoryRetrievalBenchmarkQuery query)
+        MemoryRetrievalBenchmarkQuery query,
+        Signal? triggerSignal)
     {
         var now = DateTimeOffset.UnixEpoch;
         var job = new TriageJob(
@@ -136,7 +152,8 @@ internal sealed class ProductionMemoryRetrievalStrategy(
             ConversationId = Guid.Parse("30000000-0000-0000-0000-000000000003"),
             UserId = "memory-benchmark",
             CorrelationId = "memory-benchmark-" + query.Id,
-            PolicyVersion = "benchmark-v1"
+            PolicyVersion = "benchmark-v1",
+            TriggerSignal = triggerSignal
         };
     }
 }

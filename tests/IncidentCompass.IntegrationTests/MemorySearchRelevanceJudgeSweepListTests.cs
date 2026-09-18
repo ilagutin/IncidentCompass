@@ -128,8 +128,8 @@ public sealed class MemorySearchRelevanceJudgeSweepListTests
     {
         var measured = MeasuredFloorScores();
 
-        Assert.Equal(95, measured.Count);
-        Assert.Equal(1.0, measured[^1]);
+        Assert.Equal(93, measured.Count);
+        Assert.Equal(0.5, measured[^1]);
         Assert.Equal(
             81,
             measured.Count(static value => value is >= -2.0 and <= 0.0));

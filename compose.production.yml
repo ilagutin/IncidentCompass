@@ -82,6 +82,10 @@ services:
       # own; it sits under the same volume, so one volume holds both and one 'memory model install'
       # fills both.
       IncidentCompass__RelevanceJudge__LocalOnnx__ModelDirectory: /app/models/relevance-judge
+      # Pinned rather than read from a variable, so this stack cannot inherit the mock judge from any
+      # other file or environment: the mock confirms memory matches by matching error-type names, is
+      # not a governance boundary, and must never run here. The preflight checks the rendered value.
+      IncidentCompass__RelevanceJudge__Provider: LocalOnnx
       IncidentCompass__SourceContext__Roots__0__ServiceName: ${INCIDENTCOMPASS_SOURCE_SERVICE:?set INCIDENTCOMPASS_SOURCE_SERVICE}
       IncidentCompass__SourceContext__Roots__0__Release: ${INCIDENTCOMPASS_SOURCE_RELEASE:?set INCIDENTCOMPASS_SOURCE_RELEASE}
       IncidentCompass__SourceContext__Roots__0__RootPath: /monitored-source

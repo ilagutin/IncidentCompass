@@ -1,13 +1,17 @@
 namespace IncidentCompass.IntegrationTests;
 
 /// <summary>
-/// One relevance-judge benchmark run. It carries three things a threshold decision needs: the measured
-/// result at the shipped defaults, the full curve of both thresholds swept independently, and the two
-/// scores the floor actually sits between.
+/// One relevance-judge benchmark run. It carries what a threshold decision needs: the measured result at
+/// the shipped defaults, the full curve of both thresholds swept independently, the scores the floor and
+/// the confirm score actually sit between, and the attack legs that show whether a model can raise a
+/// band by choosing its query.
 /// </summary>
 /// <remarks>
-/// Schema version 2 added <c>Scoring</c> and <c>Sweeps</c>. Version 1 recorded only the shipped-default
-/// legs, which was enough to check a threshold and not enough to choose one.
+/// Schema version 3 runs on the version 3 corpus, whose every query carries its trigger signal, and
+/// decides every band against the fault query built from it. It added the fault-score boundaries to
+/// <c>Scoring</c>, the incident-shaped positive counts to every language and <c>AttackLegs</c>. Schema
+/// version 2 added <c>Scoring</c> and <c>Sweeps</c>. Version 1 recorded only the shipped-default legs,
+/// which was enough to check a threshold and not enough to choose one.
 /// </remarks>
 public sealed record MemorySearchRelevanceJudgeBenchmarkRecord(
     int SchemaVersion,
@@ -27,20 +31,26 @@ public sealed record MemorySearchRelevanceJudgeBenchmarkRecord(
     DateTimeOffset CompletedAt,
     MemorySearchRelevanceJudgeBenchmarkScoring Scoring,
     IReadOnlyList<MemorySearchRelevanceJudgeBenchmarkLeg> Legs,
-    IReadOnlyList<MemorySearchRelevanceJudgeBenchmarkSweep> Sweeps);
+    IReadOnlyList<MemorySearchRelevanceJudgeBenchmarkSweep> Sweeps,
+    IReadOnlyList<MemorySearchRelevanceJudgeBenchmarkAttackLeg> AttackLegs);
 
 /// <summary>
 /// What the judge said, before any threshold was applied to it. Every (query, candidate) pair of every
-/// language was scored exactly once and every sweep point reuses those scores, so
-/// <c>JudgeModelCallsDuringSweep</c> should be zero: a non-zero value means a sweep run asked about a
-/// pair the capture pass did not cover, which makes the sweep slow but not wrong.
+/// language was scored exactly once against the model's query and once against the fault query, and
+/// every sweep point reuses those scores, so <c>JudgeModelCallsDuringSweep</c> should be zero: a non-zero
+/// value means a sweep run asked about a pair the capture pass did not cover, which makes the sweep slow
+/// but not wrong. <c>ByLanguage</c> and <c>Pooled</c> are the floor's boundary over the model-query
+/// scores; <c>ConfirmByLanguage</c> and <c>ConfirmPooled</c> are the confirm score's over the fault
+/// scores, which are what the confirm score is now compared with.
 /// </summary>
 public sealed record MemorySearchRelevanceJudgeBenchmarkScoring(
     int ScoredPairCount,
     int JudgeModelCallsDuringCapture,
     int JudgeModelCallsDuringSweep,
     IReadOnlyList<MemorySearchRelevanceJudgeBenchmarkBoundary> ByLanguage,
-    MemorySearchRelevanceJudgeBenchmarkBoundary Pooled);
+    MemorySearchRelevanceJudgeBenchmarkBoundary Pooled,
+    IReadOnlyList<MemorySearchRelevanceJudgeBenchmarkConfirmBoundary> ConfirmByLanguage,
+    MemorySearchRelevanceJudgeBenchmarkConfirmBoundary ConfirmPooled);
 
 /// <summary>
 /// The two scores a floor has to fall between, and how much room there is between them.
@@ -119,6 +129,12 @@ public sealed record MemorySearchRelevanceJudgeBenchmarkSweepPoint(
 /// was lost or that one of several chunks carrying the same answer was, and only this number tells
 /// those apart.
 /// </para>
+/// <para>
+/// <c>IncidentShapedPositiveConfirmedCount</c> counts incident-shaped positive queries, the ones whose
+/// English source text is its signal's service, error type and message, that returned at least one of
+/// their labelled relevant chunks banded <c>medium</c> or better. It is the measure that the band still
+/// confirms a real answer once it is decided against the fault rather than against the query.
+/// </para>
 /// </summary>
 public sealed record MemorySearchRelevanceJudgeBenchmarkLanguage(
     string Language,
@@ -130,4 +146,6 @@ public sealed record MemorySearchRelevanceJudgeBenchmarkLanguage(
     int HardNegativeQueryCount,
     int HardNegativeReturnedCount,
     int HardNegativeConfirmedCount,
+    int IncidentShapedPositiveQueryCount,
+    int IncidentShapedPositiveConfirmedCount,
     IReadOnlyDictionary<string, int> BandCounts);

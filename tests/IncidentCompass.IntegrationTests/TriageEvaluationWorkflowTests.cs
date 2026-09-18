@@ -5,7 +5,6 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using IncidentCompass.Application.Core.Embeddings;
 using IncidentCompass.Application.Core.ModelClients;
-using IncidentCompass.Application.Governance.Tools;
 using IncidentCompass.Application.Intake.Configuration;
 using IncidentCompass.Application.Memory;
 using IncidentCompass.Infrastructure.Notifications.Telegram;
@@ -34,7 +33,8 @@ public sealed class TriageEvaluationWorkflowTests(PostgresRepositoryFixture post
         var repoRoot = RepositoryRootLocator.Find();
         var evaluationCases = LoadWorkflowCases(Path.Combine(repoRoot, "evaluations", "triage", "corpus-v1.json"));
         var retrievalCorpus = MemoryRetrievalBenchmarkCorpus.Load(repoRoot);
-        await using var scope = await CreateScopeAsync(repoRoot, retrievalCorpus);
+        await using var scope = await CreateScopeAsync(
+            repoRoot, retrievalCorpus, CreateRelevanceJudge(evaluationCases, retrievalCorpus));
         await SeedRetrievalCorpusAsync(scope, retrievalCorpus);
 
         var retrievalResults = await ObserveRetrievalAsync(scope, retrievalCorpus);
@@ -89,9 +89,51 @@ public sealed class TriageEvaluationWorkflowTests(PostgresRepositoryFixture post
         }
     }
 
+    /// <summary>
+    /// The host composes a relevance judge because the default product path has one. <c>memory_search</c>
+    /// confirms a document only through a relevance judge, against the fault query built from the
+    /// trigger signal, and a judge-less host confirms nothing, so on a judge-less host neither the known
+    /// nor the stale case could ever be confirmed. The evaluation corpus is also the input of recorded
+    /// real-model runs, so it is not reworded to suit any rule. The judge is deterministic, like the
+    /// scripted chat model beside it, and answers from relevance labels the repository already states;
+    /// <see cref="EvaluationRelevanceJudge" /> says which, and says that it covers the plumbing rather
+    /// than the defence.
+    /// </summary>
+    private static EvaluationRelevanceJudge CreateRelevanceJudge(
+        IReadOnlyList<WorkflowCase> evaluationCases,
+        MemoryRetrievalBenchmarkCorpus corpus)
+    {
+        var chunkTexts = corpus.Items
+            .SelectMany(static item => item.Chunks)
+            .ToDictionary(static chunk => chunk.Id, static chunk => chunk.Text);
+        IReadOnlySet<string> LabelledFor(string queryText) => corpus.Queries
+            .Single(query => string.Equals(query.Text, queryText, StringComparison.Ordinal))
+            .RelevantChunkIds
+            .Select(chunkId => chunkTexts[chunkId])
+            .ToHashSet(StringComparer.Ordinal);
+        string MessageOf(string kind) => evaluationCases.Single(item => item.Kind == kind).ErrorMessage;
+
+        var checkout = LabelledFor(EvaluationScriptedModelClient.CheckoutQuery);
+        var olderRunbook = LabelledFor(EvaluationScriptedModelClient.OlderRunbookQuery);
+        Assert.NotEmpty(checkout);
+        Assert.NotEmpty(olderRunbook);
+        return new EvaluationRelevanceJudge(
+            new Dictionary<string, IReadOnlySet<string>>(StringComparer.Ordinal)
+            {
+                [EvaluationScriptedModelClient.CheckoutQuery] = checkout,
+                [EvaluationScriptedModelClient.OlderRunbookQuery] = olderRunbook
+            },
+            new Dictionary<string, IReadOnlySet<string>>(StringComparer.Ordinal)
+            {
+                [MessageOf("known")] = checkout,
+                [MessageOf("stale")] = olderRunbook
+            });
+    }
+
     private async Task<EvaluationTestScope> CreateScopeAsync(
         string repoRoot,
-        MemoryRetrievalBenchmarkCorpus corpus)
+        MemoryRetrievalBenchmarkCorpus corpus,
+        IMemoryRelevanceJudge relevanceJudge)
     {
         var connectionString = await postgres.GetConnectionStringAsync();
         await PostgresSchemaTestHelper.EnsureSchemaAsync(connectionString);
@@ -112,6 +154,8 @@ public sealed class TriageEvaluationWorkflowTests(PostgresRepositoryFixture post
             {
                 services.RemoveAll<IAiModelClient>();
                 services.AddScoped<IAiModelClient, EvaluationScriptedModelClient>();
+                services.RemoveAll<IMemoryRelevanceJudge>();
+                services.AddSingleton(relevanceJudge);
             });
         });
         var client = factory.CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = new Uri("https://localhost") });
@@ -135,8 +179,13 @@ public sealed class TriageEvaluationWorkflowTests(PostgresRepositoryFixture post
         using var serviceScope = scope.Factory.Services.CreateScope();
         var configuration = await serviceScope.ServiceProvider.GetRequiredService<ITriageConfigurationRepository>()
             .GetCurrentAsync(TestContext.Current.CancellationToken);
-        var memoryTool = serviceScope.ServiceProvider.GetServices<IImmediateAgentTool>()
-            .Single(static tool => tool.Definition.Name == "memory_search");
+
+        // The retrieval benchmark is observed without the scripted judge. That judge answers from the
+        // benchmark's own labels, so a retrieval check run through it would only be the labels agreeing
+        // with themselves; without it this is the same lexical measurement it has always been.
+        var memoryTool = new MemorySearchTool(
+            serviceScope.ServiceProvider.GetRequiredService<IEmbeddingClient>(),
+            serviceScope.ServiceProvider.GetRequiredService<IMemoryRepository>());
         return await new ProductionMemoryRetrievalStrategy(memoryTool, configuration)
             .ExecuteAsync(corpus, TestContext.Current.CancellationToken);
     }

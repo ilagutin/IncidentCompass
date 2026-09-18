@@ -3,16 +3,18 @@ using IncidentCompass.Infrastructure.EmbeddingModels;
 namespace IncidentCompass.IntegrationTests;
 
 /// <summary>
-/// The identity of the result document. Schema 3 is schema 2 plus the per-category composition of each
-/// group and the per-category counts on <see cref="MemoryRetrievalMetricSummary" />: the metric summary
-/// means more than it did, so the document says so. Records written at schema 1 and 2 stay parseable and
-/// nothing migrates them.
+/// The identity of the result document. Schema 4 has the shape of schema 3 and is measured on the
+/// version 3 corpus, with every band decided against the fault query built from the query's trigger
+/// signal rather than against the query itself, so its band and confirmed counts are not comparable with
+/// a schema 3 record. Schema 3 is schema 2 plus the per-category composition of each group and the
+/// per-category counts on <see cref="MemoryRetrievalMetricSummary" />. Records written at earlier
+/// schemas stay parseable and nothing migrates them.
 /// </summary>
 internal static class LocalEmbeddingModelBenchmarkContract
 {
-    public const int SchemaVersion = 3;
+    public const int SchemaVersion = 4;
 
-    public const string Benchmark = "local-embedding-model-benchmark-v3";
+    public const string Benchmark = "local-embedding-model-benchmark-v4";
 }
 
 internal sealed record LocalEmbeddingModelBenchmarkRecord(

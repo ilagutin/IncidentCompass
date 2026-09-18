@@ -10,6 +10,8 @@ using IncidentCompass.Application.Tickets;
 using IncidentCompass.Domain.Incidents.Actions;
 using IncidentCompass.Infrastructure;
 using IncidentCompass.Infrastructure.Memory;
+using IncidentCompass.Infrastructure.Relevance;
+using IncidentCompass.Infrastructure.Relevance.Mock;
 using IncidentCompass.Worker;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -207,6 +209,72 @@ public sealed class HostCompositionTests
             typeof(WorkerMemoryCorpusStatusReader),
             Assert.Single(services, descriptor => descriptor.ServiceType == typeof(IMemoryCorpusStatusReader)).ImplementationType);
     }
+
+    /// <summary>
+    /// <c>IncidentCompass:RelevanceJudge:Provider</c> set to <c>Mock</c> gives the Worker the mock
+    /// stack's deterministic judge, and nothing of the local judge: no install pass, so a mock host
+    /// downloads no cross-encoder whatever judge directory it inherits, and it logs at start that it
+    /// runs the mock. Everything else the Worker runs is unchanged, so the hosted-service count is the
+    /// default composition's with that one pass exchanged for the start-up warning.
+    /// </summary>
+    [Fact]
+    public void WorkerHostServices_WithTheMockJudgeProvider_ComposeTheMockJudgeAndNoJudgeInstallPass()
+    {
+        var configuration = WorkerConfiguration(RelevanceJudgeOptions.MockProvider);
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddTestApplication(configuration);
+        services.AddInfrastructure(configuration);
+        services.AddWorker(configuration);
+
+        using var provider = services.BuildServiceProvider(new ServiceProviderOptions
+        {
+            ValidateOnBuild = true,
+            ValidateScopes = true
+        });
+
+        var hostedServices = provider.GetServices<IHostedService>().ToArray();
+        Assert.Equal(11, hostedServices.Length);
+        Assert.DoesNotContain(hostedServices, service =>
+            service.GetType().FullName == RelevanceJudgeInstallHostedServiceTypeName);
+        Assert.Single(hostedServices, service => service is MockRelevanceJudgeStartupWarning);
+        Assert.IsType<MockMemoryRelevanceJudge>(provider.GetRequiredService<IMemoryRelevanceJudge>());
+        provider.GetRequiredService<IStartupValidator>().Validate();
+    }
+
+    /// <summary>
+    /// A provider that names no judge stops the Worker at start with a named failure, instead of
+    /// quietly composing the local judge in its place.
+    /// </summary>
+    [Theory]
+    [InlineData("OpenAICompatible")]
+    [InlineData("Onnx")]
+    public void WorkerHostServices_WithAnUnsupportedJudgeProvider_FailAtStart(string providerName)
+    {
+        var configuration = WorkerConfiguration(providerName);
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddTestApplication(configuration);
+        services.AddInfrastructure(configuration);
+        services.AddWorker(configuration);
+        using var provider = services.BuildServiceProvider();
+
+        var exception = Assert.Throws<OptionsValidationException>(
+            () => provider.GetRequiredService<IOptions<RelevanceJudgeOptions>>().Value);
+
+        Assert.Contains(RelevanceJudgeOptions.ProviderKey, exception.Message, StringComparison.Ordinal);
+        Assert.Throws<OptionsValidationException>(() => provider.GetRequiredService<IStartupValidator>().Validate());
+    }
+
+    private static IConfiguration WorkerConfiguration(string judgeProvider) =>
+        new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["IncidentCompass:Application:ApiVersion"] = "v1",
+                ["IncidentCompass:Postgres:ConnectionStringName"] = "IncidentCompass",
+                [RelevanceJudgeOptions.ProviderKey] = judgeProvider
+            })
+            .Build();
 
     /// <summary>
     /// The real Api host, built through its own <c>Program</c>, resolves neither of the in-process

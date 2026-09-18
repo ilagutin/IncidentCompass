@@ -26,13 +26,18 @@ internal static class MemorySearchReranker
     /// When <paramref name="judgement" /> judged this call, the relevance judge is the admission
     /// authority: its admitted set is ranked and nothing else is, so neither the lexical gate nor
     /// <paramref name="vectorOnlyFallback" /> can add or remove a candidate. Lexical support still
-    /// decides the band and still boosts the ordering.
+    /// boosts the ordering.
     /// </para>
     /// <para>
     /// When it did not, the pre-judge path runs unchanged: lexically supported candidates are returned
     /// whenever there is at least one; only when there is none does
     /// <paramref name="vectorOnlyFallback" /> decide whether the whole candidate set is returned
     /// unconfirmed instead of nothing.
+    /// </para>
+    /// <para>
+    /// Every match comes back <c>low</c> on both paths. Ranking works on the role's query, and a band
+    /// decided against that query is one the role could raise by rewording it, so confirmation is left
+    /// entirely to <see cref="MemoryFaultConfirmation" />, which decides it against the fault query.
     /// </para>
     /// </summary>
     public static IReadOnlyList<MemorySearchRankedMatch> Rank(
@@ -53,8 +58,7 @@ internal static class MemorySearchReranker
                 judgement.Admitted.Select(admitted => (
                     admitted.Match,
                     Support: MemorySearchLexicalFilter.Evaluate(query, admitted.Match.Text),
-                    JudgeScore: (double?)admitted.Score,
-                    admitted.Confirmed)),
+                    JudgeScore: (double?)admitted.Score)),
                 topK,
                 vectorOnly: false);
         }
@@ -63,8 +67,7 @@ internal static class MemorySearchReranker
             .Select(match => (
                 Match: match,
                 Support: MemorySearchLexicalFilter.Evaluate(query, match.Text),
-                JudgeScore: (double?)null,
-                Confirmed: false))
+                JudgeScore: (double?)null))
             .ToArray();
         var supported = evaluated.Where(static candidate => candidate.Support.IsSupported).ToArray();
         if (supported.Length > 0)
@@ -147,23 +150,21 @@ internal static class MemorySearchReranker
     }
 
     /// <summary>
-    /// Orders one admitted set and bands it. The vector score stays the secondary sort on both paths,
+    /// Orders one admitted set, unconfirmed. The vector score stays the secondary sort on both paths,
     /// so two candidates the base term ties are separated exactly the way they always were.
     /// </summary>
     private static MemorySearchRankedMatch[] Order(
         string query,
         TriageConfiguration configuration,
         string faultServiceName,
-        IEnumerable<(MemorySearchMatch Match, MemorySearchLexicalSupport Support, double? JudgeScore, bool Confirmed)> candidates,
+        IEnumerable<(MemorySearchMatch Match, MemorySearchLexicalSupport Support, double? JudgeScore)> candidates,
         int topK,
         bool vectorOnly)
     {
         return candidates
             .Select(candidate => (
                 candidate.Match,
-                candidate.Support,
                 candidate.JudgeScore,
-                candidate.Confirmed,
                 Features: CreateFeatures(
                     query, configuration, faultServiceName, candidate.Match, candidate.Support, candidate.JudgeScore)))
             .OrderByDescending(static ranked => ranked.Features.CombinedScore)
@@ -172,9 +173,7 @@ internal static class MemorySearchReranker
             .Take(topK)
             .Select(ranked => new MemorySearchRankedMatch(
                 ranked.Match,
-                ranked.JudgeScore is null
-                    ? MemoryRetrievalConfidence.Band(ranked.Support, vectorOnly)
-                    : MemoryRetrievalConfidence.JudgedBand(ranked.Confirmed, ranked.Support),
+                MemoryRetrievalConfidence.Low,
                 vectorOnly,
                 ranked.JudgeScore))
             .ToArray();

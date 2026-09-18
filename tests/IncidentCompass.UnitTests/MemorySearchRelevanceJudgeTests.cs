@@ -4,6 +4,7 @@ using IncidentCompass.Application;
 using IncidentCompass.Application.Core.Embeddings;
 using IncidentCompass.Application.Governance.Tools;
 using IncidentCompass.Application.Memory;
+using IncidentCompass.Domain.Incidents;
 using IncidentCompass.Infrastructure.Relevance.LocalOnnx;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -18,7 +19,6 @@ namespace IncidentCompass.UnitTests;
 public sealed class MemorySearchRelevanceJudgeTests
 {
     private const string FullyCoveredQuery = "checkout timeout inventory";
-    private const string PartiallyCoveredQuery = "checkout timeout connection";
     private const string EnglishOffTopicQuery = "certificate rotation handshake";
     private const string PolishOffTopicQuery = "handshake przy rotacji certyfikatu";
     private const string RussianQuery = "таймаут оформления заказа";
@@ -27,20 +27,25 @@ public sealed class MemorySearchRelevanceJudgeTests
     /// <summary>
     /// At or above the confirm score the match is confirmed; between the floor and the confirm score it
     /// is admitted unconfirmed and banded <c>low</c> however well the words line up. A confirmed match
-    /// reaches <c>high</c> only when lexical coverage is full as well, so a band never claims more than
-    /// the weaker of the two judgements says.
+    /// reaches <c>high</c> only when lexical coverage of the fault query is full as well, so a band never
+    /// claims more than the weaker of the two judgements says. The scripted judge gives the same score
+    /// to the admission call and the confirmation call, so the score here stands for both, and the
+    /// coverage that varies is the fault's, because that is what the band is decided against.
     /// </summary>
     [Theory]
-    [InlineData(3.0f, FullyCoveredQuery, MemoryRetrievalConfidence.High)]
-    [InlineData(3.0f, PartiallyCoveredQuery, MemoryRetrievalConfidence.Medium)]
-    [InlineData(1.0f, FullyCoveredQuery, MemoryRetrievalConfidence.Low)]
-    [InlineData(0.0f, FullyCoveredQuery, MemoryRetrievalConfidence.Low)]
+    [InlineData(3.0f, MemorySearchToolTestSupport.FullyDescribingSummary, MemoryRetrievalConfidence.High)]
+    [InlineData(3.0f, MemorySearchToolTestSupport.PartiallyDescribingSummary, MemoryRetrievalConfidence.Medium)]
+    [InlineData(0.5f, MemorySearchToolTestSupport.FullyDescribingSummary, MemoryRetrievalConfidence.Low)]
+    [InlineData(0.0f, MemorySearchToolTestSupport.FullyDescribingSummary, MemoryRetrievalConfidence.Low)]
     public async Task ExecuteAsync_TheTwoThresholdsDecideAdmissionAndTheBandFollowsBothJudgements(
         float score,
-        string query,
+        string faultSummary,
         string expectedBand)
     {
-        var output = await ExecuteAsync(query, new ScriptedMemoryRelevanceJudge(score));
+        var output = await ExecuteAsync(
+            FullyCoveredQuery,
+            new ScriptedMemoryRelevanceJudge(score),
+            signal: MemorySearchToolTestSupport.TriggerSignal(faultSummary));
 
         Assert.True(output.Result.GetProperty("matched").GetBoolean());
         Assert.Equal(expectedBand, output.Items[0].GetProperty("retrievalConfidence").GetString());
@@ -54,7 +59,7 @@ public sealed class MemorySearchRelevanceJudgeTests
 
     /// <summary>
     /// Both thresholds are inclusive at their own edge. The scores here are exactly representable as
-    /// floats, which is what the port returns: a threshold such as the shipped 1.15 is not, so a test
+    /// floats, which is what the port returns: a threshold such as 1.15 is not, so a test
     /// that scored exactly it would be asserting binary rounding rather than the rule.
     /// </summary>
     [Theory]
@@ -66,7 +71,8 @@ public sealed class MemorySearchRelevanceJudgeTests
             FullyCoveredQuery,
             new ScriptedMemoryRelevanceJudge(score),
             confirmScore: 1.25,
-            floorScore: -1.5);
+            floorScore: -1.5,
+            signal: DescribingSignal());
 
         Assert.Equal(expectedBand, output.Items[0].GetProperty("retrievalConfidence").GetString());
     }
@@ -128,7 +134,7 @@ public sealed class MemorySearchRelevanceJudgeTests
 
         var ranked = Rank(
             [highVectorLowJudge, lowVectorHighJudge],
-            [Judged(highVectorLowJudge, 1.2, confirmed: true), Judged(lowVectorHighJudge, 5.0, confirmed: true)]);
+            [Judged(highVectorLowJudge, 1.2), Judged(lowVectorHighJudge, 5.0)]);
 
         Assert.Equal(
             [lowVectorHighJudge.ChunkId, highVectorLowJudge.ChunkId],
@@ -148,7 +154,7 @@ public sealed class MemorySearchRelevanceJudgeTests
 
         var ranked = Rank(
             [stale, current],
-            [Judged(stale, 5.0, confirmed: true), Judged(current, 1.2, confirmed: true)],
+            [Judged(stale, 5.0), Judged(current, 1.2)],
             currentReleases: true);
 
         Assert.Equal(
@@ -171,16 +177,17 @@ public sealed class MemorySearchRelevanceJudgeTests
     }
 
     /// <summary>
-    /// <c>off</c> is the pre-judge path exactly: the port is never called, no score is reported, the
-    /// fallback decides admission again, and nothing claims a limitation, because an operator turning
-    /// the judge off is a decision rather than a missing deployment.
+    /// <c>off</c> is the pre-judge admission path: the port is never called, no score is reported and
+    /// the fallback decides admission again. Nothing is confirmed, because confirmation needs a judge,
+    /// and the result says so in the same limitation a host with no judge reports: turning the judge
+    /// off is a decision, but the role still has to be told that nothing it reads was confirmed.
     /// </summary>
     [Theory]
     [InlineData(null, 1, MemoryRetrievalConfidence.Low, MemorySearchMessage.VectorOnlyMatches)]
     [InlineData(MemorySearchVectorOnlyFallbackSetting.Always, 1, MemoryRetrievalConfidence.Low,
         MemorySearchMessage.VectorOnlyMatches)]
     [InlineData(MemorySearchVectorOnlyFallbackSetting.Off, 0, null, MemorySearchMessage.NoMatches)]
-    public async Task ExecuteAsync_JudgeOffReproducesThePreJudgeBehaviour(
+    public async Task ExecuteAsync_JudgeOffKeepsThePreJudgeAdmissionAndSaysNothingWasConfirmed(
         string? vectorOnlyFallback,
         int expectedItemCount,
         string? expectedBand,
@@ -197,7 +204,9 @@ public sealed class MemorySearchRelevanceJudgeTests
         Assert.Equal(0, judge.CallCount);
         Assert.Equal(expectedItemCount, output.Items.Count);
         Assert.Equal(expectedMessage, output.Result.GetProperty("message").GetString());
-        Assert.Equal(JsonValueKind.Null, output.Result.GetProperty("limitation").ValueKind);
+        Assert.Equal(
+            MemoryRelevanceJudgePass.NoJudgeLimitation,
+            output.Result.GetProperty("limitation").GetString());
         if (expectedBand is not null)
         {
             Assert.Equal(expectedBand, output.Items[0].GetProperty("retrievalConfidence").GetString());
@@ -320,7 +329,7 @@ public sealed class MemorySearchRelevanceJudgeTests
             MemorySearchMessage.VectorOnlyMatches,
             output.Result.GetProperty("message").GetString());
         Assert.Equal(
-            MemoryRelevanceJudgePass.NoJudgeOnHostLimitation,
+            MemoryRelevanceJudgePass.NoJudgeLimitation,
             output.Result.GetProperty("limitation").GetString());
         Assert.Equal(
             MemoryRetrievalConfidence.Low,
@@ -328,17 +337,23 @@ public sealed class MemorySearchRelevanceJudgeTests
         Assert.Equal(JsonValueKind.Null, output.Items[0].GetProperty("judgeScore").ValueKind);
     }
 
+    /// <summary>
+    /// The admission call is made on every query and is always the first call. A context that carries
+    /// a fault is then confirmed by a second call, which the fault-confirmation tests cover; the call
+    /// count here is two for that reason, not because admission asks twice.
+    /// </summary>
     [Fact]
     public async Task ExecuteAsync_AsksTheJudgeAboutEveryQueryIncludingOneTheLexicalGateWouldHaveKept()
     {
         var judge = new ScriptedMemoryRelevanceJudge(3.0f);
 
-        await ExecuteAsync(FullyCoveredQuery, judge, [Match(1), Match(2)]);
+        await ExecuteAsync(FullyCoveredQuery, judge, [Match(1), Match(2)], signal: DescribingSignal());
 
-        Assert.Equal(1, judge.CallCount);
-        Assert.Equal(FullyCoveredQuery, judge.LastQuery);
-        Assert.Equal(2, judge.LastCandidates.Count);
-        Assert.All(judge.LastCandidates, candidate =>
+        Assert.Equal(2, judge.CallCount);
+        var (admissionQuery, admissionCandidates) = judge.Calls[0];
+        Assert.Equal(FullyCoveredQuery, admissionQuery);
+        Assert.Equal(2, admissionCandidates.Count);
+        Assert.All(admissionCandidates, candidate =>
             Assert.Equal(MemorySearchToolTestSupport.EnglishChunk, candidate));
     }
 
@@ -349,7 +364,8 @@ public sealed class MemorySearchRelevanceJudgeTests
             FullyCoveredQuery,
             new ScriptedMemoryRelevanceJudge(0.5f),
             confirmScore: 0.4,
-            floorScore: -1.0);
+            floorScore: -1.0,
+            signal: DescribingSignal());
         var dropped = await ExecuteAsync(
             FullyCoveredQuery,
             new ScriptedMemoryRelevanceJudge(0.5f),
@@ -414,8 +430,12 @@ public sealed class MemorySearchRelevanceJudgeTests
             MemorySearchVectorOnlyFallback.Off,
             MemoryRelevanceJudgement.Admitting(admitted));
 
-    private static MemoryRelevanceJudgedCandidate Judged(MemorySearchMatch match, double score, bool confirmed) =>
-        new(match, score, confirmed);
+    private static MemoryRelevanceJudgedCandidate Judged(MemorySearchMatch match, double score) =>
+        new(match, score);
+
+    /// <summary>A fault every counted word of which the shared English chunk carries.</summary>
+    private static Signal DescribingSignal() =>
+        MemorySearchToolTestSupport.TriggerSignal(MemorySearchToolTestSupport.FullyDescribingSummary);
 
     private static MemorySearchMatch Match(int id, double score = 0.9, string? release = null) =>
         MemorySearchToolTestSupport.Match(id, score, release: release);
@@ -427,7 +447,8 @@ public sealed class MemorySearchRelevanceJudgeTests
         string? relevanceJudge = null,
         double? confirmScore = null,
         double? floorScore = null,
-        string? vectorOnlyFallback = null)
+        string? vectorOnlyFallback = null,
+        Signal? signal = null)
     {
         var configuration = MemorySearchToolTestSupport.Configuration(
             vectorOnlyFallback,
@@ -440,7 +461,7 @@ public sealed class MemorySearchRelevanceJudgeTests
             judge);
         var validation = tool.Validate(JsonSerializer.SerializeToElement(new { query }));
         var result = await tool.ExecuteAsync(
-            MemorySearchToolTestSupport.Context(configuration),
+            MemorySearchToolTestSupport.Context(configuration, signal),
             validation.SanitizedArguments,
             TestContext.Current.CancellationToken);
 

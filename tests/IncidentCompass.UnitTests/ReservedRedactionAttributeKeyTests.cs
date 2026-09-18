@@ -33,6 +33,31 @@ public sealed class ReservedRedactionAttributeKeyTests
     }
 
     /// <summary>
+    /// <c>confirmationScore</c> is the judge's score the band was decided from, written beside the band
+    /// on the artifact and in the tool result. It is reserved exactly as the band is, in either casing
+    /// and in either list, so the number that explains a band cannot be replaced by the marker either.
+    /// </summary>
+    [Theory]
+    [InlineData("confirmationScore", "Redaction.AttributeKeys")]
+    [InlineData("CONFIRMATIONSCORE", "Redaction.AttributeKeys")]
+    [InlineData("ConfirmationScore", "Redaction.UserIdentifierAttributes")]
+    public void Validate_AnAttributeKeyNamingTheConfirmationScore_IsRefused(string key, string section)
+    {
+        var settings = section == "Redaction.AttributeKeys"
+            ? new RedactionSettings([key], [], [])
+            : new RedactionSettings([], [], [key]);
+
+        var exception = Assert.Throws<TriageConfigurationLoadException>(() =>
+            RedactionSettingsLoadValidator.Validate(settings));
+
+        Assert.Contains(section, exception.Message, StringComparison.Ordinal);
+        Assert.Contains(
+            MemoryRetrievalConfidence.ConfirmationScorePropertyName,
+            exception.Message,
+            StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// The same key is refused in the user-identifier list, which pseudonymizes rather than redacts
     /// but replaces the value just as surely.
     /// </summary>
@@ -72,7 +97,11 @@ public sealed class ReservedRedactionAttributeKeyTests
                 key => string.Equals(
                     key,
                     MemoryRetrievalConfidence.PayloadPropertyName,
-                    StringComparison.OrdinalIgnoreCase));
+                    StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(
+                        key,
+                        MemoryRetrievalConfidence.ConfirmationScorePropertyName,
+                        StringComparison.OrdinalIgnoreCase));
         }
     }
 
