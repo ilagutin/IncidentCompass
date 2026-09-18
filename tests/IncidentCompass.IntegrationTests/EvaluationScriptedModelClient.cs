@@ -100,8 +100,9 @@ internal sealed class EvaluationScriptedModelClient : IAiModelClient
         {
             foreach (var item in root.GetProperty("items").EnumerateArray())
             {
-                // The role instructions drop an item the vector-only fallback returned: it is not
-                // lexically confirmed, so the scripted worker does not quote it either.
+                // The role instructions drop an item nothing confirmed, whether the relevance judge
+                // admitted it unconfirmed or the vector-only fallback returned it, so the scripted
+                // worker does not quote it either.
                 if (item.GetProperty("retrievalConfidence").GetString() == "low")
                 {
                     continue;
@@ -134,7 +135,7 @@ internal sealed class EvaluationScriptedModelClient : IAiModelClient
         };
         if (!confirmed)
         {
-            output["noMatchReason"] = matched ? "no lexically confirmed matches" : "no matches";
+            output["noMatchReason"] = matched ? "no confirmed matches" : "no matches";
         }
 
         return Respond(request, output.ToJsonString(), []);

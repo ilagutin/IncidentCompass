@@ -627,8 +627,11 @@ only exact normalized query matches against stored metadata and code-owned alias
 
 This is a bounded reference implementation, not a general hybrid-search engine. Its fixed lexical rules
 may need revision for multilingual or much larger corpora, and overfetch adds query and application work.
-The coverage rule keeps a candidate only when at least half of the query's eligible words appear in the
-chunk text. That is what keeps unrelated chunks out, because vector scores alone do not separate them:
+The rest of this section describes those lexical rules and what they could and could not do, which is
+what still runs on a host with no relevance judge; where a judge is installed it, and not the lexical
+gate, decides which candidates are admitted, and the two paragraphs on the judge below say what that
+changes and what it costs. The coverage rule keeps a candidate only when at least half of the query's
+eligible words appear in the chunk text. That is what keeps unrelated chunks out, because vector scores alone do not separate them:
 on the shipped model the benchmark's relevant and unrelated chunks score alike, so no floor and no
 score gap can tell a cross-language hit from a query about another topic.
 
@@ -665,23 +668,68 @@ a same-script query, which for Russian text over mostly English chunks usually m
 An operator who mixes scripts in one corpus and wants the old behaviour has to choose `always` and
 accept its cost.
 
-Another *language* in the same script is a different problem and is not solved. A Polish query over
-English runbooks is all Latin, so no script is missing, the fallback does not fire, and the pipeline
-returns nothing even though the multilingual embedding ranks the right chunk near the top. Setting
-`VectorOnlyFallback` to `always` recovers it - Polish recall@5 goes from 0 to 1.00 on the benchmark -
-but it removes the empty result for *every* query without lexical support, English off-topic queries
-included: both English no-match queries then return five unconfirmed `low` items apiece, and deciding
-whether any of them is about the fault becomes the model's judgement rather than the backend's. That
-is why the default is `foreign_script` and not `always`: the backend keeps the honest empty result
-wherever lexical absence is evidence, and only stands aside where it is not. The memory role is
-instructed to query in the corpus language and to drop a `low` item whose quote is not about the
-fault, but that is guidance to a model, not a guarantee.
+Another *language* in the same script is what the lexical rules could not reach at all. A Polish query
+over English runbooks is all Latin, so no script is missing, the fallback does not fire, and the
+pipeline returns nothing even though the multilingual embedding ranks the right chunk near the top.
+Setting `VectorOnlyFallback` to `always` recovers it - Polish recall@5 goes from 0 to 1.00 on the
+benchmark - but it removes the empty result for *every* query without lexical support, English
+off-topic queries included: both English no-match queries then return five unconfirmed `low` items
+apiece, and deciding whether any of them is about the fault becomes the model's judgement rather than
+the backend's. That is why the default was `foreign_script` and not `always`: the backend keeps the
+honest empty result wherever lexical absence is evidence, and only stands aside where it is not.
 
-`retrievalConfidence` names that admission path rather than a score band: the values keep their names,
-but `high` now means full lexical coverage with nothing excluded, `medium` partial or script-reduced
-coverage, and `low` a vector-only match. PostgreSQL full-text search, reciprocal-rank fusion, adaptive
-retries and caller-configurable ranking weights remain deferred. Each execution still makes exactly one
-embedding request and one repository search.
+The relevance judge is what answers the language case without that trade. It is a cross-encoder, so it
+reads the query and the candidate together instead of comparing two independent vectors, and it
+therefore separates a relevant chunk from an unrelated one at a usable margin where a similarity score
+does not. Where one is installed it decides admission for every query, which is deliberately wider than
+letting it rescue only a query the lexical gate emptied: the gate's worse failure is the query it
+passes, where every eligible word is a Latin identifier the candidates all carry, coverage is complete
+for that reason alone, and an unrelated chunk comes back reported as a confirmed match.
+
+Its own costs are real. It is another pinned model, about 544 MiB, installed on the Worker and nowhere
+else, and it runs the encoder once per candidate instead of once per query, so a `memory_search` call
+now costs one embedding request, one repository search and up to `TopK` times four scored pairs. Its
+two thresholds are numbers on one model's scale: they were measured for the pinned cross-encoder, they
+are configuration rather than constants, and another judge model would need its own. A host that runs
+no judge at all keeps the pre-judge behaviour instead of failing, which is honest but means two
+different retrieval behaviours exist in the wild; the tool states which one ran in a top-level
+`limitation` string so a reader is not left guessing. That concession is deliberately narrow: only an
+unconfigured judge directory and a directory nothing is installed in yet take it, because a host whose
+judge is corrupt, tampered with or unreachable is broken, and quietly answering such a call from the
+lexical gate would be the silent degradation the judge exists to remove, at the moment it matters most.
+The through-the-product numbers are not a gate: they come from an opt-in benchmark leg that installs
+the real model, because no CI run should depend on that download.
+
+The floor is a choice between two things that cannot both hold, and not a value sitting in a gap. On
+this corpus the judge scores an off-topic query about the same service and a different failure above a
+keyword query's secondary chunk: the strongest off-topic pair,
+`off-topic-notification-template-render` against the notification runbook, scores -0.527, while the
+weakest labelled relevant chunk, the second chunk of `stock-reservation-query-variant`, scores -0.872.
+The window between them is negative, so no floor returns every labelled chunk and also leaves every
+off-topic query empty. Polish and Russian have the same shape with wider negative windows, and no
+labelled chunk is missing from the candidate sets, so this is the judge's ordering rather than a
+retrieval shortfall.
+
+The release takes the first and gives up the second. An off-topic query returning nothing is the
+stated product requirement; the chunk lost at the shipped floor of -0.25 is the redundant second chunk
+of a query whose first chunk is still returned, so the answer survives and only a duplicate of it does
+not. The measured cost is English chunk recall@5 of 0.958 rather than 1.000, with no positive query
+coming back empty, no off-topic false positive in any of the three languages and no confirmed hard
+negative. A corpus whose answers are not duplicated across chunks would pay that cost as a lost answer
+instead, and would need its own measurement rather than this default.
+
+These numbers were measured through the product and not offline, and the difference is not academic:
+an offline sweep of the same graph under another ONNX runtime build put those two bounding pairs 0.167
+apart in the opposite order, which is a reordering larger than the entire window. A threshold for this
+judge cannot be transferred from anywhere but a run of the real tool.
+
+`retrievalConfidence` names the admission path rather than a score band. On a judged call `high` means
+the judge confirmed and lexical coverage was full, `medium` the judge alone, and `low` admitted but
+unconfirmed; on a host with no judge the values keep their earlier meanings, `high` for full lexical
+coverage with nothing excluded, `medium` for partial or script-reduced coverage, and `low` for a
+vector-only match. The band still does not survive into the report, and dropping an unconfirmed item is
+still the memory role's job. PostgreSQL full-text search, reciprocal-rank fusion, adaptive retries and
+caller-configurable ranking weights remain deferred.
 
 ## Deterministic Grouping Is Not Incident Correlation
 

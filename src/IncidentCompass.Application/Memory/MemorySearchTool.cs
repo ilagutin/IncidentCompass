@@ -12,15 +12,25 @@ using IncidentCompass.Domain.Incidents;
 
 namespace IncidentCompass.Application.Memory;
 
-internal sealed class MemorySearchTool(IEmbeddingClient embeddingClient, IMemoryRepository memoryRepository) : IImmediateAgentTool
+/// <summary>
+/// The governed memory read tool. <paramref name="relevanceJudge" /> is optional because it is a
+/// deployment shape: only the Worker composes a judge, and a Worker that names no judge model
+/// directory composes one that reports itself unavailable. Either way the tool keeps working and says
+/// in its output that nothing judged the result.
+/// </summary>
+internal sealed class MemorySearchTool(
+    IEmbeddingClient embeddingClient,
+    IMemoryRepository memoryRepository,
+    IMemoryRelevanceJudge? relevanceJudge = null) : IImmediateAgentTool
 {
     private const int DefaultTopK = 5;
     private const double DefaultMinScore = 0.25;
     private const int MaxTopK = 20;
     private const int MaxQuoteLength = 500;
-    private const string MatchesFoundMessage = "matches found";
-    private const string NoMatchesMessage = "no matches";
-    private const string VectorOnlyMatchesMessage = "vector-only matches, not lexically confirmed";
+    private const string MatchesFoundMessage = MemorySearchMessage.MatchesFound;
+    private const string NoMatchesMessage = MemorySearchMessage.NoMatches;
+    private const string VectorOnlyMatchesMessage = MemorySearchMessage.VectorOnlyMatches;
+    private const string RelatedMatchesMessage = MemorySearchMessage.RelatedMatches;
 
     public AiToolDefinition Definition { get; } = new(
         "memory_search",
@@ -96,20 +106,27 @@ internal sealed class MemorySearchTool(IEmbeddingClient embeddingClient, IMemory
             new MemorySearchRequest(context.TenantId, embedding.Provider, embedding.Model,
                 embedding.Vector.Count, embedding.Vector, CalculateCandidateCount(topK), NormalizeMinScore(toolSettings.MinScore)),
             cancellationToken);
+        var judgement = await MemoryRelevanceJudgePass.JudgeAsync(
+            relevanceJudge,
+            query,
+            candidates,
+            MemoryRelevanceJudgeSetting.Resolve(toolSettings),
+            cancellationToken);
         var ranked = MemorySearchReranker.Rank(
             query,
             context.Configuration,
             context.FaultServiceName,
             candidates,
             topK,
-            MemorySearchVectorOnlyFallbackSetting.Resolve(toolSettings.VectorOnlyFallback));
+            MemorySearchVectorOnlyFallbackSetting.Resolve(toolSettings.VectorOnlyFallback),
+            judgement);
 
         var drafts = ranked
             .Select(match => CreateRetrievedDraft(context, embedding, match))
             .ToArray();
         return new ToolExecutionResult(
             ToolExecutionStatus.Succeeded,
-            CreateOutput(context, ranked, drafts),
+            CreateOutput(context, ranked, drafts, judgement),
             Artifacts: drafts);
     }
 
@@ -138,6 +155,7 @@ internal sealed class MemorySearchTool(IEmbeddingClient embeddingClient, IMemory
             ["headingPath"] = match.HeadingPath,
             ["quote"] = CreateQuote(match.Text),
             ["score"] = Math.Round(match.Score, 6),
+            ["judgeScore"] = RoundJudgeScore(ranked.JudgeScore),
             ["retrievalConfidence"] = ranked.RetrievalConfidence,
             ["serviceName"] = match.ServiceName,
             ["component"] = match.Component,
@@ -150,7 +168,11 @@ internal sealed class MemorySearchTool(IEmbeddingClient embeddingClient, IMemory
         };
     }
 
-    private static JsonElement CreateOutput(AgentToolExecutionContext context, IReadOnlyList<MemorySearchRankedMatch> ranked, ToolArtifactDraft[] drafts)
+    private static JsonElement CreateOutput(
+        AgentToolExecutionContext context,
+        IReadOnlyList<MemorySearchRankedMatch> ranked,
+        ToolArtifactDraft[] drafts,
+        MemoryRelevanceJudgement judgement)
     {
         var items = new JsonArray();
         for (var i = 0; i < ranked.Count; i++)
@@ -168,6 +190,7 @@ internal sealed class MemorySearchTool(IEmbeddingClient embeddingClient, IMemory
                 ["source"] = match.Source,
                 ["quote"] = CreateQuote(match.Text),
                 ["score"] = Math.Round(match.Score, 6),
+                ["judgeScore"] = RoundJudgeScore(ranked[i].JudgeScore),
                 ["retrievalConfidence"] = ranked[i].RetrievalConfidence,
                 ["serviceName"] = match.ServiceName,
                 ["component"] = match.Component,
@@ -182,14 +205,17 @@ internal sealed class MemorySearchTool(IEmbeddingClient embeddingClient, IMemory
         {
             ["matched"] = matched,
             ["message"] = ResolveMessage(ranked),
+            ["limitation"] = judgement.Limitation,
             ["items"] = items,
             ["noMatchReason"] = matched ? null : NoMatchesMessage
         });
     }
 
     /// <summary>
-    /// A vector-only result is reported under its own sentence so the role can tell an unconfirmed set
-    /// apart from a lexically confirmed one without reading each item's band.
+    /// An unconfirmed result is reported under its own sentence so the role can tell it apart from a
+    /// confirmed one without reading each item's band. There are two such sentences because there are
+    /// two different unconfirmed sets: a judged set nothing in which reached the confirm score, and
+    /// the older vector-only fallback set, which only the unjudged path can produce.
     /// </summary>
     private static string ResolveMessage(IReadOnlyList<MemorySearchRankedMatch> ranked)
     {
@@ -198,10 +224,24 @@ internal sealed class MemorySearchTool(IEmbeddingClient embeddingClient, IMemory
             return NoMatchesMessage;
         }
 
+        if (ranked.Any(static match => match.JudgeScore is not null))
+        {
+            return ranked.All(static match => match.RetrievalConfidence == MemoryRetrievalConfidence.Low)
+                ? RelatedMatchesMessage
+                : MatchesFoundMessage;
+        }
+
         return ranked.Any(static match => match.VectorOnly)
             ? VectorOnlyMatchesMessage
             : MatchesFoundMessage;
     }
+
+    /// <summary>
+    /// The judge's score is reported beside the vector score, never in place of it: <c>score</c> is
+    /// the same cosine similarity it has always been, and this field is null when nothing judged.
+    /// </summary>
+    private static JsonValue? RoundJudgeScore(double? judgeScore) =>
+        judgeScore is { } score ? JsonValue.Create(Math.Round(score, 6)) : null;
 
     private static string CreateQuote(string text)
     {

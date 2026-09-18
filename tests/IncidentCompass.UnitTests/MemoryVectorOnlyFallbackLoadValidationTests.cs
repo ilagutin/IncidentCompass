@@ -1,17 +1,10 @@
 using System.Text.Json.Nodes;
 using IncidentCompass.Application.Core.Serialization;
-using IncidentCompass.Application.Governance.Tools;
 using IncidentCompass.Application.Intake.Configuration;
-using IncidentCompass.Application.Intake.Normalization;
 using IncidentCompass.Application.Memory;
-using IncidentCompass.Application.Remediation;
 using IncidentCompass.Application.Tickets;
-using IncidentCompass.Infrastructure.Configuration;
 using IncidentCompass.Infrastructure.Intake;
 using IncidentCompass.TestSupport;
-using Microsoft.Extensions.FileProviders;
-using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Options;
 
 namespace IncidentCompass.UnitTests;
 
@@ -93,15 +86,15 @@ public sealed class MemoryVectorOnlyFallbackLoadValidationTests
     [Fact]
     public async Task FileRepository_ShippedConfigurationWithoutTheKey_HashesExactlyTheFileContent()
     {
-        using var fixture = ConfigDirectory.CopyShipped();
+        using var fixture = ShippedConfigDirectory.Copy("vector-only-fallback-hash");
         var fileNode = JsonNode.Parse(await File.ReadAllTextAsync(fixture.ConfigPath, TestContext.Current.CancellationToken))!;
         foreach (var (_, tool) in (JsonObject)fileNode["Tools"]!)
         {
             Assert.False(((JsonObject)tool!).ContainsKey("VectorOnlyFallback"));
         }
 
-        var snapshots = new CapturingSnapshotStore();
-        var configuration = await CreateRepository(fixture.RootPath, snapshots)
+        var snapshots = new RecordingSnapshotStore();
+        var configuration = await ShippedConfigTestSupport.CreateRepository(fixture.RootPath, snapshots)
             .GetCurrentAsync(TestContext.Current.CancellationToken);
 
         Assert.All(configuration.Tools.Values, tool => Assert.Null(tool.VectorOnlyFallback));
@@ -116,7 +109,8 @@ public sealed class MemoryVectorOnlyFallbackLoadValidationTests
         var withFallback = (JsonObject)JsonNode.Parse(await File.ReadAllTextAsync(fixture.ConfigPath, TestContext.Current.CancellationToken))!;
         ((JsonObject)withFallback["Tools"]![ReadTool]!)["VectorOnlyFallback"] = "always";
         await File.WriteAllTextAsync(fixture.ConfigPath, withFallback.ToJsonString(), TestContext.Current.CancellationToken);
-        var changed = await CreateRepository(fixture.RootPath, new CapturingSnapshotStore())
+        var changed = await ShippedConfigTestSupport
+            .CreateRepository(fixture.RootPath, new RecordingSnapshotStore())
             .GetCurrentAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal("always", changed.Tools[ReadTool].VectorOnlyFallback);
@@ -175,110 +169,5 @@ public sealed class MemoryVectorOnlyFallbackLoadValidationTests
         OrchestratorAttemptDurationLoadValidationTests.ResolvedReferences();
 
     private static TriageConfigurationMaterializer CreateMaterializer() =>
-        new(new TriageConfigurationLoadValidator(
-            new SignalNormalizerRegistry([
-                new TesterSignalNormalizer(),
-                new OtelShapedSignalNormalizer(),
-                new UserReportSignalNormalizer()
-            ]),
-            ToolRegistry(),
-            new EnvironmentModelProviderSecretReader()));
-
-    private static AgentToolRegistry ToolRegistry() => new([
-        new AgentToolDescriptor("memory_search", AgentToolCapability.ImmediateRead),
-        new AgentToolDescriptor("source_lookup", AgentToolCapability.ImmediateRead),
-        new AgentToolDescriptor("ticket_search", AgentToolCapability.ImmediateRead),
-        TicketCreateTool.Descriptor,
-        RemediationDiffToolDescriptor.Descriptor,
-        RemediationApplyToolDescriptor.Descriptor,
-        BranchPushToolDescriptor.Descriptor,
-        PullRequestToolDescriptor.Descriptor,
-        TicketBacklinkDescriptor.Descriptor
-    ]);
-
-    private static FileTriageConfigurationRepository CreateRepository(
-        string contentRootPath,
-        CapturingSnapshotStore snapshots) =>
-        new(
-            new ContentRootEnvironment(contentRootPath),
-            Options.Create(new TriageConfigSourceOptions
-            {
-                Kind = "File",
-                Path = Path.Combine("config", "incidentcompass.config.json")
-            }),
-            CreateMaterializer(),
-            snapshots);
-
-    private sealed class CapturingSnapshotStore : ITriageConfigurationSnapshotStore
-    {
-        public JsonNode? ConfigNode { get; private set; }
-
-        public JsonObject? InstructionsNode { get; private set; }
-
-        public Task PersistAsync(
-            string configHash,
-            JsonNode configNode,
-            JsonObject instructionsNode,
-            CancellationToken cancellationToken)
-        {
-            ConfigNode = configNode;
-            InstructionsNode = instructionsNode;
-            return Task.CompletedTask;
-        }
-
-        public Task<TriageConfigurationSnapshotDocument?> GetAsync(
-            string configHash,
-            CancellationToken cancellationToken) =>
-            Task.FromResult<TriageConfigurationSnapshotDocument?>(null);
-    }
-
-    private sealed class ContentRootEnvironment(string contentRootPath) : IHostEnvironment
-    {
-        public string EnvironmentName { get; set; } = Environments.Development;
-
-        public string ApplicationName { get; set; } = "IncidentCompass.UnitTests";
-
-        public string ContentRootPath { get; set; } = contentRootPath;
-
-        public IFileProvider ContentRootFileProvider { get; set; } = new NullFileProvider();
-    }
-
-    private sealed class ConfigDirectory : IDisposable
-    {
-        private ConfigDirectory(string rootPath)
-        {
-            RootPath = rootPath;
-            ConfigPath = Path.Combine(rootPath, "config", "incidentcompass.config.json");
-        }
-
-        public string RootPath { get; }
-
-        public string ConfigPath { get; }
-
-        public static ConfigDirectory CopyShipped()
-        {
-            var rootPath = Path.Combine(
-                Path.GetTempPath(),
-                "IncidentCompass",
-                "vector-only-fallback-hash",
-                Guid.NewGuid().ToString("N"));
-            var sourcePath = Path.Combine(RepositoryRootLocator.Find(), "config");
-            foreach (var sourceFile in Directory.EnumerateFiles(sourcePath, "*", SearchOption.AllDirectories))
-            {
-                var destinationPath = Path.Combine(rootPath, "config", Path.GetRelativePath(sourcePath, sourceFile));
-                Directory.CreateDirectory(Path.GetDirectoryName(destinationPath)!);
-                File.Copy(sourceFile, destinationPath);
-            }
-
-            return new ConfigDirectory(rootPath);
-        }
-
-        public void Dispose()
-        {
-            if (Directory.Exists(RootPath))
-            {
-                Directory.Delete(RootPath, recursive: true);
-            }
-        }
-    }
+        ShippedConfigTestSupport.CreateMaterializer();
 }

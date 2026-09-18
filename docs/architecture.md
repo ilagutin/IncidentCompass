@@ -285,15 +285,57 @@ before the setting existed. `always` returns the top `TopK` of all candidates in
 none of the candidates use, which is the one case where lexical absence says nothing about relevance;
 a query in the corpus's own script that simply matches nothing still returns the honest empty result.
 The fallback never applies while the gate kept something, and it cannot reach below `MinScore`,
-because the repository dropped those candidates before the reranker saw them.
+because the repository dropped those candidates before the reranker saw them. It applies only when no
+relevance judge judged the call.
 
-`retrievalConfidence` reports how a returned item was admitted, not how high its vector score was:
-`high` when every counted query word was eligible and all of them occur in the chunk, `medium` when
-the item is lexically supported on partial coverage or with words excluded for script, and `low` when
-the vector-only fallback returned it. The numeric `score` is reported unchanged beside it. The tool's
-top-level `message` is `matches found` for a lexically confirmed result, `vector-only matches, not
-lexically confirmed` for a fallback result, and `no matches` for none; `matched` and `noMatchReason`
-are unchanged.
+A relevance judge, when one is installed, is the admission authority for every query. It is a
+cross-encoder behind the `IMemoryRelevanceJudge` port: it reads one query with one candidate chunk and
+scores how relevant that chunk is to that query, on its own model's scale. Two thresholds turn those
+scores into three outcomes: at or above `Tools.memory_search.RelevanceConfirmScore` the match is
+confirmed, between that and `Tools.memory_search.RelevanceFloorScore` it is admitted as related but
+unconfirmed, and below the floor it is dropped, so an off-topic query in any language returns nothing.
+`Tools.memory_search.RelevanceJudge` takes `off` or `on`; all three keys are optional, an absent
+`RelevanceJudge` means `on`, an absent floor means `-0.25` and an absent confirm score means `1.15`,
+and no shipped or sample configuration sets any of them. The default floor is tuned so that an
+off-topic query returns nothing. That is the stronger of the two guarantees and the one the defaults
+keep: on the benchmark corpus it costs one redundant secondary chunk of one query whose primary chunk
+is still returned, because no floor delivers both. `docs/trade-offs.md` has the measured scores. The judge is
+asked about every query rather than only about one the lexical gate emptied, because the gate's
+cross-language failure is not that it returns nothing: a query whose only eligible words are Latin
+identifiers passes the gate fully and is reported as confirmed.
+
+`on` does not mean "require". Exactly two states are a host that is not running a judge at all: no
+judge model directory is configured, and nothing is installed in the configured one yet. Those keep
+the pre-judge behaviour and report it in a top-level `limitation` string, which is the shape every
+mock, evaluation and integration-test host is in. Every other state propagates with its own named
+error code and nothing falls back, because a host whose judge does not verify is broken rather than
+judge-less: a digest mismatch, a missing model file, a failed fetch, an oversized download, an install
+timeout, an invalid manifest, an unreadable model store, a model that is not the configured judge and
+a failure at load or inference are all failures, and several of them share one normalized code with
+the two deployment states, so the distinction is drawn on the adapter's own error code.
+
+`retrievalConfidence` is not the only contract the backend holds the adapter to. A score that is not a
+finite number, or a set of scores that does not match the candidates one for one, is refused by name
+rather than used: a NaN compares false against both thresholds and would otherwise be admitted as an
+unconfirmed match.
+
+`retrievalConfidence` reports how a returned item was admitted, not how high its vector score was. On a
+judged call: `high` when the judge confirmed and every counted query word was eligible and occurs in
+the chunk, `medium` when the judge confirmed alone, and `low` when the judge admitted without
+confirming, so a band never claims more than the weaker of the two judgements says. On an unjudged call
+the three bands keep their pre-judge meanings, with `low` for a vector-only fallback result. The
+numeric `score` is the same vector similarity it has always been, and the judge's own score is reported
+beside it as `judgeScore`, null when nothing judged. The tool's top-level `message` is `matches found`
+when at least one item is confirmed, `related matches, none confirmed by the relevance judge` for a
+judged set in which none is, `vector-only matches, not lexically confirmed` for an unjudged fallback
+result, and `no matches` for none; `matched` and `noMatchReason` are unchanged.
+
+Ordering keeps the combination the reranker already applied, with the judge's score substituted for the
+vector score as the base term when a judge judged. The documentation boost keeps its values and
+therefore keeps outranking the base term on either scale, which is the existing product rule that a
+current runbook should beat a stale one; the lexical, component and evidence-kind boosts are below one
+unit and so become tie-breakers at the judge's scale rather than the near-peers they are at the vector
+scale. The vector score stays the secondary sort on both paths.
 
 Ranking is Application-owned rather than delegated to the database. It applies lexical coverage and
 fixed metadata rules, then returns the configured final `TopK`. Current evidence for the fault

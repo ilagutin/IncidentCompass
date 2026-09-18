@@ -21,10 +21,19 @@ internal static class MemorySearchReranker
         };
 
     /// <summary>
-    /// Ranks the candidates the repository already bounded by <c>MinScore</c>. Lexically supported
-    /// candidates are returned whenever there is at least one; only when there is none does
+    /// Ranks the candidates the repository already bounded by <c>MinScore</c>.
+    /// <para>
+    /// When <paramref name="judgement" /> judged this call, the relevance judge is the admission
+    /// authority: its admitted set is ranked and nothing else is, so neither the lexical gate nor
+    /// <paramref name="vectorOnlyFallback" /> can add or remove a candidate. Lexical support still
+    /// decides the band and still boosts the ordering.
+    /// </para>
+    /// <para>
+    /// When it did not, the pre-judge path runs unchanged: lexically supported candidates are returned
+    /// whenever there is at least one; only when there is none does
     /// <paramref name="vectorOnlyFallback" /> decide whether the whole candidate set is returned
     /// unconfirmed instead of nothing.
+    /// </para>
     /// </summary>
     public static IReadOnlyList<MemorySearchRankedMatch> Rank(
         string query,
@@ -32,10 +41,30 @@ internal static class MemorySearchReranker
         string faultServiceName,
         IReadOnlyList<MemorySearchMatch> candidates,
         int topK,
-        MemorySearchVectorOnlyFallback vectorOnlyFallback)
+        MemorySearchVectorOnlyFallback vectorOnlyFallback,
+        MemoryRelevanceJudgement? judgement = null)
     {
+        if (judgement is { Judged: true })
+        {
+            return Order(
+                query,
+                configuration,
+                faultServiceName,
+                judgement.Admitted.Select(admitted => (
+                    admitted.Match,
+                    Support: MemorySearchLexicalFilter.Evaluate(query, admitted.Match.Text),
+                    JudgeScore: (double?)admitted.Score,
+                    admitted.Confirmed)),
+                topK,
+                vectorOnly: false);
+        }
+
         var evaluated = candidates
-            .Select(match => (Match: match, Support: MemorySearchLexicalFilter.Evaluate(query, match.Text)))
+            .Select(match => (
+                Match: match,
+                Support: MemorySearchLexicalFilter.Evaluate(query, match.Text),
+                JudgeScore: (double?)null,
+                Confirmed: false))
             .ToArray();
         var supported = evaluated.Where(static candidate => candidate.Support.IsSupported).ToArray();
         if (supported.Length > 0)
@@ -58,18 +87,33 @@ internal static class MemorySearchReranker
             configuration,
             faultServiceName,
             match,
-            MemorySearchLexicalFilter.Evaluate(query, match.Text));
+            MemorySearchLexicalFilter.Evaluate(query, match.Text),
+            judgeScore: null);
 
     /// <summary>
     /// The ranking path has already judged the candidate, so it passes that judgement in rather than
     /// letting the lexical boost tokenize the same chunk text a second time.
+    /// <para>
+    /// <paramref name="judgeScore" /> substitutes for the vector score as the base term when a
+    /// relevance judge scored this call. The boosts keep the values they have always had, and were
+    /// deliberately not rescaled, although the two scales genuinely differ: a vector score is a
+    /// cosine similarity in roughly 0 to 1, while a judge score is that model's own logit and spans
+    /// several units either side of zero. The documentation boost is a product rule rather than a
+    /// similarity correction - a current runbook should beat a stale one whatever either scored - and
+    /// it keeps outranking the base term on both scales, which is the behaviour that was already
+    /// here. The lexical, component and evidence-kind boosts are each below one unit, so at the
+    /// judge's scale they become tie-breakers instead of the near-peers they are at the vector scale.
+    /// That demotion is the point: on a judged call the judge has already answered the question those
+    /// three were approximating.
+    /// </para>
     /// </summary>
     private static MemorySearchRankingFeatures CreateFeatures(
         string query,
         TriageConfiguration configuration,
         string faultServiceName,
         MemorySearchMatch match,
-        MemorySearchLexicalSupport support)
+        MemorySearchLexicalSupport support,
+        double? judgeScore)
     {
         var documentation = MemoryDocumentationStatusEvaluator.Assess(
             configuration,
@@ -90,9 +134,10 @@ internal static class MemorySearchReranker
         var evidenceKindBoost = HasEvidenceKindAlias(query, match.Kind)
             ? EvidenceKindBoost
             : 0;
+        var baseScore = judgeScore ?? match.Score;
 
         return new MemorySearchRankingFeatures(
-            match.Score + documentationBoost + lexicalBoost + componentBoost + evidenceKindBoost,
+            baseScore + documentationBoost + lexicalBoost + componentBoost + evidenceKindBoost,
             match.Score,
             documentation.Status,
             documentationBoost,
@@ -101,11 +146,15 @@ internal static class MemorySearchReranker
             evidenceKindBoost);
     }
 
+    /// <summary>
+    /// Orders one admitted set and bands it. The vector score stays the secondary sort on both paths,
+    /// so two candidates the base term ties are separated exactly the way they always were.
+    /// </summary>
     private static MemorySearchRankedMatch[] Order(
         string query,
         TriageConfiguration configuration,
         string faultServiceName,
-        IReadOnlyList<(MemorySearchMatch Match, MemorySearchLexicalSupport Support)> candidates,
+        IEnumerable<(MemorySearchMatch Match, MemorySearchLexicalSupport Support, double? JudgeScore, bool Confirmed)> candidates,
         int topK,
         bool vectorOnly)
     {
@@ -113,16 +162,21 @@ internal static class MemorySearchReranker
             .Select(candidate => (
                 candidate.Match,
                 candidate.Support,
+                candidate.JudgeScore,
+                candidate.Confirmed,
                 Features: CreateFeatures(
-                    query, configuration, faultServiceName, candidate.Match, candidate.Support)))
+                    query, configuration, faultServiceName, candidate.Match, candidate.Support, candidate.JudgeScore)))
             .OrderByDescending(static ranked => ranked.Features.CombinedScore)
             .ThenByDescending(static ranked => ranked.Features.VectorScore)
             .ThenBy(static ranked => ranked.Match.ChunkId)
             .Take(topK)
             .Select(ranked => new MemorySearchRankedMatch(
                 ranked.Match,
-                MemoryRetrievalConfidence.Band(ranked.Support, vectorOnly),
-                vectorOnly))
+                ranked.JudgeScore is null
+                    ? MemoryRetrievalConfidence.Band(ranked.Support, vectorOnly)
+                    : MemoryRetrievalConfidence.JudgedBand(ranked.Confirmed, ranked.Support),
+                vectorOnly,
+                ranked.JudgeScore))
             .ToArray();
     }
 

@@ -6,23 +6,26 @@ namespace IncidentCompass.UnitTests;
 
 /// <summary>
 /// The mock profile ships with the same memory role instructions as the real one, so its scripted
-/// memory worker has to follow them: an item banded <c>low</c> came from the vector-only fallback and
-/// is not lexically confirmed. Without this the mock would turn an unconfirmed cross-language hit into
-/// a KnownIncident report, and the demo profile would demonstrate the opposite of the shipped policy.
+/// memory worker has to follow them: an item banded <c>low</c> was admitted without being confirmed,
+/// by the relevance judge or, on a host that runs no judge, by the vector-only fallback. Without this
+/// the mock would turn an unconfirmed cross-language hit into a KnownIncident report, and the demo
+/// profile would demonstrate the opposite of the shipped policy.
 /// </summary>
 public sealed class MockMemoryWorkerConfidenceTests
 {
-    [Fact]
-    public void MemoryWorkerResponse_VectorOnlyResultReturnsTheHonestEmptyResult()
+    [Theory]
+    [InlineData("related matches, none confirmed by the relevance judge")]
+    [InlineData("vector-only matches, not lexically confirmed")]
+    public void MemoryWorkerResponse_UnconfirmedResultReturnsTheHonestEmptyResult(string message)
     {
         var output = RunMemoryWorker(ToolResult(
-            "vector-only matches, not lexically confirmed",
+            message,
             ("a1", "Checkout Timeout Runbook", "low"),
             ("a2", "Inventory Latency Note", "low")));
 
         Assert.False(output["matched"]!.GetValue<bool>());
         Assert.Empty(output["items"]!.AsArray());
-        Assert.Equal("no lexically confirmed matches", output["noMatchReason"]!.GetValue<string>());
+        Assert.Equal("no confirmed matches", output["noMatchReason"]!.GetValue<string>());
     }
 
     [Fact]
@@ -40,7 +43,7 @@ public sealed class MockMemoryWorkerConfidenceTests
     }
 
     [Fact]
-    public void MemoryWorkerResponse_LexicallyConfirmedResultIsUnchanged()
+    public void MemoryWorkerResponse_FullyConfirmedResultIsUnchanged()
     {
         var output = RunMemoryWorker(ToolResult(
             "matches found",
