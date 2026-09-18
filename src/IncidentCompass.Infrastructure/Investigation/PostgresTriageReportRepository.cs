@@ -3,6 +3,7 @@ using IncidentCompass.Application.Governance.PostReportActions;
 using IncidentCompass.Application.Governance.PostReportActions.Testing;
 using IncidentCompass.Application.Investigation.Jobs.Testing;
 using IncidentCompass.Application.Investigation.Reports;
+using IncidentCompass.Application.Memory;
 using IncidentCompass.Domain.Incidents;
 using IncidentCompass.Infrastructure.Governance.PostReportActions;
 using IncidentCompass.Infrastructure.Postgres;
@@ -46,6 +47,24 @@ internal sealed partial class PostgresTriageReportRepository(
                 throw new TriageReportValidationException("A re-triage report must cite recurrence state evidence.");
             }
             report = documentationFitResolver.ValidateAndApply(report, evidence);
+            // The third cross-cutting rule of this transaction, and the only point where the
+            // classification and the grounded evidence set both exist. Which citations rest on
+            // incident memory is decided by the grounder, where the artifact kind and domain
+            // reference are in hand: a resolved memory item or a memory_search tool result, and not
+            // a ticket-search or source-lookup RetrievedItem, whose closed payload shape carries no
+            // band and whose KnownIncident report is legitimate and must stay publishable.
+            if (MemoryCitationConfirmationRule.RefusesUnconfirmedMemoryCitations(
+                report.Status,
+                report.Classification,
+                evidence
+                    .Where(static evidenceItem => evidenceItem.IsMemoryBacked)
+                    .Select(static evidenceItem => evidenceItem.RetrievalConfidence)
+                    .ToArray()))
+            {
+                throw new TriageReportValidationException(
+                    MemoryCitationConfirmationRule.UnconfirmedMemoryCitationRefusal);
+            }
+
             var isMassIssue = await ReadIsMassIssueAsync(connection, transaction, job.Id, cancellationToken);
             var updated = await MarkJobSucceededAsync(connection, transaction, job, workerId, now, cancellationToken);
             if (!updated)

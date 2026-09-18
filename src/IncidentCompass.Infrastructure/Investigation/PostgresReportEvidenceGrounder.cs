@@ -1,5 +1,6 @@
 using IncidentCompass.Application.Investigation.Reports;
 using IncidentCompass.Application.Investigation.Reports.Context;
+using IncidentCompass.Application.Memory;
 using IncidentCompass.Application.Tickets;
 using IncidentCompass.Domain.Incidents;
 using IncidentCompass.Infrastructure.Postgres;
@@ -9,6 +10,8 @@ namespace IncidentCompass.Infrastructure.Investigation;
 
 internal sealed class PostgresReportEvidenceGrounder
 {
+    private const string MemorySearchToolResultDomainRef = "tool:" + MemorySearchTool.ToolId;
+
     private readonly string? configuredTicketRepository;
 
     public PostgresReportEvidenceGrounder(string? configuredTicketRepository = null)
@@ -52,7 +55,8 @@ internal sealed class PostgresReportEvidenceGrounder
                    END AS score,
                    mi.id AS memory_item_id,
                    a.redacted_payload->>'documentationStatus' AS documentation_status,
-                   snapshot.serialized_config->'CurrentReleases'->>fault.service_name AS current_release
+                   snapshot.serialized_config->'CurrentReleases'->>fault.service_name AS current_release,
+                   a.redacted_payload->>'retrievalConfidence' AS retrieval_confidence
             FROM incidentcompass.triage_artifacts a
             JOIN incidentcompass.triage_jobs job ON job.id = a.job_id
             JOIN incidentcompass.faults fault ON fault.id = job.fault_id
@@ -85,6 +89,7 @@ internal sealed class PostgresReportEvidenceGrounder
         var documentationStatus = reader.IsDBNull(6) ? null : reader.GetString(6);
         var domainRef = reader.IsDBNull(1) ? null : reader.GetString(1);
         var currentRelease = reader.IsDBNull(7) ? null : reader.GetString(7);
+        var retrievalConfidence = reader.IsDBNull(8) ? null : reader.GetString(8);
         return new GroundedReportEvidence(
             artifactId,
             DeriveEvidenceKind(artifactKind, memoryKind, domainRef, payload, currentRelease),
@@ -92,8 +97,32 @@ internal sealed class PostgresReportEvidenceGrounder
             ValidateQuote(reference.Quote, payload),
             score,
             memoryItemId,
-            documentationStatus);
+            documentationStatus,
+            retrievalConfidence,
+            IsMemoryBacked(artifactKind, memoryItemId, domainRef));
     }
+
+    /// <summary>
+    /// Whether the citation rests on incident memory, which is what scopes the <c>KnownIncident</c>
+    /// confirmation rule. Two artifacts qualify.
+    /// <para>
+    /// A retrieved item that resolved to a memory item is the ordinary case, recognized by its memory
+    /// item id the way the documentation-fit resolver recognizes a document.
+    /// </para>
+    /// <para>
+    /// The durable <c>ToolResult</c> of a <c>memory_search</c> call is the other. It is a citable
+    /// artifact holding the same titles and quotes as the per-item artifacts from that same call, so
+    /// a report resting on it rests on exactly the same retrieved text. It has no memory item id, and
+    /// its payload is the tool's whole output rather than one item, so it carries no band at any
+    /// level this grounder reads: it therefore never confirms, and a <c>KnownIncident</c> cannot rest
+    /// on it alone. No model is shown such an artifact id today, but the rule must not depend on that
+    /// staying true.
+    /// </para>
+    /// </summary>
+    private static bool IsMemoryBacked(string artifactKind, Guid? memoryItemId, string? domainRef) =>
+        memoryItemId is not null ||
+        (string.Equals(artifactKind, "ToolResult", StringComparison.Ordinal) &&
+            string.Equals(domainRef, MemorySearchToolResultDomainRef, StringComparison.Ordinal));
 
     private static Guid ParseArtifactId(string referenceId)
     {

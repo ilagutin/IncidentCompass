@@ -96,9 +96,9 @@ internal static class MemoryRelevanceJudgeSetting
     public static bool IsScoreInRange(double value) => value is >= MinimumScore and <= MaximumScore;
 
     /// <summary>
-    /// Configuration load already refuses an unknown mode, a score outside the bound and a floor above
-    /// the confirm score, so reaching a throw here means a snapshot was written by a loader that did
-    /// not check them; failing closed is better than silently guessing.
+    /// Configuration load already refuses an unknown mode, a score outside the bound and a floor that
+    /// is not below the confirm score, so reaching a throw here means a snapshot was written by a
+    /// loader that did not check them; failing closed is better than silently guessing.
     /// </summary>
     public static MemoryRelevanceJudgeSettings Resolve(TriageToolSettings tool)
     {
@@ -116,11 +116,12 @@ internal static class MemoryRelevanceJudgeSetting
         var floorScore = tool.RelevanceFloorScore ?? DefaultFloorScore;
         RequireInRange(ConfirmScoreSettingName, confirmScore);
         RequireInRange(FloorScoreSettingName, floorScore);
-        if (floorScore > confirmScore)
+        if (floorScore >= confirmScore)
         {
             throw new InvalidOperationException(
                 "Tools.memory_search." + FloorScoreSettingName + " is " + Format(floorScore) +
-                ", above Tools.memory_search." + ConfirmScoreSettingName + " " + Format(confirmScore) + ".");
+                ", not below Tools.memory_search." + ConfirmScoreSettingName + " " + Format(confirmScore) +
+                ", so no admitted candidate could be unconfirmed.");
         }
 
         return new MemoryRelevanceJudgeSettings(mode, confirmScore, floorScore);

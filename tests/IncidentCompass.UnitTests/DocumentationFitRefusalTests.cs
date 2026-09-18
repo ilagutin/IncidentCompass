@@ -1,5 +1,6 @@
 using IncidentCompass.Application.Investigation.Jobs;
 using IncidentCompass.Application.Investigation.Reports;
+using IncidentCompass.Application.Memory;
 using IncidentCompass.Infrastructure.Investigation;
 
 namespace IncidentCompass.UnitTests;
@@ -83,7 +84,9 @@ public sealed class DocumentationFitRefusalTests
                 SecretishQuote + index.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 0.9,
                 Guid.NewGuid(),
-                status))
+                status,
+                MemoryRetrievalConfidence.High,
+                true))
             .ToArray();
 
         var exception = Assert.Throws<TriageReportValidationException>(() =>
@@ -106,7 +109,7 @@ public sealed class DocumentationFitRefusalTests
         var derived = DocumentationFitCalculator.Resolve(statuses);
         var evidence = statuses
             .Select(static status => new GroundedReportEvidence(
-                Guid.NewGuid(), "RetrievedItem", "artifact:x", null, null, Guid.NewGuid(), status))
+                Guid.NewGuid(), "RetrievedItem", "artifact:x", null, null, Guid.NewGuid(), status, MemoryRetrievalConfidence.High, true))
             .ToArray();
 
         var applied = new PostgresDocumentationFitResolver().ValidateAndApply(Report(derived), evidence);

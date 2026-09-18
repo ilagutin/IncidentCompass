@@ -44,7 +44,8 @@ internal static class MemoryWorkerOutputParser
                 ReadMemoryString(item, "title"),
                 JsonElementReader.ReadOptionalString(item, "quote", CreateException) ?? string.Empty,
                 ReadOptionalDouble(item, "score"),
-                JsonElementReader.ReadOptionalString(item, "documentationStatus", CreateException)));
+                JsonElementReader.ReadOptionalString(item, "documentationStatus", CreateException),
+                JsonElementReader.ReadOptionalString(item, "retrievalConfidence", CreateException)));
         }
 
         return items;

@@ -1,4 +1,5 @@
 using System.Reflection;
+using IncidentCompass.Application.Memory;
 using IncidentCompass.Infrastructure.EmbeddingModels;
 using IncidentCompass.Infrastructure.Relevance.LocalOnnx;
 using Microsoft.Extensions.Options;
@@ -76,6 +77,48 @@ public sealed class LocalOnnxRelevanceJudgeErrorCodeTests
         Assert.Null(lookup.Model);
         Assert.Equal(LocalOnnxRelevanceJudgeProvider.NotConfiguredErrorCode, lookup.ErrorCode);
         Assert.Contains("ModelDirectory is not set", lookup.Detail!, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A host part way through installing a judge is a host that meant to have one. Reporting that
+    /// window as the not-installed code told the Application this host runs no judge, and the
+    /// Application then admitted candidates on the lexical gate alone and banded them as if nothing
+    /// were coming: for a half-gigabyte download under an install timeout measured in hundreds of
+    /// seconds, that is a long stretch in which <c>KnownIncident</c> is confirmed by the very gate
+    /// the judge was installed to replace. The state now carries a code of its own, so it propagates
+    /// as a configuration-required refusal and the job retries once the install finishes.
+    /// </summary>
+    [Fact]
+    public async Task AJudgeStillInstalling_IsReportedWithItsOwnCodeRatherThanAsNotInstalled()
+    {
+        var installState = new LocalOnnxRelevanceJudgeInstallState();
+        installState.RecordInstalling();
+        var reader = new LocalOnnxInstalledRelevanceJudgeReader(
+            Options.Create(new LocalOnnxRelevanceJudgeOptions { ModelDirectory = Path.GetTempPath() }),
+            installState,
+            LocalOnnxTestArtifacts.Store(ScriptedHttpMessageHandler.Refusing()));
+
+        var lookup = await reader.ReadAsync(TestContext.Current.CancellationToken);
+
+        Assert.Null(lookup.Model);
+        Assert.Equal(LocalOnnxRelevanceJudgeProvider.InstallInProgressErrorCode, lookup.ErrorCode);
+        Assert.NotEqual(LocalOnnxRelevanceJudgeProvider.ModelNotInstalledErrorCode, lookup.ErrorCode);
+    }
+
+    /// <summary>
+    /// The half of the same guarantee that lives in the Application: only the two states in which
+    /// this host is not running a judge at all may be answered without one, and the installing state
+    /// is not one of them, so it propagates instead of becoming a lexical answer.
+    /// </summary>
+    [Fact]
+    public void TheInstallingCode_IsNotOneTheApplicationMayAnswerWithout()
+    {
+        Assert.False(MemoryRelevanceJudgeAbsence.IsAbsent(
+            LocalOnnxRelevanceJudgeProvider.InstallInProgressErrorCode));
+        Assert.True(MemoryRelevanceJudgeAbsence.IsAbsent(
+            LocalOnnxRelevanceJudgeProvider.NotConfiguredErrorCode));
+        Assert.True(MemoryRelevanceJudgeAbsence.IsAbsent(
+            LocalOnnxRelevanceJudgeProvider.ModelNotInstalledErrorCode));
     }
 
     private static string[] DeclaredStringConstants(Type type) =>

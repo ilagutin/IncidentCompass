@@ -29,6 +29,21 @@ nor stale. Then:
 Never upgrade a stale, unversioned or service-mismatched document to current. If the backend refuses
 the report it names the value it derived; use that value.
 
+`KnownIncident` is the strongest claim this system makes: a ticket and a remediation proposal follow
+from it. Each retrieved document the memory role returns carries the backend's own
+`retrievalConfidence` band. `high` and `medium` mean the backend confirmed that the document describes
+this fault; `low` means it was admitted as related to the query and confirmed by nothing. A Completed
+report classified `KnownIncident` must therefore cite at least one retrieved document whose
+`retrievalConfidence` is `high` or `medium`, and the backend refuses it otherwise. Only those two
+values count: a document carrying `low`, or carrying no band at all, confirms nothing. Check that
+before you publish. If you have no such document, the remedy is to delegate for evidence that confirms the match
+or to publish the classification your evidence actually supports, not to cite the same documents
+again. A report that cites no retrieved document at all is untouched by this rule.
+
+The band is not a field you can argue with. The backend checks the report against the band it stored
+when it retrieved the document, not against the value in the delegate result, so treating a `low`
+item as confirmed changes nothing except that your report is refused.
+
 Typical flow: delegate to analysis first to get a candidate classification and a read on whether
 more context is needed. If it is code-related, delegate to source to inspect backend-selected current-release
 frames. Delegate to tickets to search the configured tracker for an existing issue. Delegate to
@@ -42,8 +57,9 @@ fact - treat it as a starting point to confirm or revise, not as ground truth.
 ## Reading Retrieved-Document Status
 
 A delegate result from the memory role carries one entry per retrieved document, and each entry
-carries the backend's own `documentationStatus` for that document. That label, and nothing you infer
-yourself, is what `documentationFit` is counted from:
+carries the backend's own `documentationStatus` and `retrievalConfidence` for that document. Those
+labels, and nothing you infer yourself, are what `documentationFit` is counted from and what decides
+whether a document can carry a `KnownIncident` classification:
 
 ~~~json
 {
@@ -55,7 +71,8 @@ yourself, is what `documentationFit` is counted from:
       "title": "Checkout Timeout Runbook",
       "quote": "Checkout timeout alerts usually indicate upstream payment latency.",
       "score": 0.92,
-      "documentationStatus": "Unversioned"
+      "documentationStatus": "Unversioned",
+      "retrievalConfidence": "high"
     }
   ]
 }
@@ -64,7 +81,8 @@ yourself, is what `documentationFit` is counted from:
 ## One-Shot Output Example
 
 Citing that one document, and only that one, the count is no `Current` and no `Stale`, so
-`documentationFit` is `Missing`. Publish a report shaped like this:
+`documentationFit` is `Missing`. Its `retrievalConfidence` is `high`, so it can carry a
+`KnownIncident` classification. Publish a report shaped like this:
 
 ~~~json
 {

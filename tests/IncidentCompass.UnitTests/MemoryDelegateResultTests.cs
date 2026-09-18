@@ -1,6 +1,7 @@
 using System.Text.Json;
 using IncidentCompass.Application.Investigation.Jobs;
 using IncidentCompass.Application.Investigation.Reports;
+using IncidentCompass.Application.Memory;
 using IncidentCompass.Infrastructure.Investigation;
 
 namespace IncidentCompass.UnitTests;
@@ -22,14 +23,16 @@ public sealed class MemoryDelegateResultTests
               "title": "Checkout Timeout Runbook",
               "quote": "Checkout timeout alerts usually indicate upstream payment latency.",
               "score": 0.92,
-              "documentationStatus": "Stale"
+              "documentationStatus": "Stale",
+              "retrievalConfidence": "low"
             },
             {
               "artifactId": "6a1c0d22-5b7f-4f6e-9a2d-2c4e8f0b1d33",
               "title": "Known Incident: Checkout Inventory Timeout",
               "quote": "Inventory request latency increased after a connection-pool change.",
               "score": 0.81,
-              "documentationStatus": "Current"
+              "documentationStatus": "Current",
+              "retrievalConfidence": "medium"
             }
           ]
         }
@@ -47,8 +50,43 @@ public sealed class MemoryDelegateResultTests
         Assert.Equal(["Stale", "Current"], items.Select(static item => item.GetProperty("documentationStatus").GetString()));
         // The orchestrator is told to read camelCase keys, so these are the keys that must arrive.
         Assert.All(items, item => Assert.Equal(
-            ["artifactId", "title", "quote", "score", "documentationStatus"],
+            ["artifactId", "title", "quote", "score", "documentationStatus", "retrievalConfidence"],
             item.EnumerateObject().Select(static property => property.Name)));
+    }
+
+    /// <summary>
+    /// The band arrives verbatim, which is what lets the orchestrator meet the publication rule before
+    /// publishing instead of by being refused once, on a reprompt allowance of one. Nothing about it is
+    /// load-bearing for the refusal itself: the backend reads the band off the artifact
+    /// <c>memory_search</c> wrote, so a worker that alters this copy changes only what it tells the
+    /// orchestrator.
+    /// </summary>
+    [Fact]
+    public void MemoryDelegateResult_CarriesEachDocumentsRetrievalBandVerbatim()
+    {
+        var result = WorkerDelegateResultFactory.Create("memory", WorkerOutput, Guid.NewGuid());
+
+        using var document = JsonDocument.Parse(result.SerializedPayload);
+        var items = document.RootElement.GetProperty("items").EnumerateArray().ToArray();
+
+        Assert.Equal(
+            [MemoryRetrievalConfidence.Low, MemoryRetrievalConfidence.Medium],
+            items.Select(static item => item.GetProperty("retrievalConfidence").GetString()));
+    }
+
+    [Fact]
+    public void AnAbsentBand_ArrivesAsAbsentRatherThanAsAConfirmedDocument()
+    {
+        const string withoutBand = """
+            {"matched":true,"items":[{"artifactId":"a","title":"t","quote":"q","score":0.5}]}
+            """;
+
+        var result = WorkerDelegateResultFactory.Create("memory", withoutBand, Guid.NewGuid());
+
+        using var document = JsonDocument.Parse(result.SerializedPayload);
+        var item = document.RootElement.GetProperty("items").EnumerateArray().Single();
+        Assert.Equal(JsonValueKind.Null, item.GetProperty("retrievalConfidence").ValueKind);
+        Assert.False(MemoryRetrievalConfidence.ConfirmsMatch(item.GetProperty("retrievalConfidence").GetString()));
     }
 
     [Fact]
@@ -86,7 +124,7 @@ public sealed class MemoryDelegateResultTests
         var orchestratorCanCompute = DocumentationFitCalculator.Resolve(orchestratorVisible);
         var backendEvidence = orchestratorVisible
             .Select(static status => new GroundedReportEvidence(
-                Guid.NewGuid(), "RetrievedItem", "artifact:x", null, null, Guid.NewGuid(), status))
+                Guid.NewGuid(), "RetrievedItem", "artifact:x", null, null, Guid.NewGuid(), status, MemoryRetrievalConfidence.High, true))
             .ToArray();
 
         // The resolver accepts exactly the value it derived, so a report carrying the orchestrator's
@@ -97,6 +135,39 @@ public sealed class MemoryDelegateResultTests
 
         Assert.Equal(DocumentationFitStatus.CurrentWithHistorical, orchestratorCanCompute);
         Assert.Equal(orchestratorCanCompute, applied.DocumentationFit);
+    }
+
+    /// <summary>
+    /// The same check for the band: a <c>KnownIncident</c> report built from this delegate result
+    /// passes both cross-cutting publication rules, and it passes the new one on the item the
+    /// orchestrator could see was banded <c>medium</c> rather than by luck. Nothing else about the
+    /// result changes, which is the point of adding a field rather than reshaping the contract.
+    /// </summary>
+    [Fact]
+    public void AKnownIncidentBuiltFromThisResult_PassesBothPublicationRules()
+    {
+        var result = WorkerDelegateResultFactory.Create("memory", WorkerOutput, Guid.NewGuid());
+        using var document = JsonDocument.Parse(result.SerializedPayload);
+        var visible = document.RootElement.GetProperty("items")
+            .EnumerateArray()
+            .Select(static item => (
+                Status: item.GetProperty("documentationStatus").GetString(),
+                Band: item.GetProperty("retrievalConfidence").GetString()))
+            .ToArray();
+        var evidence = visible
+            .Select(static item => new GroundedReportEvidence(
+                Guid.NewGuid(), "RetrievedItem", "artifact:x", null, null, Guid.NewGuid(), item.Status, item.Band, true))
+            .ToArray();
+        var report = Report(DocumentationFitCalculator.Resolve(visible.Select(static item => item.Status)));
+
+        var applied = new PostgresDocumentationFitResolver().ValidateAndApply(report, evidence);
+
+        Assert.Contains(MemoryRetrievalConfidence.Low, visible.Select(static item => item.Band));
+        Assert.Equal(report.DocumentationFit, applied.DocumentationFit);
+        Assert.False(MemoryCitationConfirmationRule.RefusesUnconfirmedMemoryCitations(
+            applied.Status,
+            applied.Classification,
+            evidence.Select(static item => item.RetrievalConfidence).ToArray()));
     }
 
     private static TriageReport Report(DocumentationFitStatus documentationFit) =>

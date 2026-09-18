@@ -55,17 +55,18 @@ public sealed class MemorySearchRelevanceJudgeBenchmarkTests(PostgresRepositoryF
 
     /// <summary>
     /// Why a candidate floor value is not measured. A floor at or above the confirm score it is swept
-    /// against is refused by load validation when it is above and carries no information when it is
-    /// equal, because the unconfirmed band is then empty by construction.
+    /// against is refused by load validation, above and equal alike: an equal pair leaves the
+    /// unconfirmed band empty by construction, which is why it is now refused rather than merely
+    /// uninformative.
     /// </summary>
     public const string FloorExclusionRule = "floor >= held confirm score";
 
     /// <summary>
-    /// Why a candidate confirm value is not measured. A confirm score below the floor it is swept
-    /// against is a pair load validation refuses. Equality is kept: it is the representable extreme
-    /// where everything admitted is confirmed, and it is the natural bottom end of this curve.
+    /// Why a candidate confirm value is not measured. A confirm score at or below the floor it is
+    /// swept against is a pair load validation refuses: equal thresholds collapse the three outcomes
+    /// into two, everything admitted is confirmed, and the unconfirmed band cannot occur at all.
     /// </summary>
-    public const string ConfirmExclusionRule = "confirm < held floor score";
+    public const string ConfirmExclusionRule = "confirm <= held floor score";
 
     /// <summary>
     /// The candidate floor values. The measured scores of this judge run from roughly -9 to +8, so the
@@ -103,7 +104,7 @@ public sealed class MemorySearchRelevanceJudgeBenchmarkTests(PostgresRepositoryF
 
     /// <summary>The confirm values that form a representable pair with this floor.</summary>
     public static IReadOnlyList<double> ConfirmScoresFor(double heldFloorScore) =>
-        ConfirmScoreCandidates.Where(value => value >= heldFloorScore).ToArray();
+        ConfirmScoreCandidates.Where(value => value > heldFloorScore).ToArray();
 
     [DockerAvailableFact]
     public async Task MeasureMemorySearchWithTheRealRelevanceJudge_WhenExplicitlyEnabled()

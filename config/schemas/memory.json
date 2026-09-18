@@ -21,9 +21,13 @@
             "type": "string",
             "enum": ["Current", "Stale", "Unversioned", "ServiceMismatch"]
           },
-          "targetCurrentRelease": { "type": "string" }
+          "targetCurrentRelease": { "type": "string" },
+          "retrievalConfidence": {
+            "type": "string",
+            "enum": ["high", "medium", "low"]
+          }
         },
-        "required": ["artifactId", "title"]
+        "required": ["artifactId", "title", "retrievalConfidence"]
       }
     },
     "noMatchReason": {

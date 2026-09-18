@@ -116,7 +116,10 @@ internal sealed class EvaluationScriptedModelClient : IAiModelClient
                     ["title"] = item.GetProperty("title").GetString(),
                     ["quote"] = item.GetProperty("quote").GetString(),
                     ["score"] = item.GetProperty("score").GetDouble(),
-                    ["documentationStatus"] = item.GetProperty("documentationStatus").GetString()
+                    ["documentationStatus"] = item.GetProperty("documentationStatus").GetString(),
+                    // Copied through the way the role instructions now ask for: it is what tells the
+                    // orchestrator which documents can carry a KnownIncident classification.
+                    ["retrievalConfidence"] = item.GetProperty("retrievalConfidence").GetString()
                 };
                 if (item.GetProperty("targetCurrentRelease").ValueKind == JsonValueKind.String)
                 {

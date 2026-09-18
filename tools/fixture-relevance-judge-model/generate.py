@@ -14,7 +14,15 @@ The output has the shape of the real BAAI/bge-reranker-v2-m3 artifacts and nothi
   own window.
 - wrong-shape-model.onnx: the same graph with an output named logits of shape [batch, sequence]:
   one score per token rather than one per row. It is what the adapter's output-shape refusal is
-  tested against; it is never installed through a manifest.
+  tested against; it is never installed through a manifest. It pools over the hidden dimension
+  instead of projecting, so it carries every initializer except score_weights: shipping that one in
+  a graph that cannot use it made onnxruntime warn on every load of this fixture.
+
+This script prints nothing on a clean run. That is deliberate rather than cosmetic: the self-check
+below deliberately provokes a graph failure, and onnxruntime logs such a failure at ERROR before
+raising it, so a reader who saw that line could not tell a passing run from a broken one. The one
+session that provokes it is opened with a silenced logger, and every other session keeps the default
+severity.
 - expected-scores.json: the mapped ids and the score the fixture produces for a few fixed pairs.
 - manifest.json: the artifact description in the store's current manifest schema, of kind
   relevance_judge. File paths are relative to the fixture directory and the URLs are placeholders
@@ -52,10 +60,11 @@ EXPECTED_PAIRS = [
     ("checkout timeout", "the office coffee machine is descaled every friday afternoon"),
     ("przekroczono limit czasu", "usluga platnosci odpowiada wolno i zamowienie nie zostalo zlozone"),
     ("  gateway latency  ", "A passage with trailing space "),
-    # The passage is cut to what the query leaves.
+    # The passage is cut to what the query leaves, because the query is well inside its half.
     ("checkout timeout", "checkout timeout while calling the payment service " * 8),
-    # The query alone does not fit, so it is cut too and the passage keeps nothing.
-    ("checkout timeout while calling the payment service " * 8, "payment service latency"),
+    # The query overruns its half, so it is cut to that half and the passage fills the rest. Before
+    # the split existed the query took the whole budget here and the passage kept nothing.
+    ("checkout timeout while calling the payment service " * 8, "payment service latency " * 8),
 ]
 
 
@@ -89,12 +98,16 @@ def map_sentencepiece_id(piece_id):
 def expected_ids(processor, query, passage):
     """The pair layout of XLMRobertaTokenizerFast, with this adapter's truncation order.
 
-    The passage is cut to whatever the query leaves, and the query is cut only when it alone does
-    not fit. The reference tokenizer's default instead shortens whichever segment is currently
-    longer; the two agree for every pair that fits.
+    The query is allowed at most half the content budget and the passage takes the rest, so a short
+    query still leaves the passage almost the whole window while a long one can never take it all.
+    Giving the query the whole budget first let a long enough query leave the passage nothing, and
+    every candidate scored against an empty passage receives the same score. The reference
+    tokenizer's default instead shortens whichever segment is currently longer; all three agree for
+    every pair that fits.
     """
     budget = MAX_POSITIONS - SPECIAL_TOKEN_COUNT
-    query_ids = [map_sentencepiece_id(piece_id) for piece_id in processor.encode(query.strip())][:budget]
+    query_budget = max(1, budget // 2)
+    query_ids = [map_sentencepiece_id(piece_id) for piece_id in processor.encode(query.strip())][:query_budget]
     passage_budget = max(0, budget - len(query_ids))
     passage_ids = [map_sentencepiece_id(piece_id) for piece_id in processor.encode(passage.strip())][:passage_budget]
     return [0] + query_ids + [2, 2] + passage_ids + [2]
@@ -102,17 +115,26 @@ def expected_ids(processor, query, passage):
 
 def build_graph(vocabulary_rows, one_score_per_row):
     rng = np.random.default_rng(SEED)
+    # Every array is drawn in the same order whichever graph is being built, so the scoring graph's
+    # weights do not depend on how the other graph is assembled, and score_weights keeps the place
+    # in the list it has always had. It is then attached only to the graph that has a MatMul for it:
+    # an initializer no node reads is not free, because onnxruntime strips it at load and warns
+    # while doing so, on every run that touches this fixture.
+    word_embeddings = rng.standard_normal((vocabulary_rows, HIDDEN_SIZE)).astype(np.float32)
+    position_embeddings = rng.standard_normal((MAX_POSITIONS, HIDDEN_SIZE)).astype(np.float32)
+    token_type_embeddings = rng.standard_normal((2, HIDDEN_SIZE)).astype(np.float32)
+    projection = rng.standard_normal((HIDDEN_SIZE, HIDDEN_SIZE)).astype(np.float32)
+    score_weights = rng.standard_normal((HIDDEN_SIZE, 1)).astype(np.float32)
     initializers = [
-        numpy_helper.from_array(
-            rng.standard_normal((vocabulary_rows, HIDDEN_SIZE)).astype(np.float32), "word_embeddings"),
-        numpy_helper.from_array(
-            rng.standard_normal((MAX_POSITIONS, HIDDEN_SIZE)).astype(np.float32), "position_embeddings"),
-        numpy_helper.from_array(
-            rng.standard_normal((2, HIDDEN_SIZE)).astype(np.float32), "token_type_embeddings"),
-        numpy_helper.from_array(
-            rng.standard_normal((HIDDEN_SIZE, HIDDEN_SIZE)).astype(np.float32), "projection"),
-        numpy_helper.from_array(
-            rng.standard_normal((HIDDEN_SIZE, 1)).astype(np.float32), "score_weights"),
+        numpy_helper.from_array(word_embeddings, "word_embeddings"),
+        numpy_helper.from_array(position_embeddings, "position_embeddings"),
+        numpy_helper.from_array(token_type_embeddings, "token_type_embeddings"),
+        numpy_helper.from_array(projection, "projection"),
+    ]
+    if one_score_per_row:
+        initializers.append(numpy_helper.from_array(score_weights, "score_weights"))
+
+    initializers += [
         numpy_helper.from_array(
             np.arange(MAX_POSITIONS, dtype=np.int64).reshape(1, MAX_POSITIONS), "position_ids"),
         numpy_helper.from_array(np.array([0], dtype=np.int64), "zero"),
@@ -178,23 +200,50 @@ def run_graph(session, ids):
     )[0]
 
 
-def open_session(model_path):
-    session = ort.InferenceSession(str(model_path), providers=["CPUExecutionProvider"])
+def open_session(model_path, silence_expected_failure=False):
+    """Opens a session over one fixture graph.
+
+    silence_expected_failure raises the log threshold to fatal for this session alone. It is used
+    only by the over-window probe, whose whole point is that the graph refuses the input: onnxruntime
+    logs such a refusal at ERROR before raising it, and an ERROR line on a successful generation run
+    is indistinguishable from a broken one to whoever runs this next.
+    """
+    options = ort.SessionOptions()
+    if silence_expected_failure:
+        options.log_severity_level = 4
+    session = ort.InferenceSession(str(model_path), options, providers=["CPUExecutionProvider"])
     input_names = [value.name for value in session.get_inputs()]
     if input_names != ["input_ids", "attention_mask", "token_type_ids"]:
         raise SystemExit("unexpected graph inputs: " + ", ".join(input_names))
     return session
 
 
-def self_check(session, wrong_shape_session, sample_ids):
+def self_check(model_path, session, wrong_shape_session, cases):
+    sample_ids = cases[0]["ids"]
     logits = run_graph(session, sample_ids)
     if logits.shape != (1, 1):
         raise SystemExit("unexpected output shape: " + str(logits.shape))
     wrong = run_graph(wrong_shape_session, sample_ids)
     if wrong.shape != (1, len(sample_ids)):
         raise SystemExit("unexpected wrong-shape output: " + str(wrong.shape))
+
+    # The drift check that matters: whatever expected_ids does with the budget, no pair it produces
+    # may exceed the window the manifest declares. A split computed from the wrong budget shows up
+    # here rather than as an unexplained runtime failure later.
+    for case in cases:
+        if len(case["ids"]) > MAX_POSITIONS:
+            raise SystemExit(
+                "expected_ids produced " + str(len(case["ids"])) + " ids for a window of " +
+                str(MAX_POSITIONS) + ": " + case["query"][:40])
+
+    # And the graph itself refuses anything longer, the way the real model refuses past its own
+    # window. This sequence is built by hand rather than by expected_ids, because expected_ids can
+    # never produce one: the check above is what says so.
+    over_window_ids = [0] + [5] * (MAX_POSITIONS - 1) + [2]
+    if len(over_window_ids) != MAX_POSITIONS + 1:
+        raise SystemExit("the over-window probe is not one token past the window")
     try:
-        run_graph(session, [0] + [5] * MAX_POSITIONS + [2])
+        run_graph(open_session(model_path, silence_expected_failure=True), over_window_ids)
     except Exception:  # noqa: BLE001 - any runtime failure is the behaviour being checked
         return
     raise SystemExit("the fixture graph accepted an input longer than MAX_POSITIONS")
@@ -229,7 +278,7 @@ def main():
             "ids": ids,
             "score": float(run_graph(session, ids)[0][0]),
         })
-    self_check(session, wrong_shape_session, cases[0]["ids"])
+    self_check(model_path, session, wrong_shape_session, cases)
     write_json(
         output_directory / "expected-scores.json",
         {"maxTokens": MAX_POSITIONS, "specialTokenCount": SPECIAL_TOKEN_COUNT, "cases": cases},

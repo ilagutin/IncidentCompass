@@ -6,9 +6,16 @@ internal static class TriageClassificationVocabulary
 {
     public const string Unknown = "Unknown";
 
+    /// <summary>
+    /// The one classification a ticket and a remediation diff follow from, and therefore the one
+    /// <c>MemoryCitationConfirmationRule</c> is scoped to. Named here so the rule and the vocabulary
+    /// cannot drift apart.
+    /// </summary>
+    public const string KnownIncident = "KnownIncident";
+
     private static readonly IReadOnlyList<string> Values =
     [
-        "KnownIncident",
+        KnownIncident,
         "LikelyRegression",
         "SimpleKnownError",
         Unknown,

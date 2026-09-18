@@ -38,6 +38,18 @@ internal static class LocalOnnxRelevanceJudgeProvider
     /// <summary>The stable error code of a call on a host where no install pass has put a judge in place.</summary>
     public const string ModelNotInstalledErrorCode = MemoryRelevanceJudgeAbsence.NotInstalled;
 
+    /// <summary>
+    /// The judge's install pass is running and has not finished. Deliberately not
+    /// <see cref="ModelNotInstalledErrorCode" />: that code tells the Application this host runs no
+    /// judge, and the Application then admits on the lexical gate alone. A host part way through
+    /// fetching a judge is a host that meant to have one, and the pinned judge is over half a
+    /// gigabyte with an install timeout measured in the hundreds of seconds, so reporting the window
+    /// as judge-lessness would confirm <c>KnownIncident</c> on unjudged bands for as long as the
+    /// download takes. Propagating instead refuses those calls with a configuration-required code and
+    /// lets the job retry after the install finishes.
+    /// </summary>
+    public const string InstallInProgressErrorCode = "relevance_judge_install_in_progress";
+
     /// <summary>A judge file's SHA-256 is not the pinned one. The file is never repaired or replaced.</summary>
     public const string ModelDigestMismatchErrorCode = "relevance_judge_model_digest_mismatch";
 

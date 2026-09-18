@@ -310,9 +310,26 @@ the pre-judge behaviour and report it in a top-level `limitation` string, which 
 mock, evaluation and integration-test host is in. Every other state propagates with its own named
 error code and nothing falls back, because a host whose judge does not verify is broken rather than
 judge-less: a digest mismatch, a missing model file, a failed fetch, an oversized download, an install
-timeout, an invalid manifest, an unreadable model store, a model that is not the configured judge and
-a failure at load or inference are all failures, and several of them share one normalized code with
-the two deployment states, so the distinction is drawn on the adapter's own error code.
+still running, an install timeout, an invalid manifest, an unreadable model store, a model that is not
+the configured judge and a failure at load or inference are all failures, and several of them share one
+normalized code with the two deployment states, so the distinction is drawn on the adapter's own error
+code. An install still running is deliberately in that list rather than in the two: the pinned judge is
+over half a gigabyte and its install timeout is measured in hundreds of seconds, so a host part way
+through fetching one would otherwise confirm `KnownIncident` on lexical bands for the whole window,
+which is what installing a judge was meant to stop. Those calls refuse with
+`relevance_judge_install_in_progress` and the job retries.
+
+The floor must sit strictly below the confirm score, and configuration load refuses the pair otherwise.
+An equal pair is the quiet mistake: every candidate the judge admits is then confirmed, the `low` band
+cannot occur, and the publication rule that refuses a `KnownIncident` resting only on unconfirmed
+memory can never fire, under a configuration that would otherwise look valid.
+
+The judge scores the query and one candidate inside a single token window, so `memory_search` refuses
+a query longer than 1016 characters as `invalid_arguments`. That bound is derived from the window
+rather than chosen: half the pinned model's content budget at four characters to the token. The pair
+encoder splits the window the same way, giving the query at most half and the passage the rest, so
+neither can starve the other. Before both, a long enough query left the passage no room at all, and
+every candidate scored against an empty passage received the same score.
 
 `retrievalConfidence` is not the only contract the backend holds the adapter to. A score that is not a
 finite number, or a set of scores that does not match the candidates one for one, is refused by name

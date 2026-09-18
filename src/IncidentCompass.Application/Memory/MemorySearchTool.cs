@@ -23,6 +23,13 @@ internal sealed class MemorySearchTool(
     IMemoryRepository memoryRepository,
     IMemoryRelevanceJudge? relevanceJudge = null) : IImmediateAgentTool
 {
+    /// <summary>
+    /// The tool's registered name, which is also the tail of the <c>tool:</c> domain reference its
+    /// durable <c>ToolResult</c> artifact carries. Named here so the publication rule that has to
+    /// recognize such an artifact does not match on a literal of its own.
+    /// </summary>
+    public const string ToolId = "memory_search";
+
     private const int DefaultTopK = 5;
     private const double DefaultMinScore = 0.25;
     private const int MaxTopK = 20;
@@ -33,7 +40,7 @@ internal sealed class MemorySearchTool(
     private const string RelatedMatchesMessage = MemorySearchMessage.RelatedMatches;
 
     public AiToolDefinition Definition { get; } = new(
-        "memory_search",
+        ToolId,
         "Search tenant-scoped incident memory for matching runbooks and known incidents.",
         "v1",
         CanonicalJsonSerializer.ToElement(new JsonObject
@@ -69,9 +76,18 @@ internal sealed class MemorySearchTool(
             return ToolValidationResult.Invalid("invalid_arguments", "memory_search requires a non-empty query.");
         }
 
+        // Bounded because the judge scores the query and the candidate inside one token window: an
+        // unbounded query is one the judge never sees in full, and the bound is derived from that
+        // window rather than chosen. See MemorySearchQueryBound.
+        var query = queryElement.GetString()!.Trim();
+        if (query.Length > MemorySearchQueryBound.MaxQueryCharacters)
+        {
+            return ToolValidationResult.Invalid("invalid_arguments", MemorySearchQueryBound.TooLongRefusal);
+        }
+
         return ToolValidationResult.Valid(CanonicalJsonSerializer.ToElement(new JsonObject
         {
-            ["query"] = queryElement.GetString()!.Trim()
+            ["query"] = query
         }));
     }
 

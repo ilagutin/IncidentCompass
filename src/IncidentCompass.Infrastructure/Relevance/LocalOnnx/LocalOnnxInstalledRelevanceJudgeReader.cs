@@ -42,8 +42,11 @@ internal sealed class LocalOnnxInstalledRelevanceJudgeReader(
 
         if (snapshot.Status == LocalOnnxModelInstallStatus.Installing)
         {
+            // Its own code, not the not-installed one: this host is installing a judge, so it means
+            // to have one, and answering the Application with an absence code would make it admit on
+            // the lexical gate alone for the whole download window.
             return LocalOnnxInstalledModelLookup.NotAvailable(
-                LocalOnnxRelevanceJudgeProvider.ModelNotInstalledErrorCode,
+                LocalOnnxRelevanceJudgeProvider.InstallInProgressErrorCode,
                 "The local relevance judge install has not finished.");
         }
 

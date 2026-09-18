@@ -1493,6 +1493,27 @@ accepts only citable artifacts from the same job/current attempt, never `WorkerO
 evidence kind and `is_mass_issue` itself, and marks prior reports as untrusted hypotheses in the
 artifact payload.
 
+One classification carries its own bar. A `Completed` report classified `KnownIncident` that cites at
+least one memory-backed retrieved document must cite at least one whose `retrievalConfidence` band the
+backend recorded as confirmed; a report whose every memory citation was admitted as merely related is
+refused. `KnownIncident` is the classification a ticket and a remediation proposal follow from, and the
+consumer of a retrieved item is a model rather than a person who would notice the difference between a
+document about this subsystem and a document about this failure. The rule is scoped by the cited
+artifact's memory item id, not by the evidence kind: a ticket-search or source-lookup result is also
+stored as a `RetrievedItem`, its closed payload shape carries no band at all, and a `KnownIncident`
+report grounded on one of those stays publishable, as does a report citing no retrieved document. A
+memory payload with no band recorded does not count as confirmed. The durable `ToolResult` of a
+`memory_search` call counts as memory-backed too: it holds the same titles and quotes as that call's
+per-item artifacts, and it carries no band, so a `KnownIncident` cannot rest on it alone.
+
+The limit of what the band proves is worth stating. It says the relevance judge found the document
+relevant to the query that was asked, and the query is written by the model from the incident. A
+query that repeats a document's own wording will score highly against that document, so a model can
+raise a band by re-querying with text it has already been shown, and an error message crafted to
+paraphrase a runbook can do the same from untrusted telemetry. The rule therefore bounds what an
+unconfirmed document is allowed to justify; it does not prove that a confirmed document describes the
+fault. The LLM is not a security boundary here either.
+
 A refusal is still allowed to say what it refused over. The diagnostic a refused `publish_report`
 hands back to the orchestrator is matched against a closed allowlist of backend-authored strings
 before it becomes a correction turn, a log line or a `BudgetEvent` rationale; anything else, a
