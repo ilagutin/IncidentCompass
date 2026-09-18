@@ -12,8 +12,11 @@ services:
       IncidentCompass__Embeddings__Provider: Mock
       INCIDENTCOMPASS_LLM_MODEL: mock-chat
       INCIDENTCOMPASS_EMBEDDINGS_MODEL: mock-memory-embedding-v1
+      # The mock stack mocks every model, so it runs the mock relevance judge: memory search takes the
+      # same judged path the product takes, and a memory-based known-incident report is reachable,
+      # which it never is on a host that runs no judge. The mock judge composes no install pass.
+      IncidentCompass__RelevanceJudge__Provider: Mock
       # Compose merges environment maps, so this worker inherits the base file's judge directory
-      # unless it is reset. The mock stack exists to run without downloading a model, and a judge
-      # directory is what turns the judge's install pass on, so it is emptied here: this stack runs
-      # no relevance judge and fetches nothing.
+      # unless it is reset. The mock stack exists to run without downloading a model, so it is
+      # emptied here as well: nothing on this stack fetches the cross-encoder.
       IncidentCompass__RelevanceJudge__LocalOnnx__ModelDirectory: ""

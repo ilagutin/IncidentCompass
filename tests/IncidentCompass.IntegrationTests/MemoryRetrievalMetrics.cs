@@ -74,9 +74,10 @@ public static class MemoryRetrievalMetrics
 
     /// <summary>
     /// A returned match confirms a hard negative when the tool banded it <c>medium</c> or <c>high</c>:
-    /// that is the tool claiming lexical support for a query nothing active answers. A <c>low</c> band
-    /// is the vector-only fallback saying so itself, and a null band comes from a strategy that does not
-    /// go through the tool, so neither can confirm.
+    /// that is a relevance judge confirming, against the query's fault, a document nothing active
+    /// answers. A <c>low</c> band is the tool saying the match is related and unconfirmed, which is every
+    /// band on a call no judge judged, and a null band comes from a strategy that does not go through
+    /// the tool, so neither can confirm.
     /// </summary>
     private static bool IsConfirmed(MemoryRetrievalMatch match) =>
         match.RetrievalConfidence is MemoryRetrievalConfidence.Medium or MemoryRetrievalConfidence.High;

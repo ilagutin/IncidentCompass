@@ -4,16 +4,18 @@ using IncidentCompass.Application.Memory;
 namespace IncidentCompass.IntegrationTests;
 
 /// <summary>
-/// Scores every (query, candidate) pair of the benchmark once and derives the boundary the floor has to
-/// fall between.
+/// Scores every (query, candidate) pair of the benchmark once against the model's query and once against
+/// the fault query, and derives the boundaries the floor and the confirm score have to fall between.
 /// </summary>
 /// <remarks>
-/// The capture pass makes the same two calls <c>MemorySearchTool</c> makes, with the same candidate
-/// count and floor, for one reason the tool cannot serve: it needs the chunk identity beside each
-/// score, and the tool's own output is already cut to <c>TopK</c> and carries no score for a candidate
-/// it dropped. The strongest off-topic score is a property of the whole candidate set, not of the five
-/// items that survived it. The pass is not what decides anything; it fills the judge's cache and
-/// records the boundary, and every number the acceptance bar and the sweep read still comes from the
+/// The capture pass makes the same calls <c>MemorySearchTool</c> makes, with the same candidate count
+/// and floor, for one reason the tool cannot serve: it needs the chunk identity beside each score, and
+/// the tool's own output is already cut to <c>TopK</c> and carries no score for a candidate it dropped.
+/// The strongest off-topic score is a property of the whole candidate set, not of the five items that
+/// survived it. The fault query is built by the production <see cref="MemoryFaultQuery" /> from the
+/// production trigger signal, so the tool's own confirmation call asks the judge the identical string
+/// and is answered from the cache. The pass is not what decides anything; it fills the judge's cache and
+/// records the boundaries, and every number the acceptance bar and the sweep read still comes from the
 /// real tool.
 /// </remarks>
 internal static class MemorySearchRelevanceJudgeBenchmarkScores
@@ -50,10 +52,12 @@ internal static class MemorySearchRelevanceJudgeBenchmarkScores
                     candidateCount,
                     minScore),
                 cancellationToken);
-            var scores = await judge.ScoreAsync(
-                query.Text,
-                candidates.Select(static candidate => candidate.Text).ToArray(),
-                cancellationToken);
+            var texts = candidates.Select(static candidate => candidate.Text).ToArray();
+            var scores = await judge.ScoreAsync(query.Text, texts, cancellationToken);
+            var faultQuery = MemoryFaultQuery.For(MemoryRetrievalBenchmarkTriggerSignal.For(corpus.TenantId, query));
+            IReadOnlyList<float>? faultScores = faultQuery is null
+                ? null
+                : await judge.ScoreAsync(faultQuery, texts, cancellationToken);
             var category = MemoryRetrievalQueryCategory.Of(query);
             var offered = candidates.Select(static candidate => candidate.ChunkId).ToHashSet();
             for (var index = 0; index < candidates.Count; index++)
@@ -64,7 +68,8 @@ internal static class MemorySearchRelevanceJudgeBenchmarkScores
                     category,
                     candidates[index].ChunkId,
                     scores[index],
-                    relevantChunks.Contains(candidates[index].ChunkId)));
+                    relevantChunks.Contains(candidates[index].ChunkId),
+                    faultScores?[index]));
             }
 
             pairs.AddRange(relevantChunks
@@ -110,12 +115,55 @@ internal static class MemorySearchRelevanceJudgeBenchmarkScores
             width,
             width > 0);
     }
+
+    /// <summary>
+    /// The two fault scores the confirm score has to fall between. A candidate of an off-topic or
+    /// hard-negative query describes no fault the corpus answers, so a confirm score at or below the
+    /// strongest of those fault scores can confirm one of them if it is returned; a labelled relevant
+    /// chunk of a positive query describes its fault, so a confirm score above the weakest of those
+    /// leaves that answer unconfirmed.
+    /// </summary>
+    public static MemorySearchRelevanceJudgeBenchmarkConfirmBoundary SummarizeConfirm(
+        string language,
+        IReadOnlyList<MemorySearchRelevanceJudgeBenchmarkPair> pairs)
+    {
+        var negative = pairs
+            .Where(static pair => pair.FaultScore is not null &&
+                pair.Category is MemoryRetrievalQueryCategory.OffTopic or MemoryRetrievalQueryCategory.HardNegative)
+            .ToArray();
+        var relevant = pairs
+            .Where(static pair => pair.IsRelevant && pair.FaultScore is not null)
+            .ToArray();
+        var strongestNegative = negative
+            .OrderByDescending(static pair => pair.FaultScore!.Value)
+            .FirstOrDefault();
+        var weakestRelevant = relevant
+            .OrderBy(static pair => pair.FaultScore!.Value)
+            .FirstOrDefault();
+        var width = strongestNegative is not null && weakestRelevant is not null
+            ? weakestRelevant.FaultScore!.Value - strongestNegative.FaultScore!.Value
+            : (double?)null;
+
+        return new MemorySearchRelevanceJudgeBenchmarkConfirmBoundary(
+            language,
+            strongestNegative?.FaultScore,
+            strongestNegative?.QueryId,
+            strongestNegative?.ChunkId.ToString(),
+            negative.Length,
+            weakestRelevant?.FaultScore,
+            weakestRelevant?.QueryId,
+            weakestRelevant?.ChunkId.ToString(),
+            relevant.Length,
+            width,
+            width > 0);
+    }
 }
 
 /// <summary>
-/// One scored (query, candidate chunk) pair. <c>Score</c> is null for a labelled relevant chunk the
-/// vector search never offered the judge, which is recorded so a recall shortfall no threshold can fix
-/// is visible as the retriever's and not the judge's.
+/// One scored (query, candidate chunk) pair. <c>Score</c> is the judge's score for the model's query and
+/// <c>FaultScore</c> its score for the fault query built from the query's trigger signal. Both are null
+/// for a labelled relevant chunk the vector search never offered the judge, which is recorded so a
+/// recall shortfall no threshold can fix is visible as the retriever's and not the judge's.
 /// </summary>
 internal sealed record MemorySearchRelevanceJudgeBenchmarkPair(
     string Language,
@@ -123,7 +171,8 @@ internal sealed record MemorySearchRelevanceJudgeBenchmarkPair(
     string Category,
     Guid ChunkId,
     double? Score,
-    bool IsRelevant);
+    bool IsRelevant,
+    double? FaultScore = null);
 
 /// <summary>
 /// Scores each (query, candidate) pair once and answers every later request for it from memory, so a

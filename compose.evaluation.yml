@@ -29,11 +29,11 @@ services:
       INCIDENTCOMPASS_EMBEDDINGS_MODEL: ${INCIDENTCOMPASS_EMBEDDINGS_MODEL:-local-embedding-model}
       IncidentCompass__ModelGateway__OpenAiCompatible__FirstOutputTimeoutSeconds: ${INCIDENTCOMPASS_EVALUATION_PROVIDER_TIMEOUT_SECONDS:-420}
       IncidentCompass__Embeddings__OpenAiCompatible__TimeoutSeconds: ${INCIDENTCOMPASS_EVALUATION_PROVIDER_TIMEOUT_SECONDS:-420}
-      # Compose merges environment maps, so this worker inherits the base file's judge directory
-      # unless it is reset. This stack embeds through an OpenAI-compatible server and runs no
-      # in-process model; a judge directory is what turns the judge's install pass on, so it is
-      # emptied here and the evaluation stack fetches nothing.
-      IncidentCompass__RelevanceJudge__LocalOnnx__ModelDirectory: ""
+      # The relevance judge model directory is deliberately not reset: this worker inherits the base
+      # file's directory and runs the shipped in-process cross-encoder, so a real-model evaluation
+      # runs the product as shipped. Without a judge nothing retrieved from memory is confirmed, and
+      # the known and stale cases could never reach a memory-based known-incident report. The cost is
+      # the judge's install on the first start of a fresh volume, about 544 MiB.
       IncidentCompass__Telegram__Enabled: "false"
       IncidentCompass__Telegram__BotToken: ""
       IncidentCompass__Tickets__GitHub__Token: ""

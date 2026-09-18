@@ -1,5 +1,6 @@
 using System.Globalization;
 using IncidentCompass.Infrastructure.EmbeddingModels;
+using IncidentCompass.Infrastructure.Relevance;
 using IncidentCompass.Infrastructure.Relevance.LocalOnnx;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
@@ -19,6 +20,10 @@ namespace IncidentCompass.Infrastructure.Memory;
 /// </remarks>
 internal static class RelevanceJudgeModelSection
 {
+    /// <summary>What the command prints for a Worker that runs the mock relevance judge.</summary>
+    public const string MockJudgeStatusLine =
+        "Relevance judge: Mock (deterministic stand-in, not a governance boundary)";
+
     public static async Task<int> RunAsync(
         IServiceProvider scopedServices,
         bool install,
@@ -28,6 +33,16 @@ internal static class RelevanceJudgeModelSection
     {
         try
         {
+            if (!TryReadProvider(scopedServices, output, error, out var isMock))
+            {
+                return 1;
+            }
+
+            if (isMock)
+            {
+                return ReportMockJudge(install, output, error);
+            }
+
             var options = ReadConfiguredOptions(scopedServices, output, error);
             if (options is null)
             {
@@ -56,6 +71,63 @@ internal static class RelevanceJudgeModelSection
             error.WriteLine("Local relevance judge command failed: " + exception.Message);
             return 1;
         }
+    }
+
+    /// <summary>
+    /// Which judge this Worker is configured to run. A host that never composed the provider setting
+    /// runs the local judge, which is its default. An invalid provider is reported here, because this
+    /// command runs before the host starts and start-up validation has not happened yet.
+    /// </summary>
+    private static bool TryReadProvider(
+        IServiceProvider scopedServices,
+        TextWriter output,
+        TextWriter error,
+        out bool isMock)
+    {
+        isMock = false;
+        var accessor = scopedServices.GetService<IOptions<RelevanceJudgeOptions>>();
+        if (accessor is null)
+        {
+            return true;
+        }
+
+        try
+        {
+            isMock = RelevanceJudgeOptionsValidator.IsMock(accessor.Value.Provider);
+            return true;
+        }
+        catch (OptionsValidationException exception)
+        {
+            output.WriteLine("Relevance judge: provider not valid");
+            error.WriteLine("The relevance judge provider is not valid on this host. " + string.Join(" ", exception.Failures));
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// A Worker that runs the mock judge is reported as exactly that, never as a local judge that is
+    /// not configured, which would be false while a judge is running and confirming matches.
+    /// <para>
+    /// It exits 1, for status and install alike. The mock is the right judge for the mock stack and
+    /// the wrong one anywhere else, and the command cannot tell which host it is on, so it answers the
+    /// question an operator's script actually asks of it: does this Worker run the shipped judge,
+    /// installed and verified? A mock does not, and a script that waits for exit 0 before trusting a
+    /// host, or before starting an evaluation, must not be satisfied by one. Nothing on the mock stack
+    /// depends on 0: its embedding half already exits 1, because the mock embedding provider has no
+    /// installed model either.
+    /// </para>
+    /// </summary>
+    private static int ReportMockJudge(bool install, TextWriter output, TextWriter error)
+    {
+        output.WriteLine(MockJudgeStatusLine);
+        error.WriteLine(
+            (install
+                ? "There is no relevance judge model to install: this Worker runs the mock judge, which needs none. "
+                : "This Worker runs the mock relevance judge, which has no model to verify. ") +
+            "It confirms memory matches by matching error-type names, is correct only on the mock stack and" +
+            " must never run on a production host. Set " + RelevanceJudgeOptions.ProviderKey + " to " +
+            RelevanceJudgeOptions.LocalOnnxProvider + " to run the shipped judge.");
+        return 1;
     }
 
     /// <summary>

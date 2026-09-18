@@ -26,11 +26,18 @@ namespace IncidentCompass.IntegrationTests;
 /// set the vector search returned. Every number here goes through the real tool.
 /// </para>
 /// <para>
-/// The run has three parts: a capture pass that scores every (query, candidate) pair once and records
-/// the boundary the floor sits between, the two shipped-default legs the acceptance bar is asserted on,
-/// and a sweep of each threshold over its own list of values. The sweep reuses the captured scores, so
+/// The run has four parts: a capture pass that scores every (query, candidate) pair once against the
+/// model's query and once against the fault query and records the boundaries the floor and the confirm
+/// score sit between, the two shipped-default legs the acceptance bar is asserted on, a sweep of each
+/// threshold over its own list of values, and the attack legs. The sweep reuses the captured scores, so
 /// it costs no model time. The result is one JSON document, written to the test output and to
 /// <c>INCIDENTCOMPASS_RELEVANCE_JUDGE_BENCHMARK_OUTPUT</c> when it is set.
+/// </para>
+/// <para>
+/// It runs on the version 3 corpus, whose every query carries the trigger signal it stands for, and
+/// every query's context carries that signal with the summary intake would synthesize for it. The band
+/// is decided against the fault query built from that signal, so the confirm score is swept against
+/// fault scores, not against scores for the model's query.
 /// </para>
 /// </summary>
 [Collection(PostgresRepositoryCollection.CollectionName)]
@@ -44,7 +51,7 @@ public sealed class MemorySearchRelevanceJudgeBenchmarkTests(PostgresRepositoryF
     private const string JudgeOnLeg = "judge-on";
     private const string JudgeOffLeg = "judge-off";
     private const string MemorySearchToolName = "memory_search";
-    private const int SchemaVersion = 2;
+    private const int SchemaVersion = 3;
 
     /// <summary>
     /// Polish chunk recall@5 was 0.000 before a judge existed: an all-Latin query in another language
@@ -52,6 +59,14 @@ public sealed class MemorySearchRelevanceJudgeBenchmarkTests(PostgresRepositoryF
     /// the defect this work fixes, so the bar names a floor for it rather than trusting the change.
     /// </summary>
     private const double MinimumPolishChunkRecall = 0.5;
+
+    /// <summary>
+    /// The Polish incident-shaped positives the bar requires confirmed, out of six. It is not six because
+    /// the fifth one scores below an English hard negative against its fault query, so no confirm score
+    /// confirms it without also confirming that hard negative; the sweep measured 4 of 6 across the
+    /// whole window the default sits in. The two it does not confirm are still returned as context.
+    /// </summary>
+    private const int MinimumPolishIncidentShapedConfirmed = 4;
 
     /// <summary>
     /// Why a candidate floor value is not measured. A floor at or above the confirm score it is swept
@@ -117,8 +132,8 @@ public sealed class MemorySearchRelevanceJudgeBenchmarkTests(PostgresRepositoryF
         var cancellationToken = TestContext.Current.CancellationToken;
         var startedAt = DateTimeOffset.UtcNow;
         var repoRoot = RepositoryRootLocator.Find();
-        var corpus = MemoryRetrievalBenchmarkCorpus.LoadV2(repoRoot);
-        var multilingual = MemoryRetrievalMultilingualQueries.LoadV2(repoRoot);
+        var corpus = MemoryRetrievalBenchmarkCorpus.LoadV3(repoRoot);
+        var multilingual = MemoryRetrievalMultilingualQueries.LoadV3(repoRoot);
         var groups = new (string Name, MemoryRetrievalBenchmarkCorpus Corpus)[]
         {
             (EnglishLanguage, corpus),
@@ -127,6 +142,7 @@ public sealed class MemorySearchRelevanceJudgeBenchmarkTests(PostgresRepositoryF
             (MemoryRetrievalMultilingualQueries.Russian,
                 multilingual.ToCorpus(corpus, MemoryRetrievalMultilingualQueries.Russian))
         };
+        var incidentShaped = IncidentShapedQueryIds(corpus, multilingual);
 
         var connectionString = await postgres.GetConnectionStringAsync();
         await PostgresSchemaTestHelper.EnsureSchemaAsync(connectionString);
@@ -165,7 +181,7 @@ public sealed class MemorySearchRelevanceJudgeBenchmarkTests(PostgresRepositoryF
         var route = shipped.Routes[shipped.Tools[MemorySearchToolName].EmbeddingRouteId!];
         var topK = shipped.Tools[MemorySearchToolName].TopK ?? corpus.TopK;
         var candidateCount = Math.Min(100, topK * 4);
-        var scoring = await CaptureScoresAsync(
+        var (scoring, pairs) = await CaptureScoresAsync(
             groups, embeddingClient, repository, judge, route, candidateCount, cancellationToken);
 
         judge.ResetModelCalls();
@@ -177,7 +193,7 @@ public sealed class MemorySearchRelevanceJudgeBenchmarkTests(PostgresRepositoryF
                 legName,
                 mode,
                 await MeasureAsync(
-                    groups, hostConfiguration, model, repository, embeddingClient, judge, mode,
+                    groups, incidentShaped, hostConfiguration, model, repository, embeddingClient, judge, mode,
                     MemoryRelevanceJudgeSetting.DefaultConfirmScore,
                     MemoryRelevanceJudgeSetting.DefaultFloorScore,
                     configuration => currentConfiguration = configuration,
@@ -192,7 +208,7 @@ public sealed class MemorySearchRelevanceJudgeBenchmarkTests(PostgresRepositoryF
                 FloorScoresFor(MemoryRelevanceJudgeSetting.DefaultConfirmScore),
                 FloorExclusionRule,
                 value => (MemoryRelevanceJudgeSetting.DefaultConfirmScore, value),
-                groups, hostConfiguration, model, repository, embeddingClient, judge,
+                groups, incidentShaped, hostConfiguration, model, repository, embeddingClient, judge,
                 configuration => currentConfiguration = configuration, cancellationToken),
             await SweepAsync(
                 MemoryRelevanceJudgeSetting.ConfirmScoreSettingName,
@@ -200,9 +216,23 @@ public sealed class MemorySearchRelevanceJudgeBenchmarkTests(PostgresRepositoryF
                 ConfirmScoresFor(MemoryRelevanceJudgeSetting.DefaultFloorScore),
                 ConfirmExclusionRule,
                 value => (value, MemoryRelevanceJudgeSetting.DefaultFloorScore),
-                groups, hostConfiguration, model, repository, embeddingClient, judge,
+                groups, incidentShaped, hostConfiguration, model, repository, embeddingClient, judge,
                 configuration => currentConfiguration = configuration, cancellationToken)
         };
+
+        var sweepModelCalls = judge.ModelCalls;
+        currentConfiguration = shipped;
+        var attackLegs = new List<MemorySearchRelevanceJudgeBenchmarkAttackLeg>(2);
+        foreach (var confirmAgainstModelQuery in new[] { false, true })
+        {
+            attackLegs.Add(await MemorySearchRelevanceJudgeBenchmarkAttack.RunAsync(
+                confirmAgainstModelQuery,
+                groups,
+                pairs,
+                new MemorySearchTool(embeddingClient, repository, judge),
+                shipped,
+                cancellationToken));
+        }
 
         var record = new MemorySearchRelevanceJudgeBenchmarkRecord(
             SchemaVersion,
@@ -220,9 +250,10 @@ public sealed class MemorySearchRelevanceJudgeBenchmarkTests(PostgresRepositoryF
             RuntimeInformation.OSDescription,
             startedAt,
             DateTimeOffset.UtcNow,
-            scoring with { JudgeModelCallsDuringSweep = judge.ModelCalls },
+            scoring with { JudgeModelCallsDuringSweep = sweepModelCalls },
             legs,
-            sweeps);
+            sweeps,
+            attackLegs);
         // The record is written before the bar is asserted, and these two lines must not be swapped. A
         // run that fails the bar is exactly the run whose curve is needed to choose a replacement
         // threshold, and asserting first would throw the whole measurement away.
@@ -247,6 +278,21 @@ public sealed class MemorySearchRelevanceJudgeBenchmarkTests(PostgresRepositoryF
     /// Every count is asserted against its denominator first. A corpus that predates the category field
     /// names no off-topic query at all, and on such a corpus a false-positive count of zero is vacuously
     /// true: the bar would then pass without measuring anything.
+    /// </para>
+    /// <para>
+    /// The band is decided against the fault, and the bar states deliberately what the product can
+    /// guarantee at the shipped confirm score, no more: the attack confirms nothing in any language when
+    /// the band answers the fault, and confirms something when it answers the model's query, so the leg
+    /// is shown to attack at all; no hard negative is confirmed in any language; every English and every
+    /// Russian incident-shaped positive has its answer confirmed; and at least
+    /// <see cref="MinimumPolishIncidentShapedConfirmed" /> of the Polish ones do.
+    /// </para>
+    /// <para>
+    /// Polish is not asked for all six because the confirm sweep against fault scores shows no value
+    /// can deliver it: the fifth Polish incident-shaped positive scores below an English hard negative,
+    /// so confirming it would confirm that hard negative too, and the release keeps the hard negative
+    /// out. The Polish answers that are not confirmed are still returned, banded <c>low</c> as related
+    /// context, so they are not lost, only not claimed.
     /// </para>
     /// </summary>
     private static void AssertAcceptanceBar(MemorySearchRelevanceJudgeBenchmarkRecord record)
@@ -290,6 +336,26 @@ public sealed class MemorySearchRelevanceJudgeBenchmarkTests(PostgresRepositoryF
                 $" {language.HardNegativeReturnedCount} returned, not 0.");
         });
 
+        Assert.All(languages, language =>
+        {
+            Assert.True(
+                language.IncidentShapedPositiveQueryCount > 0,
+                $"The {language.Language} corpus contributed no incident-shaped positive query, so the" +
+                " confirmed count measures nothing.");
+            var required = language.Language == MemoryRetrievalMultilingualQueries.Polish
+                ? Math.Min(MinimumPolishIncidentShapedConfirmed, language.IncidentShapedPositiveQueryCount)
+                : language.IncidentShapedPositiveQueryCount;
+            Assert.True(
+                language.IncidentShapedPositiveConfirmedCount >= required,
+                $"{language.Language} confirmed a labelled answer for {language.IncidentShapedPositiveConfirmedCount}" +
+                $" of {language.IncidentShapedPositiveQueryCount} incident-shaped positive queries at the" +
+                $" shipped confirm score {MemoryRelevanceJudgeSetting.DefaultConfirmScore:F3}, below the {required}" +
+                $" the bar asks for. The confirm boundary is" +
+                $" {Describe(record.Scoring.ConfirmByLanguage.Single(boundary => boundary.Language == language.Language))}.");
+        });
+
+        AssertAttackLegs(record);
+
         Assert.True(
             polish.PositiveQueryCount > 0,
             "The corpus contributed no Polish positive query, so Polish recall@5 measures nothing.");
@@ -300,13 +366,50 @@ public sealed class MemorySearchRelevanceJudgeBenchmarkTests(PostgresRepositoryF
             " 0.000 before the judge existed, and raising it is the defect this work fixes.");
     }
 
+    /// <summary>
+    /// The attack with the fix must confirm nothing in any language, and the same attack confirming
+    /// against the model's query must confirm something somewhere, or the leg would be passing without
+    /// attacking. The second is asserted pooled: it is the leg's own sanity check, not a property each
+    /// language has to have.
+    /// </summary>
+    private static void AssertAttackLegs(MemorySearchRelevanceJudgeBenchmarkRecord record)
+    {
+        var withFix = record.AttackLegs
+            .Single(static leg => leg.Name == MemorySearchRelevanceJudgeBenchmarkAttack.FaultQueryLeg);
+        var withoutFix = record.AttackLegs
+            .Single(static leg => leg.Name == MemorySearchRelevanceJudgeBenchmarkAttack.ModelQueryLeg);
+
+        Assert.All(withFix.Languages, language =>
+        {
+            Assert.True(
+                language.AttackQueryCount > 0,
+                $"The {language.Language} attack leg attacked no query, so its confirmed count measures nothing.");
+            Assert.True(
+                language.ConfirmedItemCount == 0,
+                $"The {language.Language} attack confirmed {language.ConfirmedItemCount} of" +
+                $" {language.ReturnedItemCount} returned items over {language.AttackQueryCount} queries with the" +
+                " band decided against the fault query, not 0.");
+        });
+        var confirmedWithoutFix = withoutFix.Languages.Sum(static language => language.ConfirmedItemCount);
+        Assert.True(
+            confirmedWithoutFix > 0,
+            "The attack confirmed nothing even with the band decided against the model's own query, so the" +
+            " leg does not attack and its zero with the fix proves nothing.");
+    }
+
+    private static string Describe(MemorySearchRelevanceJudgeBenchmarkConfirmBoundary boundary) =>
+        $"strongest negative fault score {boundary.StrongestNegativeFaultScore:F3} ({boundary.StrongestNegativeQueryId})," +
+        $" weakest relevant fault score {boundary.WeakestRelevantFaultScore:F3} ({boundary.WeakestRelevantQueryId})," +
+        $" window {boundary.WindowWidth:F3}, separable {boundary.SeparableByAConfirmScore}; read the confirm sweep" +
+        " in the record for the whole curve.";
+
     private static string Describe(MemorySearchRelevanceJudgeBenchmarkBoundary boundary) =>
         $"strongest off-topic {boundary.StrongestOffTopicScore:F3} ({boundary.StrongestOffTopicQueryId})," +
         $" weakest relevant {boundary.WeakestRelevantScore:F3} ({boundary.WeakestRelevantQueryId})," +
         $" window {boundary.WindowWidth:F3}, separable {boundary.SeparableByAFloor}; read the sweep in the" +
         " record for the whole curve.";
 
-    private static async Task<MemorySearchRelevanceJudgeBenchmarkScoring> CaptureScoresAsync(
+    private static async Task<(MemorySearchRelevanceJudgeBenchmarkScoring Scoring, IReadOnlyList<MemorySearchRelevanceJudgeBenchmarkPair> Pairs)> CaptureScoresAsync(
         (string Name, MemoryRetrievalBenchmarkCorpus Corpus)[] groups,
         IEmbeddingClient embeddingClient,
         IMemoryRepository repository,
@@ -317,6 +420,7 @@ public sealed class MemorySearchRelevanceJudgeBenchmarkTests(PostgresRepositoryF
     {
         var pairs = new List<MemorySearchRelevanceJudgeBenchmarkPair>();
         var boundaries = new List<MemorySearchRelevanceJudgeBenchmarkBoundary>(groups.Length);
+        var confirmBoundaries = new List<MemorySearchRelevanceJudgeBenchmarkConfirmBoundary>(groups.Length);
         foreach (var (name, groupCorpus) in groups)
         {
             var captured = await MemorySearchRelevanceJudgeBenchmarkScores.CaptureAsync(
@@ -332,15 +436,20 @@ public sealed class MemorySearchRelevanceJudgeBenchmarkTests(PostgresRepositoryF
                 cancellationToken);
             pairs.AddRange(captured);
             boundaries.Add(MemorySearchRelevanceJudgeBenchmarkScores.Summarize(name, captured));
+            confirmBoundaries.Add(MemorySearchRelevanceJudgeBenchmarkScores.SummarizeConfirm(name, captured));
         }
 
-        return new MemorySearchRelevanceJudgeBenchmarkScoring(
+        var scoring = new MemorySearchRelevanceJudgeBenchmarkScoring(
             judge.ScoredPairs,
             judge.ModelCalls,
             0,
             boundaries,
             MemorySearchRelevanceJudgeBenchmarkScores.Summarize(
+                MemorySearchRelevanceJudgeBenchmarkScores.PooledLanguage, pairs),
+            confirmBoundaries,
+            MemorySearchRelevanceJudgeBenchmarkScores.SummarizeConfirm(
                 MemorySearchRelevanceJudgeBenchmarkScores.PooledLanguage, pairs));
+        return (scoring, pairs);
     }
 
     private static async Task<MemorySearchRelevanceJudgeBenchmarkSweep> SweepAsync(
@@ -350,6 +459,7 @@ public sealed class MemorySearchRelevanceJudgeBenchmarkTests(PostgresRepositoryF
         string exclusionRule,
         Func<double, (double ConfirmScore, double FloorScore)> thresholdsFor,
         (string Name, MemoryRetrievalBenchmarkCorpus Corpus)[] groups,
+        IReadOnlySet<string> incidentShaped,
         TriageConfiguration hostConfiguration,
         LocalEmbeddingModelBenchmarkModel model,
         IMemoryRepository repository,
@@ -365,7 +475,7 @@ public sealed class MemorySearchRelevanceJudgeBenchmarkTests(PostgresRepositoryF
             points.Add(new MemorySearchRelevanceJudgeBenchmarkSweepPoint(
                 value,
                 await MeasureAsync(
-                    groups, hostConfiguration, model, repository, embeddingClient, judge,
+                    groups, incidentShaped, hostConfiguration, model, repository, embeddingClient, judge,
                     MemoryRelevanceJudgeSetting.On, confirmScore, floorScore,
                     setCurrentConfiguration, cancellationToken)));
         }
@@ -385,6 +495,7 @@ public sealed class MemorySearchRelevanceJudgeBenchmarkTests(PostgresRepositoryF
     /// </summary>
     private static async Task<IReadOnlyList<MemorySearchRelevanceJudgeBenchmarkLanguage>> MeasureAsync(
         (string Name, MemoryRetrievalBenchmarkCorpus Corpus)[] groups,
+        IReadOnlySet<string> incidentShaped,
         TriageConfiguration hostConfiguration,
         LocalEmbeddingModelBenchmarkModel model,
         IMemoryRepository repository,
@@ -408,6 +519,8 @@ public sealed class MemorySearchRelevanceJudgeBenchmarkTests(PostgresRepositoryF
                 .ExecuteAsync(groupCorpus, cancellationToken);
             var evaluation = MemoryRetrievalMetrics.Evaluate(groupCorpus, results);
             var metrics = evaluation.Metrics;
+            var (incidentShapedPositives, incidentShapedConfirmed) =
+                CountIncidentShapedPositives(groupCorpus, results, incidentShaped);
             languages.Add(new MemorySearchRelevanceJudgeBenchmarkLanguage(
                 name,
                 metrics.ChunkMacroRecallAt5,
@@ -418,6 +531,8 @@ public sealed class MemorySearchRelevanceJudgeBenchmarkTests(PostgresRepositoryF
                 metrics.HardNegativeQueryCount,
                 metrics.HardNegativeReturnedCount,
                 metrics.HardNegativeConfirmedCount,
+                incidentShapedPositives,
+                incidentShapedConfirmed,
                 CountBands(results)));
         }
 
@@ -487,6 +602,50 @@ public sealed class MemorySearchRelevanceJudgeBenchmarkTests(PostgresRepositoryF
     private static int CountUnansweredPositiveQueries(MemoryRetrievalEvaluation evaluation) =>
         evaluation.Queries.Count(static query =>
             query.RelevantChunkCount > 0 && query.RelevantChunkHits == 0);
+
+    /// <summary>
+    /// The ids of the incident-shaped queries in every language: an English query whose text is its
+    /// signal's service, error type and message, and every rendering of one. A rendering is identified by
+    /// its source rather than by its own text, which is translated.
+    /// </summary>
+    private static HashSet<string> IncidentShapedQueryIds(
+        MemoryRetrievalBenchmarkCorpus corpus,
+        MemoryRetrievalMultilingualQueries multilingual)
+    {
+        var english = corpus.Queries
+            .Where(static query => query.Text.StartsWith(query.ServiceName + " ", StringComparison.Ordinal))
+            .Select(static query => query.Id)
+            .ToHashSet(StringComparer.Ordinal);
+        var ids = new HashSet<string>(english, StringComparer.Ordinal);
+        ids.UnionWith(multilingual.Queries
+            .Where(entry => english.Contains(entry.SourceQueryId))
+            .Select(static entry => entry.Id));
+        return ids;
+    }
+
+    /// <summary>
+    /// Incident-shaped positive queries, and how many of them returned at least one labelled relevant
+    /// chunk within <c>TopK</c> banded <c>medium</c> or better.
+    /// </summary>
+    private static (int Positives, int Confirmed) CountIncidentShapedPositives(
+        MemoryRetrievalBenchmarkCorpus corpus,
+        IReadOnlyList<MemoryRetrievalQueryResult> results,
+        IReadOnlySet<string> incidentShaped)
+    {
+        var byQuery = results.ToDictionary(static result => result.QueryId, StringComparer.Ordinal);
+        var positives = corpus.Queries
+            .Where(query => incidentShaped.Contains(query.Id) && query.RelevantChunkIds.Count > 0)
+            .ToArray();
+        var confirmed = positives.Count(query =>
+        {
+            var relevant = query.RelevantChunkIds.ToHashSet();
+            return byQuery[query.Id].Matches
+                .Take(corpus.TopK)
+                .Any(match => relevant.Contains(match.ChunkId) &&
+                    MemoryRetrievalConfidence.ConfirmsMatch(match.RetrievalConfidence));
+        });
+        return (positives.Length, confirmed);
+    }
 
     private static Dictionary<string, int> CountBands(IReadOnlyList<MemoryRetrievalQueryResult> results)
     {

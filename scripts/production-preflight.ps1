@@ -94,6 +94,16 @@ try {
         }
     }
 
+    # The relevance judge provider is pinned to LocalOnnx in compose.production.yml and is not read
+    # from this file. An entry that names any other provider is refused rather than ignored, so an
+    # operator who believes they chose the mock judge, a deterministic stand-in that is not a
+    # governance boundary, learns here that production never runs it.
+    foreach ($key in @($values.Keys)) {
+        if ($key -match '(?i)relevance_?judge(_|__)provider' -and [string] $values[$key] -cne "LocalOnnx") {
+            throw "Production setting '$key' names a relevance judge other than LocalOnnx; the provider is pinned to LocalOnnx, and the Mock judge must never run on a production host."
+        }
+    }
+
     $realBindings = @{
         INCIDENTCOMPASS_LLM_MODEL = @("local-model", "mock-chat")
         INCIDENTCOMPASS_LLM_API_KEY = @("local-dev-key")
@@ -193,6 +203,13 @@ try {
     Import-ProductionEnvironment -Values $values
     $compose = Get-ProductionComposeArguments -EnvironmentFile $environmentPath -ProjectName $projectName
     Invoke-ProductionDocker -ComposeArguments $compose -Arguments @("config", "--quiet")
+    # The rendered stack, not this file, is what the Worker runs, so the judge provider is checked
+    # there too: an edited or added compose file that turned on the Mock judge stops here.
+    $rendered = (Invoke-ProductionDocker -ComposeArguments $compose -Arguments @("config", "--format", "json") -CaptureOutput) -join "`n"
+    $renderedJudgeProvider = [string] ($rendered | ConvertFrom-Json).services.worker.environment.IncidentCompass__RelevanceJudge__Provider
+    if ($renderedJudgeProvider -cne "LocalOnnx") {
+        throw "The production worker must run the LocalOnnx relevance judge; the Mock judge must never run on a production host."
+    }
     $services = @(Invoke-ProductionDocker -ComposeArguments $compose -Arguments @("config", "--services") -CaptureOutput)
     if (($services | Sort-Object) -join "," -ne "api,postgres,worker") {
         throw "Production Compose must activate only api, postgres and worker."

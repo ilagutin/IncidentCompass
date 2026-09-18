@@ -1,5 +1,6 @@
 using System.Text.Json;
 using IncidentCompass.Application.Memory;
+using IncidentCompass.Domain.Incidents;
 
 namespace IncidentCompass.UnitTests;
 
@@ -45,14 +46,23 @@ public sealed class MemorySearchVectorOnlyFallbackTests
         Assert.All(ranked, match => Assert.Equal(MemoryRetrievalConfidence.Low, match.RetrievalConfidence));
     }
 
+    /// <summary>
+    /// Admission is decided on the role's query and the band on the fault's, by a judge. The
+    /// mixed-script query is admitted lexically by its Latin words, and a mixed-script fault the judge
+    /// confirms is <c>medium</c>, not <c>high</c>, because its Cyrillic words do not occur in the chunk.
+    /// </summary>
     [Fact]
-    public void Rank_MixedScriptQueryIsLexicallySupportedByItsLatinWordsAndBandsMedium()
+    public async Task Rank_MixedScriptQueryIsAdmittedByItsLatinWordsAndAConfirmedMixedScriptFaultIsMedium()
     {
         var ranked = Rank(RussianMixedQuery, MemorySearchVectorOnlyFallback.ForeignScript, [Match(1)]);
+        var output = await ExecuteAsync(
+            RussianMixedQuery,
+            MemorySearchVectorOnlyFallbackSetting.ForeignScript,
+            MemorySearchToolTestSupport.TriggerSignal(RussianMixedQuery),
+            new ScriptedMemoryRelevanceJudge(3.0f));
 
-        var match = Assert.Single(ranked);
-        Assert.False(match.VectorOnly);
-        Assert.Equal(MemoryRetrievalConfidence.Medium, match.RetrievalConfidence);
+        Assert.False(Assert.Single(ranked).VectorOnly);
+        Assert.Equal(MemoryRetrievalConfidence.Medium, output.ArtifactBand);
     }
 
     [Fact]
@@ -104,26 +114,51 @@ public sealed class MemorySearchVectorOnlyFallbackTests
         Assert.Equal(2, Rank(EnglishOffTopicQuery, MemorySearchVectorOnlyFallback.Always, wordless).Count);
     }
 
+    /// <summary>
+    /// The reranker admits and orders, and never confirms: everything it returns is <c>low</c> until a
+    /// judge confirms it against the fault. A confirmed item is then <c>high</c> only when every counted
+    /// word of the fault query is eligible and present in the chunk.
+    /// </summary>
     [Fact]
-    public void Rank_HighBandNeedsEveryCountedQueryWordEligibleAndPresent()
+    public async Task ExecuteAsync_HighBandNeedsEveryCountedFaultWordEligibleAndPresent()
     {
         var ranked = Rank("checkout timeout inventory", MemorySearchVectorOnlyFallback.Off, [Match(1)]);
+        var covered = await ExecuteAsync(
+            "checkout timeout inventory",
+            vectorOnlyFallback: null,
+            MemorySearchToolTestSupport.TriggerSignal(MemorySearchToolTestSupport.FullyDescribingSummary),
+            new ScriptedMemoryRelevanceJudge(3.0f));
+        var partial = await ExecuteAsync(
+            "checkout timeout inventory",
+            vectorOnlyFallback: null,
+            MemorySearchToolTestSupport.TriggerSignal(MemorySearchToolTestSupport.PartiallyDescribingSummary),
+            new ScriptedMemoryRelevanceJudge(3.0f));
 
-        Assert.Equal(MemoryRetrievalConfidence.High, Assert.Single(ranked).RetrievalConfidence);
+        Assert.Equal(MemoryRetrievalConfidence.Low, Assert.Single(ranked).RetrievalConfidence);
+        Assert.Equal(MemoryRetrievalConfidence.High, covered.ArtifactBand);
+        Assert.Equal(MemoryRetrievalConfidence.Medium, partial.ArtifactBand);
     }
 
+    /// <summary>
+    /// With no judge the lexical gate still admits, and the result is still returned as matched
+    /// context, but nothing is confirmed, even for a fault the chunk covers word for word: the band is
+    /// <c>low</c> and the message is the unconfirmed one, not <c>matches found</c>.
+    /// </summary>
     [Fact]
-    public async Task ExecuteAsync_LexicalResultReportsMatchesFoundAndTheHighBand()
+    public async Task ExecuteAsync_LexicalResultWithoutAJudgeIsReturnedButNotConfirmed()
     {
-        var output = await ExecuteAsync("checkout timeout inventory", vectorOnlyFallback: null);
+        var output = await ExecuteAsync(
+            "checkout timeout inventory",
+            vectorOnlyFallback: null,
+            MemorySearchToolTestSupport.TriggerSignal(MemorySearchToolTestSupport.FullyDescribingSummary));
 
         Assert.True(output.Result.GetProperty("matched").GetBoolean());
-        Assert.Equal("matches found", output.Result.GetProperty("message").GetString());
+        Assert.Equal(MemorySearchMessage.RelatedMatches, output.Result.GetProperty("message").GetString());
         Assert.Equal(JsonValueKind.Null, output.Result.GetProperty("noMatchReason").ValueKind);
         Assert.Equal(
-            MemoryRetrievalConfidence.High,
+            MemoryRetrievalConfidence.Low,
             output.Result.GetProperty("items")[0].GetProperty("retrievalConfidence").GetString());
-        Assert.Equal(MemoryRetrievalConfidence.High, output.ArtifactBand);
+        Assert.Equal(MemoryRetrievalConfidence.Low, output.ArtifactBand);
     }
 
     [Fact]
@@ -161,13 +196,17 @@ public sealed class MemorySearchVectorOnlyFallbackTests
         Assert.Equal(MemoryRetrievalConfidence.Low, output.ArtifactBand);
     }
 
-    private static async Task<ToolOutput> ExecuteAsync(string query, string? vectorOnlyFallback)
+    private static async Task<ToolOutput> ExecuteAsync(
+        string query,
+        string? vectorOnlyFallback,
+        Signal? signal = null,
+        IMemoryRelevanceJudge? judge = null)
     {
         var configuration = MemorySearchToolTestSupport.Configuration(vectorOnlyFallback);
-        var tool = new MemorySearchTool(new StubEmbeddingClient(), new StubMemoryRepository([Match(1)]));
+        var tool = new MemorySearchTool(new StubEmbeddingClient(), new StubMemoryRepository([Match(1)]), judge);
         var validation = tool.Validate(JsonSerializer.SerializeToElement(new { query }));
         var result = await tool.ExecuteAsync(
-            MemorySearchToolTestSupport.Context(configuration),
+            MemorySearchToolTestSupport.Context(configuration, signal),
             validation.SanitizedArguments,
             TestContext.Current.CancellationToken);
 

@@ -122,13 +122,14 @@ internal sealed class MemorySearchTool(
             new MemorySearchRequest(context.TenantId, embedding.Provider, embedding.Model,
                 embedding.Vector.Count, embedding.Vector, CalculateCandidateCount(topK), NormalizeMinScore(toolSettings.MinScore)),
             cancellationToken);
+        var judgeSettings = MemoryRelevanceJudgeSetting.Resolve(toolSettings);
         var judgement = await MemoryRelevanceJudgePass.JudgeAsync(
             relevanceJudge,
             query,
             candidates,
-            MemoryRelevanceJudgeSetting.Resolve(toolSettings),
+            judgeSettings,
             cancellationToken);
-        var ranked = MemorySearchReranker.Rank(
+        var admitted = MemorySearchReranker.Rank(
             query,
             context.Configuration,
             context.FaultServiceName,
@@ -137,12 +138,24 @@ internal sealed class MemorySearchTool(
             MemorySearchVectorOnlyFallbackSetting.Resolve(toolSettings.VectorOnlyFallback),
             judgement);
 
+        // Admission and order above answer the role's query. The band answers whether each returned
+        // document describes the incident the backend received, so it is decided against the fault
+        // query built from the trigger signal, which the role cannot reword.
+        var confirmation = await MemoryFaultConfirmation.ConfirmAsync(
+            relevanceJudge,
+            MemoryFaultQuery.For(context.TriggerSignal),
+            admitted,
+            judgement,
+            judgeSettings,
+            cancellationToken);
+        var ranked = confirmation.Matches;
+
         var drafts = ranked
             .Select(match => CreateRetrievedDraft(context, embedding, match))
             .ToArray();
         return new ToolExecutionResult(
             ToolExecutionStatus.Succeeded,
-            CreateOutput(context, ranked, drafts, judgement),
+            CreateOutput(context, ranked, drafts, confirmation.Limitation ?? judgement.Limitation),
             Artifacts: drafts);
     }
 
@@ -172,7 +185,8 @@ internal sealed class MemorySearchTool(
             ["quote"] = CreateQuote(match.Text),
             ["score"] = Math.Round(match.Score, 6),
             ["judgeScore"] = RoundJudgeScore(ranked.JudgeScore),
-            ["retrievalConfidence"] = ranked.RetrievalConfidence,
+            [MemoryRetrievalConfidence.ConfirmationScorePropertyName] = RoundJudgeScore(ranked.ConfirmationScore),
+            [MemoryRetrievalConfidence.PayloadPropertyName] = ranked.RetrievalConfidence,
             ["serviceName"] = match.ServiceName,
             ["component"] = match.Component,
             ["release"] = match.ReleaseName,
@@ -188,7 +202,7 @@ internal sealed class MemorySearchTool(
         AgentToolExecutionContext context,
         IReadOnlyList<MemorySearchRankedMatch> ranked,
         ToolArtifactDraft[] drafts,
-        MemoryRelevanceJudgement judgement)
+        string? limitation)
     {
         var items = new JsonArray();
         for (var i = 0; i < ranked.Count; i++)
@@ -207,7 +221,8 @@ internal sealed class MemorySearchTool(
                 ["quote"] = CreateQuote(match.Text),
                 ["score"] = Math.Round(match.Score, 6),
                 ["judgeScore"] = RoundJudgeScore(ranked[i].JudgeScore),
-                ["retrievalConfidence"] = ranked[i].RetrievalConfidence,
+                [MemoryRetrievalConfidence.ConfirmationScorePropertyName] = RoundJudgeScore(ranked[i].ConfirmationScore),
+                [MemoryRetrievalConfidence.PayloadPropertyName] = ranked[i].RetrievalConfidence,
                 ["serviceName"] = match.ServiceName,
                 ["component"] = match.Component,
                 ["release"] = match.ReleaseName,
@@ -221,7 +236,7 @@ internal sealed class MemorySearchTool(
         {
             ["matched"] = matched,
             ["message"] = ResolveMessage(ranked),
-            ["limitation"] = judgement.Limitation,
+            ["limitation"] = limitation,
             ["items"] = items,
             ["noMatchReason"] = matched ? null : NoMatchesMessage
         });
@@ -229,9 +244,10 @@ internal sealed class MemorySearchTool(
 
     /// <summary>
     /// An unconfirmed result is reported under its own sentence so the role can tell it apart from a
-    /// confirmed one without reading each item's band. There are two such sentences because there are
-    /// two different unconfirmed sets: a judged set nothing in which reached the confirm score, and
-    /// the older vector-only fallback set, which only the unjudged path can produce.
+    /// confirmed one without reading each item's band: <c>matches found</c> is said exactly when at
+    /// least one item is confirmed, which needs a relevance judge. There are two unconfirmed sentences
+    /// because there are two different unconfirmed sets: the vector-only fallback set, which only the
+    /// unjudged path can produce, and every other set, nothing in which was confirmed.
     /// </summary>
     private static string ResolveMessage(IReadOnlyList<MemorySearchRankedMatch> ranked)
     {
@@ -240,21 +256,20 @@ internal sealed class MemorySearchTool(
             return NoMatchesMessage;
         }
 
-        if (ranked.Any(static match => match.JudgeScore is not null))
+        if (ranked.Any(static match => MemoryRetrievalConfidence.ConfirmsMatch(match.RetrievalConfidence)))
         {
-            return ranked.All(static match => match.RetrievalConfidence == MemoryRetrievalConfidence.Low)
-                ? RelatedMatchesMessage
-                : MatchesFoundMessage;
+            return MatchesFoundMessage;
         }
 
         return ranked.Any(static match => match.VectorOnly)
             ? VectorOnlyMatchesMessage
-            : MatchesFoundMessage;
+            : RelatedMatchesMessage;
     }
 
     /// <summary>
-    /// The judge's score is reported beside the vector score, never in place of it: <c>score</c> is
-    /// the same cosine similarity it has always been, and this field is null when nothing judged.
+    /// The judge's scores are reported beside the vector score, never in place of it: <c>score</c> is
+    /// the same cosine similarity it has always been, and <c>judgeScore</c> and
+    /// <c>confirmationScore</c> are each null when no judge scored them.
     /// </summary>
     private static JsonValue? RoundJudgeScore(double? judgeScore) =>
         judgeScore is { } score ? JsonValue.Create(Math.Round(score, 6)) : null;

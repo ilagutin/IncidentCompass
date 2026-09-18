@@ -716,9 +716,9 @@ at one for the same reason the embedding adapter's does, and the tool's 120-seco
 nowhere near either figure. Its
 two thresholds are numbers on one model's scale: they were measured for the pinned cross-encoder, they
 are configuration rather than constants, and another judge model would need its own. A host that runs
-no judge at all keeps the pre-judge behaviour instead of failing, which is honest but means two
-different retrieval behaviours exist in the wild; the tool states which one ran in a top-level
-`limitation` string so a reader is not left guessing. That concession is deliberately narrow: only an
+no judge at all keeps the pre-judge admission instead of failing and confirms nothing, which is honest
+but means two different retrieval behaviours exist in the wild; the tool states which one ran in a
+top-level `limitation` string so a reader is not left guessing. That concession is deliberately narrow: only an
 unconfigured judge directory and a directory nothing is installed in yet take it, because a host whose
 judge is corrupt, tampered with or unreachable is broken, and quietly answering such a call from the
 lexical gate would be the silent degradation the judge exists to remove, at the moment it matters most.
@@ -754,6 +754,10 @@ not a stripped pipeline:
 | Polish | 0.000 | 0.500 | 0 of 6, 0 of 6 | 0, 0 |
 | Russian | 1.000 | 0.500 | 6 of 6, 0 of 6 | 4, 0 |
 
+The hard-negative column was measured while the band still answered the role's own query. The band
+now answers the fault query, a call no judge judged confirms nothing, and the confirm score was
+measured again for that; the sweep is in the next section on confirmation.
+
 Russian is the row the judge was built for. Vector-only fallback was already carrying its positive
 queries, and it was carrying every off-topic and hard-negative query with them: all six off-topic
 Russian queries returned matches and four hard negatives came back confirmed, because a fallback is
@@ -773,12 +777,52 @@ an offline sweep of the same graph under another ONNX runtime build put those tw
 apart in the opposite order, which is a reordering larger than the entire window. A threshold for this
 judge cannot be transferred from anywhere but a run of the real tool.
 
-`retrievalConfidence` names the admission path rather than a score band. On a judged call `high` means
-the judge confirmed and lexical coverage was full, `medium` the judge alone, and `low` admitted but
-unconfirmed; on a host with no judge the values keep their earlier meanings, `high` for full lexical
-coverage with nothing excluded, `medium` for partial or script-reduced coverage, and `low` for a
-vector-only match. The band still does not survive into the report, and dropping an unconfirmed item is
-still the memory role's job. PostgreSQL full-text search, reciprocal-rank fusion, adaptive retries and
+`retrievalConfidence` names whether a returned document was confirmed against the incident rather than
+a score band, and it is decided against a fault query built from the trigger signal, not against the
+role's query. The fault query is built by the backend from fields the sender of the signal supplied:
+the service name, the error type and the error message, or the summary when there is no message, which
+for a user report is the reporter's own text. A role cannot rewrite those fields, so re-querying cannot
+raise the band of a document it has already been shown; it only changes which documents come back. On
+a judged call confirmation costs a second judge call over the returned items: `high` means the judge
+confirmed the document against the fault query and lexical coverage of that query was full, `medium`
+the judge alone, and `low` admitted but unconfirmed. The synthesized summary is left out of the fault
+query whenever there is a message, because its templated "failed" frame pulled unrelated faults
+towards every incident document about the same service: measured through the product, an off-topic
+checkout price-rounding fault scored 2.97 against the known checkout-timeout incident with the summary
+in, above the confirm score.
+
+The confirm score is 0.75, measured against the fault query rather than transferred from the earlier
+1.15, which was measured against the role's query and does not apply to fault text. The confirm score
+was swept through the real `memory_search` over the grown corpus in all three languages, with the
+fault query built from each query's own trigger signal:
+
+| Confirm score | Hard negatives confirmed | English incident-shaped | Russian incident-shaped | Polish incident-shaped |
+| --- | --- | --- | --- | --- |
+| 0.50 and below | 1 English | 6 of 6 | 6 of 6 | 5 of 6 |
+| 0.55 | 1 English | 6 of 6 | 6 of 6 | 4 of 6 |
+| 0.60 to 0.90 | 0 | 6 of 6 | 6 of 6 | 4 of 6 |
+| 0.95 to 1.20 | 0 | 6 of 6 | 5 of 6 | 4 of 6 |
+
+The window that keeps every hard negative unconfirmed and confirms every English and Russian
+incident-shaped positive is (0.60, 0.90]; 0.75 sits in its middle, about 0.15 from either side. Across
+it the attack leg, in which a role re-queries with the full text of the document the judge scored
+highest for an off-topic or hard-negative query, confirms 0 of 12 in every language, against 12 of 12
+when the same documents are confirmed against the role's own query. Polish is the stated cost: its
+fifth incident-shaped positive scores below the English hard negative, so no confirm score confirms
+it without confirming that hard negative, and the release keeps the hard negative out. Polish stays at
+4 of 6 confirmed; the other two are still returned, banded `low` as related context.
+
+A host with no relevance judge confirms nothing. Every returned item is `low`, the result carries a
+limitation that says no judge ran, and no memory-based `KnownIncident` report can be published there.
+Retrieval, admission, the vector-only fallback and passing items on as context are unchanged. Word
+overlap was considered as a fallback and rejected: a short fault query confirms on a single shared
+word, so a user report naming only its service and one symptom confirms most documents about that
+service, and a fault written in another script leaves only its Latin identifiers eligible, so a
+document would be confirmed on the service name alone. No lexical threshold can be chosen honestly
+against both, so a host that wants confirmation runs the judge; the shipped compose files do, the
+evaluation stack included, and the mock stack runs a deterministic mock judge that is not a governance
+boundary. The band still does not survive into the report, and dropping an unconfirmed item is still
+the memory role's job. PostgreSQL full-text search, reciprocal-rank fusion, adaptive retries and
 caller-configurable ranking weights remain deferred.
 
 ## Deterministic Grouping Is Not Incident Correlation

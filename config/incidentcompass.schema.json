@@ -190,13 +190,13 @@
         },
         "RelevanceJudge": {
           "enum": ["off", "on", null],
-          "description": "memory_search only. Whether to ask the relevance judge about every query. Absent: on, which asks wherever a judge is installed; a host that runs no judge keeps the lexical behaviour and says so in the tool output."
+          "description": "memory_search only. Whether to ask the relevance judge about every query. Absent: on, which asks wherever a judge is installed; a host that runs no judge admits matches lexically, confirms nothing, and says so in the tool output."
         },
         "RelevanceConfirmScore": {
           "type": ["number", "null"],
           "minimum": -50,
           "maximum": 50,
-          "description": "memory_search only. The judge score at or above which a match is reported as confirmed. Absent: 1.15, measured for the pinned cross-encoder. It must not be below RelevanceFloorScore."
+          "description": "memory_search only. The judge score, against the fault query built from the trigger signal, at or above which a returned match is reported as confirmed. Absent: 0.75, measured for the pinned cross-encoder against fault queries on the retrieval benchmark corpus. It must not be below RelevanceFloorScore."
         },
         "RelevanceFloorScore": {
           "type": ["number", "null"],

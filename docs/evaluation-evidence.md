@@ -11,6 +11,9 @@ than believed.
 - Retained record: `evaluations/triage/measured-run-tree-4a7feac.json`
 - The change committed immediately after the run, and shipped in the same release, added integration
   tests and changed no production code
+- Recorded before the relevance judge existed. The evaluation stack as it now ships runs the judge and
+  confirms memory matches against the trigger signal's fault query, so this run does not describe that
+  stack, and its memory-based numbers are not a measurement of it
 
 **Why a tree hash and not a commit id.** Every release in this repository lands by rebase, which
 rewrites the commit ids a release branch carried. The id this run recorded for itself,

@@ -17,7 +17,8 @@ internal static class LocalOnnxRelevanceJudgeSetup
     /// host already registered, because a pinned artifact set is a pinned artifact set whatever it
     /// is for.
     /// <para>
-    /// Composed only where the embedding host is composed, which is the Worker. Its options
+    /// Composed only through <c>AddRelevanceJudge</c>, when the configured judge provider is the local
+    /// one, and only where the embedding host is composed, which is the Worker. Its options
     /// validator has no provider gate, so registering it anywhere a host without a judge would see
     /// it would stop that host; it is registered here and nowhere else.
     /// </para>

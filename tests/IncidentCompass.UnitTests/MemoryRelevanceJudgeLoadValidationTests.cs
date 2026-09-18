@@ -53,7 +53,7 @@ public sealed class MemoryRelevanceJudgeLoadValidationTests
         Assert.Null(tool.RelevanceFloorScore);
         var resolved = MemoryRelevanceJudgeSetting.Resolve(tool);
         Assert.Equal("On", resolved.Mode.ToString());
-        Assert.Equal(1.15, resolved.ConfirmScore);
+        Assert.Equal(0.75, resolved.ConfirmScore);
         Assert.Equal(-0.25, resolved.FloorScore);
     }
 

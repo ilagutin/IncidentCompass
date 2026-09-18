@@ -273,9 +273,14 @@ retrieved candidates are admitted and which of them are reported as confirmed;
 `docs/architecture.md`, "Memory Worker", describes that decision and `docs/trade-offs.md` carries the
 measured scores behind the shipped thresholds.
 
-It has no provider setting and no route. No triage-configuration provider entry names it, nothing in
-the model gateway dispatches to it, and it writes no `ModelCall` ledger row: it is one Application
-port, `IMemoryRelevanceJudge`, with one in-process adapter. The host setting
+It has no route. No triage-configuration provider entry names it, nothing in the model gateway
+dispatches to it, and it writes no `ModelCall` ledger row: it is one Application port,
+`IMemoryRelevanceJudge`. The Worker host setting `IncidentCompass:RelevanceJudge:Provider` chooses its
+adapter: `LocalOnnx`, the default and the only value a production host may run, is the in-process
+cross-encoder described here; `Mock` is a deterministic stand-in for the mock stack that confirms a
+document when it names the fault's error type, needs no model, is not a governance boundary, and is
+refused on production by `compose.production.yml` and the production preflight. Any other value stops
+the Worker at start. With the local adapter, the host setting
 `IncidentCompass:RelevanceJudge:LocalOnnx:ModelDirectory` is what says whether this host runs a judge
 at all. An absolute path turns it on and has every other judge setting validated before the host
 starts; a blank or absent value leaves the host without one, which is not a start failure over a model
@@ -314,8 +319,10 @@ model's kind, id, revision, license, run settings and both files' paths and dige
 `artifacts/<its SHA-256>/<its file name>`. The recorded kind is what makes a directory holding an
 embedding model a reported wrong-kind problem rather than a model loaded as a judge. The two models
 need two directories because a directory holds one active manifest, not because they are deliberately
-kept apart: both compose files that run a judge put its directory inside the embedding model's volume,
-at `/app/models/relevance-judge`, so one volume holds both and one `memory model install` fills both.
+kept apart: every compose file that runs the local judge, the demo, production and evaluation stacks,
+puts its directory inside the embedding model's volume, at `/app/models/relevance-judge`, so one volume
+holds both and one `memory model install` fills both. The mock stack runs the mock judge and no judge
+directory.
 
 Installation and verification follow the embedding model's rules exactly. An installed manifest wins
 and is never replaced by changed host defaults, both of its files are hashed again on every start, an

@@ -54,6 +54,9 @@ internal static class MemorySearchLexicalFilter
         return new MemorySearchLexicalSupport(queryTokens.Count, eligible, matched);
     }
 
+    /// <summary>Whether <paramref name="value" /> carries at least one counted word.</summary>
+    internal static bool HasCountedWord(string value) => Tokenize(value).Count > 0;
+
     /// <summary>The writing systems the counted words of <paramref name="value" /> are written in.</summary>
     internal static IReadOnlySet<WritingScript> CountedScripts(string value) => CountedScripts(Tokenize(value));
 

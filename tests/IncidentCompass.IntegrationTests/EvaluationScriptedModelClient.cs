@@ -6,6 +6,15 @@ namespace IncidentCompass.IntegrationTests;
 
 internal sealed class EvaluationScriptedModelClient : IAiModelClient
 {
+    /// <summary>The labelled benchmark query the memory worker sends for a checkout fault.</summary>
+    public const string CheckoutQuery = "connection pool saturation";
+
+    /// <summary>The labelled benchmark query the memory worker sends for the older-runbook checkout fault.</summary>
+    public const string OlderRunbookQuery = "legacy rollback procedure";
+
+    /// <summary>The query the memory worker sends for any other service, which no benchmark query labels.</summary>
+    public const string UnrecognizedQuery = "unrecognized evaluation failure without matching service memory";
+
     public Task<AiModelResponse> CompleteAsync(AiModelRequest request, CancellationToken cancellationToken)
     {
         var toolNames = request.Tools?.Select(static tool => tool.Name).ToHashSet(StringComparer.Ordinal) ?? [];
@@ -150,9 +159,9 @@ internal sealed class EvaluationScriptedModelClient : IAiModelClient
     private static string MemoryQuery(string prompt) =>
         prompt.Contains("checkout-api", StringComparison.Ordinal)
             ? prompt.Contains("older runbook pattern", StringComparison.Ordinal)
-                ? "legacy rollback procedure"
-                : "connection pool saturation"
-            : "unrecognized evaluation failure without matching service memory";
+                ? OlderRunbookQuery
+                : CheckoutQuery
+            : UnrecognizedQuery;
 
     private static JsonObject Report(
         string status,

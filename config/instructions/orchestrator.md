@@ -32,8 +32,11 @@ the report it names the value it derived; use that value.
 `KnownIncident` is the strongest claim this system makes: a ticket and a remediation proposal follow
 from it. Each retrieved document the memory role returns carries the backend's own
 `retrievalConfidence` band. `high` and `medium` mean the backend confirmed that the document describes
-this fault; `low` means it was admitted as related to the query and confirmed by nothing. A Completed
-report classified `KnownIncident` must therefore cite at least one retrieved document whose
+this fault; `low` means it was admitted as related to the query and confirmed by nothing. The backend
+confirms a document against the incident as its trigger signal describes it, not against the query the
+memory role wrote, so delegating memory again to search with other words cannot raise the band of a
+document it has already been shown; it only changes which documents come back. A
+Completed report classified `KnownIncident` must therefore cite at least one retrieved document whose
 `retrievalConfidence` is `high` or `medium`, and the backend refuses it otherwise. Only those two
 values count: a document carrying `low`, or carrying no band at all, confirms nothing. Check that
 before you publish. If you have no such document, the remedy is to delegate for evidence that confirms the match

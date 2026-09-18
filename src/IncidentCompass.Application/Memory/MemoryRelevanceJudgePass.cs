@@ -4,7 +4,8 @@ namespace IncidentCompass.Application.Memory;
 
 /// <summary>
 /// Asks <see cref="IMemoryRelevanceJudge" /> about one candidate set and turns its scores into an
-/// admission decision. This is the only place the two configured thresholds are applied.
+/// admission decision. This is the only place the floor is applied, and <see cref="ScoreAsync" /> is
+/// the only way either judgement of a call reaches the port.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -16,7 +17,8 @@ namespace IncidentCompass.Application.Memory;
 /// <para>
 /// Exactly two states are a deployment shape rather than a failure, and they are named by
 /// <see cref="MemoryRelevanceJudgeAbsence" />: no judge model directory is configured, and nothing is
-/// installed in the configured one yet. Those return unjudged with a limitation the tool reports.
+/// installed in the configured one yet. Those return unjudged with a limitation the tool reports, and
+/// so does a judge turned off by configuration: on every unjudged call nothing is confirmed.
 /// Everything else propagates untouched, a judge that does not verify included, because a judge that
 /// was installed and then could not load, could not run or no longer matches its digest has said
 /// nothing about relevance, and answering anyway would be the tool inventing the answer it was built
@@ -26,6 +28,11 @@ namespace IncidentCompass.Application.Memory;
 /// The adapter's side of the port contract is checked here too. A score that is not a finite number,
 /// or a count that does not match the candidates, is refused by name rather than used: a NaN compares
 /// false against both thresholds, so an unchecked one would be admitted as an unconfirmed match.
+/// </para>
+/// <para>
+/// The confirm score is not applied here. Admission is decided against the role's query, and
+/// confirmation against the fault query, by <see cref="MemoryFaultConfirmation" />, which asks the
+/// port a second time through <see cref="ScoreAsync" /> and so under exactly these rules.
 /// </para>
 /// </remarks>
 internal static class MemoryRelevanceJudgePass
@@ -37,11 +44,12 @@ internal static class MemoryRelevanceJudgePass
     private const string PortName = "memory_relevance_judge";
 
     /// <summary>
-    /// Stated in the tool output so the reading role knows the result was admitted without a judge.
-    /// It is not an error code: nothing failed, this host simply runs no judge.
+    /// Stated in the tool output so the reading role knows the result was admitted without a judge and
+    /// that nothing in it is confirmed. It is not an error code: nothing failed, this call simply ran
+    /// no judge, because the host has none or the judge is turned off.
     /// </summary>
-    public const string NoJudgeOnHostLimitation =
-        "no relevance judge is installed on this host, so matches were admitted by lexical support alone";
+    public const string NoJudgeLimitation =
+        "no relevance judge ran, so matches were admitted by lexical support alone and none was confirmed";
 
     public static async Task<MemoryRelevanceJudgement> JudgeAsync(
         IMemoryRelevanceJudge? judge,
@@ -52,12 +60,12 @@ internal static class MemoryRelevanceJudgePass
     {
         if (settings.Mode == MemoryRelevanceJudgeMode.Off)
         {
-            return MemoryRelevanceJudgement.NotJudged(limitation: null);
+            return MemoryRelevanceJudgement.NotJudged(NoJudgeLimitation);
         }
 
         if (judge is null)
         {
-            return MemoryRelevanceJudgement.NotJudged(NoJudgeOnHostLimitation);
+            return MemoryRelevanceJudgement.NotJudged(NoJudgeLimitation);
         }
 
         // An empty candidate set is judged, and trivially admits nothing. Saying so rather than
@@ -68,17 +76,36 @@ internal static class MemoryRelevanceJudgePass
             return MemoryRelevanceJudgement.Admitting([]);
         }
 
+        var scores = await ScoreAsync(
+            judge,
+            query,
+            candidates.Select(static candidate => candidate.Text).ToArray(),
+            cancellationToken);
+        return scores is null
+            ? MemoryRelevanceJudgement.NotJudged(NoJudgeLimitation)
+            : MemoryRelevanceJudgement.Admitting(Admit(candidates, scores, settings));
+    }
+
+    /// <summary>
+    /// Scores <paramref name="candidates" /> against <paramref name="query" /> under the port contract:
+    /// one finite score per candidate, in order. Returns null only when this host is not running a
+    /// judge at all; every other failure propagates with its own code, and a contract breach is
+    /// refused by name.
+    /// </summary>
+    public static async Task<IReadOnlyList<double>?> ScoreAsync(
+        IMemoryRelevanceJudge judge,
+        string query,
+        IReadOnlyList<string> candidates,
+        CancellationToken cancellationToken)
+    {
         IReadOnlyList<float> scores;
         try
         {
-            scores = await judge.ScoreAsync(
-                query,
-                candidates.Select(static candidate => candidate.Text).ToArray(),
-                cancellationToken);
+            scores = await judge.ScoreAsync(query, candidates, cancellationToken);
         }
         catch (MemoryRelevanceJudgeException exception) when (IsNoJudgeOnHost(exception))
         {
-            return MemoryRelevanceJudgement.NotJudged(NoJudgeOnHostLimitation);
+            return null;
         }
 
         if (scores.Count != candidates.Count)
@@ -89,7 +116,23 @@ internal static class MemoryRelevanceJudgePass
                 MemoryRelevanceJudgeErrorCodes.ScoreCountMismatch);
         }
 
-        return MemoryRelevanceJudgement.Admitting(Admit(candidates, scores, settings));
+        var checkedScores = new double[scores.Count];
+        for (var index = 0; index < scores.Count; index++)
+        {
+            double score = scores[index];
+            if (!double.IsFinite(score))
+            {
+                throw ContractRefusal(
+                    "The relevance judge scored candidate " + index + " of " + candidates.Count +
+                    " as a value that is not a finite number, so it cannot be compared with either" +
+                    " threshold.",
+                    MemoryRelevanceJudgeErrorCodes.ScoreNotFinite);
+            }
+
+            checkedScores[index] = score;
+        }
+
+        return checkedScores;
     }
 
     /// <summary>
@@ -109,31 +152,18 @@ internal static class MemoryRelevanceJudgePass
 
     private static List<MemoryRelevanceJudgedCandidate> Admit(
         IReadOnlyList<MemorySearchMatch> candidates,
-        IReadOnlyList<float> scores,
+        IReadOnlyList<double> scores,
         MemoryRelevanceJudgeSettings settings)
     {
         var admitted = new List<MemoryRelevanceJudgedCandidate>(candidates.Count);
         for (var index = 0; index < candidates.Count; index++)
         {
-            double score = scores[index];
-            if (!double.IsFinite(score))
-            {
-                throw ContractRefusal(
-                    "The relevance judge scored candidate " + index + " of " + candidates.Count +
-                    " as a value that is not a finite number, so it cannot be compared with either" +
-                    " threshold.",
-                    MemoryRelevanceJudgeErrorCodes.ScoreNotFinite);
-            }
-
-            if (score < settings.FloorScore)
+            if (scores[index] < settings.FloorScore)
             {
                 continue;
             }
 
-            admitted.Add(new MemoryRelevanceJudgedCandidate(
-                candidates[index],
-                score,
-                score >= settings.ConfirmScore));
+            admitted.Add(new MemoryRelevanceJudgedCandidate(candidates[index], scores[index]));
         }
 
         return admitted;

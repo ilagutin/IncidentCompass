@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Json;
 using IncidentCompass.Application.Core.Embeddings;
 using IncidentCompass.Application.Core.Errors;
 using IncidentCompass.Application.Governance.Tools;
@@ -20,12 +21,29 @@ internal static class MemorySearchToolTestSupport
     /// <summary>An English chunk holding the words the multilingual fixtures were translated from.</summary>
     public const string EnglishChunk = "checkout timeout inventory latency circuit breaker payments";
 
+    /// <summary>
+    /// A fault summary every counted word of which occurs in <see cref="EnglishChunk" />. With
+    /// <see cref="ServiceName" /> in front of it the fault query is fully covered by that chunk, because
+    /// <c>api</c> is a stop word and <c>checkout</c> is already counted.
+    /// </summary>
+    public const string FullyDescribingSummary = "checkout timeout inventory";
+
+    /// <summary>
+    /// A fault summary that shares most of its counted words with <see cref="EnglishChunk" /> but not
+    /// all of them, so the chunk supports the fault query without covering it.
+    /// </summary>
+    public const string PartiallyDescribingSummary = "checkout timeout inventory connection";
+
+    /// <summary>A fault summary none of whose counted words occurs in <see cref="EnglishChunk" />.</summary>
+    public const string UnrelatedSummary = "certificate rotation handshake";
+
     public static TriageConfiguration Configuration(
         string? vectorOnlyFallback = null,
         string? relevanceJudge = null,
         double? relevanceConfirmScore = null,
         double? relevanceFloorScore = null,
-        bool currentReleases = false)
+        bool currentReleases = false,
+        int? topK = null)
     {
         var configuration = TestTriageConfiguration.Create();
         var tools = new Dictionary<string, TriageToolSettings>(configuration.Tools, StringComparer.Ordinal);
@@ -34,7 +52,8 @@ internal static class MemorySearchToolTestSupport
             VectorOnlyFallback = vectorOnlyFallback,
             RelevanceJudge = relevanceJudge,
             RelevanceConfirmScore = relevanceConfirmScore,
-            RelevanceFloorScore = relevanceFloorScore
+            RelevanceFloorScore = relevanceFloorScore,
+            TopK = topK ?? tools["memory_search"].TopK
         };
         return configuration with
         {
@@ -45,7 +64,14 @@ internal static class MemorySearchToolTestSupport
         };
     }
 
-    public static AgentToolExecutionContext Context(TriageConfiguration configuration)
+    /// <summary>
+    /// An execution context. <paramref name="triggerSignal" /> is null unless a test passes one, and a
+    /// context without a signal confirms nothing: every band it produces is <c>low</c>. A test that
+    /// asserts a confirmed band therefore has to say which fault the documents describe.
+    /// </summary>
+    public static AgentToolExecutionContext Context(
+        TriageConfiguration configuration,
+        Signal? triggerSignal = null)
     {
         var now = DateTimeOffset.Parse("2026-01-15T00:00:00Z", CultureInfo.InvariantCulture);
         return new AgentToolExecutionContext(
@@ -66,7 +92,31 @@ internal static class MemorySearchToolTestSupport
             "memory",
             "memory_search",
             "tenant-a",
-            ServiceName);
+            ServiceName)
+        {
+            TriggerSignal = triggerSignal
+        };
+    }
+
+    /// <summary>
+    /// A trigger signal on <see cref="ServiceName" /> whose fault query is the service name followed
+    /// by <paramref name="errorType" /> and <paramref name="errorMessage" />, with
+    /// <paramref name="summary" /> in place of the message when no message is given, which is how
+    /// most tests here state the fault a chunk should or should not describe.
+    /// </summary>
+    public static Signal TriggerSignal(
+        string summary,
+        string? errorType = null,
+        string? errorMessage = null,
+        string serviceName = ServiceName)
+    {
+        var now = DateTimeOffset.Parse("2026-01-15T00:00:00Z", CultureInfo.InvariantCulture);
+        return new Signal(
+            Guid.Parse("90000000-0000-0000-0000-000000000003"), "tenant-a", "tester",
+            Guid.Parse("90000000-0000-0000-0000-000000000002"), "fingerprint", 1,
+            FingerprintStrength.Strong, true, null, false, null, null, null, null, null,
+            serviceName, "production", null, "Error", errorType, errorMessage, summary,
+            null, null, null, null, null, EmptyObject(), EmptyObject(), now, now, null);
     }
 
     public static MemorySearchMatch Match(
@@ -88,6 +138,12 @@ internal static class MemorySearchToolTestSupport
             service,
             component,
             release);
+
+    private static JsonElement EmptyObject()
+    {
+        using var document = JsonDocument.Parse("{}");
+        return document.RootElement.Clone();
+    }
 }
 
 /// <summary>
@@ -96,20 +152,19 @@ internal static class MemorySearchToolTestSupport
 /// </summary>
 internal sealed class ScriptedMemoryRelevanceJudge(params float[] scores) : IMemoryRelevanceJudge
 {
-    public int CallCount { get; private set; }
+    private readonly List<(string Query, IReadOnlyList<string> Candidates)> calls = [];
 
-    public string? LastQuery { get; private set; }
+    public int CallCount => calls.Count;
 
-    public IReadOnlyList<string> LastCandidates { get; private set; } = [];
+    /// <summary>Every call in the order it was made: the admission call first, the confirmation call second.</summary>
+    public IReadOnlyList<(string Query, IReadOnlyList<string> Candidates)> Calls => calls;
 
     public Task<IReadOnlyList<float>> ScoreAsync(
         string query,
         IReadOnlyList<string> candidates,
         CancellationToken cancellationToken)
     {
-        CallCount++;
-        LastQuery = query;
-        LastCandidates = candidates;
+        calls.Add((query, candidates));
         return Task.FromResult<IReadOnlyList<float>>(candidates
             .Select((_, index) => scores[Math.Min(index, scores.Length - 1)])
             .ToArray());

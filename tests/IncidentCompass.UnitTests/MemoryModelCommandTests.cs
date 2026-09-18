@@ -4,6 +4,7 @@ using IncidentCompass.Application.Memory;
 using IncidentCompass.Infrastructure.EmbeddingModels;
 using IncidentCompass.Infrastructure.Embeddings.LocalOnnx;
 using IncidentCompass.Infrastructure.Memory;
+using IncidentCompass.Infrastructure.Relevance;
 using IncidentCompass.Infrastructure.Relevance.LocalOnnx;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
@@ -316,6 +317,53 @@ public sealed class MemoryModelCommandTests : IAsyncLifetime
         Assert.Contains("RelevanceJudge:LocalOnnx:ModelDirectory", result.Error, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// A Worker that runs the mock judge is reported as running the mock, not as a local judge that is
+    /// not configured, which would be false while a judge is confirming matches. The local judge's
+    /// directory is deliberately blank here, as it is on the mock stack, to show the mock is recognized
+    /// before the local settings are read. It exits 1 with an otherwise healthy embedding model: the
+    /// mock is not the shipped judge, and a script waiting for a ready host must not accept it.
+    /// </summary>
+    [Fact]
+    public async Task Status_OnAMockJudgeHost_ReportsTheMockAndExitsOne()
+    {
+        using var fixture = await LocalOnnxFixtureModel.InstallAsync(TestContext.Current.CancellationToken);
+        var manifest = fixture.FixtureManifest;
+        await using var services = Services(
+            fixture.Options,
+            LocalModelTestSupport.Configuration(manifest.Id),
+            LocalModelTestSupport.Corpus(LocalOnnxModelIdentity.Describe(manifest), Guid.NewGuid()),
+            judgeOptions: new LocalOnnxRelevanceJudgeOptions(),
+            judgeProvider: RelevanceJudgeOptions.MockProvider);
+
+        var result = await RunAsync(services, "memory", "model", "status");
+
+        Assert.Equal(1, result.ExitCode);
+        Assert.Contains("Local embedding model: " + manifest.Id, result.Output, StringComparison.Ordinal);
+        Assert.Contains(RelevanceJudgeModelSection.MockJudgeStatusLine, result.Output, StringComparison.Ordinal);
+        Assert.DoesNotContain("not configured", result.Output, StringComparison.Ordinal);
+        Assert.Contains("must never run on a production host", result.Error, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Install_OnAMockJudgeHost_InstallsNoJudgeReportsTheMockAndExitsOne()
+    {
+        using var fixture = await LocalOnnxFixtureModel.InstallAsync(TestContext.Current.CancellationToken);
+        await using var services = Services(
+            fixture.Options,
+            LocalModelTestSupport.Configuration(fixture.FixtureManifest.Id),
+            EmptyCorpus(),
+            judgeOptions: new LocalOnnxRelevanceJudgeOptions(),
+            judgeProvider: RelevanceJudgeOptions.MockProvider);
+
+        var result = await RunAsync(services, "memory", "model", "install");
+
+        Assert.Equal(1, result.ExitCode);
+        Assert.Contains("already active", result.Output, StringComparison.Ordinal);
+        Assert.Contains(RelevanceJudgeModelSection.MockJudgeStatusLine, result.Output, StringComparison.Ordinal);
+        Assert.Contains("no relevance judge model to install", result.Error, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task Install_InstallsBothTheEmbeddingModelAndTheRelevanceJudge()
     {
@@ -408,9 +456,15 @@ public sealed class MemoryModelCommandTests : IAsyncLifetime
         HttpMessageHandler? handler = null,
         LocalOnnxRelevanceJudgeOptions? judgeOptions = null,
         IOptions<LocalOnnxEmbeddingOptions>? embeddingAccessor = null,
-        IOptions<LocalOnnxRelevanceJudgeOptions>? judgeAccessor = null)
+        IOptions<LocalOnnxRelevanceJudgeOptions>? judgeAccessor = null,
+        string? judgeProvider = null)
     {
         var services = new ServiceCollection();
+        if (judgeProvider is not null)
+        {
+            services.AddSingleton(Options.Create(new RelevanceJudgeOptions { Provider = judgeProvider }));
+        }
+
         services.AddSingleton(Options.Create(new EmbeddingOptions { Provider = provider }));
         services.AddSingleton(embeddingAccessor ?? Options.Create(options));
         services.AddSingleton(judgeAccessor ?? Options.Create(judgeOptions ?? JudgeFixture.Options));
