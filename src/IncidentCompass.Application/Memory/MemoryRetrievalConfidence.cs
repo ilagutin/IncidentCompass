@@ -15,6 +15,13 @@ namespace IncidentCompass.Application.Memory;
 /// </remarks>
 internal static class MemoryRetrievalConfidence
 {
+    /// <summary>
+    /// The property name the band is written under, in the tool result, in the durable artifact
+    /// payload and in the memory role's output. Named here because configuration load has to refuse
+    /// a redaction attribute key that would replace it.
+    /// </summary>
+    public const string PayloadPropertyName = "retrievalConfidence";
+
     /// <summary>Confirmed by everything that judged the match.</summary>
     public const string High = "high";
 
@@ -23,6 +30,21 @@ internal static class MemoryRetrievalConfidence
 
     /// <summary>Admitted without being confirmed by anything: related, not a stated match.</summary>
     public const string Low = "low";
+
+    /// <summary>
+    /// Whether a band confirms that the item describes this fault rather than merely relating to the
+    /// query. <c>high</c> and <c>medium</c> confirm; <c>low</c> does not, and neither does an absent
+    /// band.
+    /// </summary>
+    /// <remarks>
+    /// Absence is not a weaker yes. A memory artifact written before this release carries no
+    /// <c>retrievalConfidence</c> key at all, so nothing ever recorded a confirmation for it, and
+    /// reading that silence as confirmation is the case this predicate exists to stop: a re-triage of
+    /// an old fault would rest a <c>KnownIncident</c> classification, and the ticket and remediation
+    /// diff that follow from it, on a match no judge ever saw. Reading it the safe way costs one
+    /// correction turn on a report the backend can still publish under another classification.
+    /// </remarks>
+    public static bool ConfirmsMatch(string? band) => band is High or Medium;
 
     /// <summary>
     /// The band of an unjudged call: lexically supported and fully covered is <c>high</c>, lexically

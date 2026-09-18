@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using IncidentCompass.Application.Investigation.Jobs;
 using IncidentCompass.Application.Investigation.Reports;
 using IncidentCompass.Domain.Incidents;
@@ -144,11 +145,15 @@ internal static class TriageReportGroundingTestSupport
         return await ScalarAsync<Guid>(connectionString, "SELECT id FROM incidentcompass.triage_artifacts WHERE job_id = @job_id AND kind = @kind ORDER BY created_at_utc, id LIMIT 1;", ("job_id", jobId), ("kind", kind));
     }
 
+    // The retrievalConfidence argument is the band memory_search wrote onto this payload: null omits
+    // the key entirely, which is what a memory artifact written before the band was read at
+    // publication looks like, and is deliberately not the same claim as "low".
     public static async Task<Guid> InsertRetrievedMemoryArtifactAsync(
         string connectionString,
         Guid jobId,
         int attempt,
-        string documentationStatus)
+        string documentationStatus,
+        string? retrievalConfidence = null)
     {
         var memoryItemId = Guid.NewGuid();
         var artifactId = Guid.NewGuid();
@@ -174,8 +179,63 @@ internal static class TriageReportGroundingTestSupport
             ("job_id", jobId),
             ("attempt", attempt),
             ("domain_ref", "memory_item:" + memoryItemId),
-            ("payload", JsonSerializer.Serialize(new { documentationStatus, score = 0.9 })),
+            ("payload", MemoryArtifactPayload(documentationStatus, retrievalConfidence)),
             ("content_hash", unique));
+        return artifactId;
+    }
+
+    private static string MemoryArtifactPayload(string documentationStatus, string? retrievalConfidence)
+    {
+        var payload = new JsonObject
+        {
+            ["documentationStatus"] = documentationStatus,
+            ["score"] = 0.9
+        };
+        if (retrievalConfidence is not null)
+        {
+            payload["retrievalConfidence"] = retrievalConfidence;
+        }
+
+        return payload.ToJsonString();
+    }
+
+    /// <summary>
+    /// A ticket-search result, stored the way <c>ticket_search</c> stores one: the same
+    /// <c>RetrievedItem</c> artifact kind as a memory document, with the closed
+    /// <c>ExistingTicket</c> payload shape, which has no room for a retrieval band.
+    /// </summary>
+    public static async Task<Guid> InsertTicketArtifactAsync(
+        string connectionString,
+        Guid jobId,
+        int attempt,
+        string repository,
+        int issueNumber)
+    {
+        var artifactId = Guid.NewGuid();
+        await ExecuteAsync(connectionString, """
+            INSERT INTO incidentcompass.triage_artifacts (
+                id, job_id, attempt, kind, domain_ref, redacted_payload, content_hash, created_at_utc)
+            VALUES (
+                @id, @job_id, @attempt, 'RetrievedItem', @domain_ref, @payload::jsonb, @content_hash, now());
+            """,
+            ("id", artifactId),
+            ("job_id", jobId),
+            ("attempt", attempt),
+            ("domain_ref", $"ticket:github:{repository}:{issueNumber}"),
+            ("payload", JsonSerializer.Serialize(new
+            {
+                evidenceKind = "ExistingTicket",
+                provider = "github",
+                repository,
+                issueNumber,
+                title = "Checkout timeout",
+                status = "open",
+                assignee = (string?)null,
+                createdAtUtc = "2026-01-15T00:00:00.0000000+00:00",
+                url = $"https://github.com/{repository}/issues/{issueNumber}",
+                score = 0.9
+            })),
+            ("content_hash", Guid.NewGuid().ToString("N")));
         return artifactId;
     }
 
@@ -234,6 +294,46 @@ internal static class TriageReportGroundingTestSupport
             ("service_name", serviceName),
             ("release", release),
             ("config_hash", configHash));
+
+    /// <summary>
+    /// The durable <c>ToolResult</c> of a <c>memory_search</c> call, written the way
+    /// <c>PostgresTriageToolResultCommitter</c> writes one: domain reference <c>tool:memory_search</c>
+    /// and the tool's whole output as the payload, so it holds every item's title and quote and
+    /// carries no band at any level the grounder reads.
+    /// </summary>
+    public static async Task<Guid> InsertMemorySearchToolResultAsync(
+        string connectionString,
+        Guid jobId,
+        int attempt)
+    {
+        var artifactId = Guid.NewGuid();
+        await ExecuteAsync(connectionString, """
+            INSERT INTO incidentcompass.triage_artifacts (
+                id, job_id, attempt, kind, domain_ref, redacted_payload, content_hash, created_at_utc)
+            VALUES (
+                @id, @job_id, @attempt, 'ToolResult', 'tool:memory_search', @payload::jsonb, @content_hash, now());
+            """,
+            ("id", artifactId),
+            ("job_id", jobId),
+            ("attempt", attempt),
+            ("payload", JsonSerializer.Serialize(new
+            {
+                matched = true,
+                message = "related matches, none confirmed by the relevance judge",
+                items = new[]
+                {
+                    new
+                    {
+                        title = "Checkout Timeout Runbook",
+                        quote = "Checkout timeout alerts usually indicate upstream payment latency.",
+                        score = 0.9,
+                        retrievalConfidence = "low"
+                    }
+                }
+            })),
+            ("content_hash", Guid.NewGuid().ToString("N")));
+        return artifactId;
+    }
 
     public static Task InsertToolOutcomeAsync(string connectionString, Guid jobId, int attempt) =>
         ExecuteAsync(connectionString, """

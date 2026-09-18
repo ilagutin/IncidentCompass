@@ -150,6 +150,12 @@ internal static class MockIncidentCompassScripts
     /// <c>low</c> was admitted without being confirmed, so the mock drops it instead of quoting it, and
     /// returns the honest empty result when nothing else is left. Without this the mock profile would
     /// turn an unconfirmed cross-language hit into a KnownIncident report.
+    /// <para>
+    /// The band of an item the mock does keep is copied through, the way the role instructions now ask
+    /// for. It is the orchestrator's only view of which documents can carry a <c>KnownIncident</c>
+    /// classification, and a mock that dropped it would demonstrate a profile whose orchestrator can
+    /// only meet that rule by being refused once.
+    /// </para>
     /// </summary>
     private static string MemoryWorkerJson(string toolResult)
     {
@@ -164,18 +170,25 @@ internal static class MockIncidentCompassScripts
         var items = new JsonArray();
         foreach (var item in root.GetProperty("items").EnumerateArray())
         {
-            if (string.Equals(ReadOptionalString(item, "retrievalConfidence"), UnconfirmedBand, StringComparison.Ordinal))
+            var band = ReadOptionalString(item, "retrievalConfidence");
+            if (string.Equals(band, UnconfirmedBand, StringComparison.Ordinal))
             {
                 continue;
             }
 
-            items.Add(new JsonObject
+            var memoryItem = new JsonObject
             {
                 ["artifactId"] = ReadOptionalString(item, "artifactId") ?? string.Empty,
                 ["title"] = ReadOptionalString(item, "title") ?? string.Empty,
                 ["quote"] = ReadOptionalString(item, "quote") ?? string.Empty,
                 ["score"] = item.TryGetProperty("score", out var score) && score.TryGetDouble(out var value) ? value : null
-            });
+            };
+            if (band is not null)
+            {
+                memoryItem["retrievalConfidence"] = band;
+            }
+
+            items.Add(memoryItem);
         }
 
         if (items.Count == 0)

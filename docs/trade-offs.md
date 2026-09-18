@@ -653,12 +653,30 @@ queries return five unconfirmed items each, which is why such a match is always 
 returned the same empty result every time, so a model that loops through reworded queries is recognised
 as making no progress later than it would have been before.
 
-The band does not survive into the report. A `low` item is an ordinary `RetrievedItem` artifact, and
-report evidence grounding derives the evidence kind from the memory item's own kind, so an unconfirmed
-item the model chooses to cite appears in the published report exactly like a lexically confirmed one.
-`retrievalConfidence` exists only in the tool output and in the artifact payload; dropping an
-unconfirmed item is the memory role's job, and the role is a model. This applies to the shipped default
-on foreign-script queries, not only to `always`.
+The band reaches the report only as a bar on one classification. A `low` item is still an ordinary
+`RetrievedItem` artifact, and report evidence grounding still derives the evidence kind from the memory
+item's own kind, so an unconfirmed item the model chooses to cite is stored and displayed exactly like a
+confirmed one. What the publication transaction now reads from the artifact payload is the band itself:
+a `Completed` report classified `KnownIncident` that cites at least one memory-backed retrieved document
+must cite at least one the backend confirmed, and is refused otherwise. That is the classification a
+ticket and a remediation proposal follow from. Every other classification, and a report citing no
+retrieved document at all, is untouched, so dropping an unconfirmed item from an ordinary report remains
+the memory role's job, and the role is a model. This applies to the shipped default on foreign-script
+queries, not only to `always`.
+
+A memory payload that carries no `retrievalConfidence` key at all - what an artifact written before this
+release looks like - does not count as confirmed. The published report is the input to a ticket and a
+diff, so the safe reading of silence is that nothing judged the match, at the price of one correction
+turn on a re-triage that cites such an artifact.
+
+For that bar to be something the orchestrator can meet rather than only be refused by, the band travels
+to it: the memory role copies `retrievalConfidence` into each item it returns, the delegate result
+carries it beside `score` and `documentationStatus`, and the shipped orchestrator instruction states the
+rule in terms of that field. The reprompt allowance is one, so a rule discoverable only by refusal costs
+the whole correction turn on learning something the backend already knew. Handing a model a
+governance-relevant field forges nothing: the refusal is decided against the band `memory_search` stored
+on the artifact, never against the worker's copy of it, so a worker that alters or invents a value
+misleads the orchestrator it reports to and changes nothing about what the report is measured against.
 
 The default's trigger is an operational edge worth knowing: it compares the query's scripts against the
 *whole* candidate set, not against each candidate. One Russian runbook among English ones puts Cyrillic

@@ -50,6 +50,36 @@ public sealed class MemoryInstructionLiteralTests
             Assert.Contains(message, text, StringComparison.Ordinal));
     }
 
+    /// <summary>
+    /// The role is the only path by which the band reaches the orchestrator, and the orchestrator is
+    /// told to read it before classifying a report <c>KnownIncident</c>. An instruction that stopped
+    /// naming the field, or went back to forbidding the copy, would leave the orchestrator able to
+    /// discover the publication rule only by being refused, on a reprompt allowance of one.
+    /// </summary>
+    [Fact]
+    public void ShippedMemoryInstructions_TellTheRoleToCopyTheRetrievalBand()
+    {
+        var text = ReadInstructions();
+
+        Assert.Contains("`retrievalConfidence`. Omit everything else", text, StringComparison.Ordinal);
+        Assert.Contains("Copy `retrievalConfidence` verbatim", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("Do not copy `retrievalConfidence`", text, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// And the band is the backend's own, so the instruction has to say that inventing one changes
+    /// nothing about the refusal: the backend measures the report against the band it stored on the
+    /// artifact, not against the worker's copy.
+    /// </summary>
+    [Fact]
+    public void ShippedMemoryInstructions_SayTheBandIsCheckedAgainstStoredStateNotTheCopy()
+    {
+        var text = ReadInstructions();
+
+        Assert.Contains("Never invent or upgrade the band", text, StringComparison.Ordinal);
+        Assert.Contains("not against your copy of it", text, StringComparison.Ordinal);
+    }
+
     private static string ReadInstructions()
     {
         var path = Path.Combine(RepositoryRootLocator.Find(), "config", "instructions", "memory.md");

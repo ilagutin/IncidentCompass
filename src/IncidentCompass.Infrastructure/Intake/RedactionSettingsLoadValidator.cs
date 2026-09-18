@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using IncidentCompass.Application.Intake.Configuration;
+using IncidentCompass.Application.Memory;
 using static IncidentCompass.Infrastructure.Intake.TriageConfigurationValidationGuards;
 
 namespace IncidentCompass.Infrastructure.Intake;
@@ -7,6 +8,22 @@ namespace IncidentCompass.Infrastructure.Intake;
 internal static class RedactionSettingsLoadValidator
 {
     private static readonly TimeSpan PatternTimeout = TimeSpan.FromMilliseconds(200);
+
+    /// <summary>
+    /// Property names an operator may not turn into a redaction attribute key, because redacting them
+    /// would not hide a secret but silently weaken a governance decision.
+    /// <para>
+    /// <c>retrievalConfidence</c> is the band the publication rule reads. Redaction replaces a
+    /// matching property's value with the redaction marker whatever its kind, so naming this key
+    /// would turn every confirmed match into a value that confirms nothing, on the artifact payload
+    /// as well as in the tool result: every <c>KnownIncident</c> resting on memory would then be
+    /// refused, and the operator would have configured a system that cannot reach its own strongest
+    /// classification. It is refused at load for the same reason a role output schema that types a
+    /// secret-named property as a non-string is refused: the configuration defeats itself.
+    /// </para>
+    /// </summary>
+    private static readonly HashSet<string> ReservedAttributeKeys =
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase) { MemoryRetrievalConfidence.PayloadPropertyName };
 
     public static void Validate(RedactionSettings settings)
     {
@@ -40,6 +57,15 @@ internal static class RedactionSettingsLoadValidator
             if (!distinct.Add(key))
             {
                 throw Invalid(section, key, "unique attribute keys");
+            }
+
+            if (ReservedAttributeKeys.Contains(key))
+            {
+                throw Invalid(
+                    section,
+                    key,
+                    "an attribute key that is not " + MemoryRetrievalConfidence.PayloadPropertyName +
+                        "; redacting the retrieval band would make every confirmed memory match stop confirming");
             }
         }
     }

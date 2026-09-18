@@ -137,8 +137,15 @@ internal sealed class TriageToolConfigurationLoadValidator(IAgentToolRegistry to
 
     /// <summary>
     /// The three relevance-judge keys. Each score is bounded on its own, and the pair is then checked
-    /// against itself: a floor above the confirm score would leave a band that can never be reached,
-    /// which is a configuration mistake rather than a strict policy.
+    /// against itself: the floor must sit strictly below the confirm score, so that the three
+    /// outcomes the judge can reach - dropped, admitted unconfirmed, confirmed - are all reachable.
+    /// <para>
+    /// A floor above the confirm score leaves the confirmed band unreachable. An equal pair is the
+    /// mirror image and is worse, because it looks harmless: everything the judge admits is then
+    /// confirmed, the <c>low</c> band cannot occur, and the publication rule that refuses a
+    /// <c>KnownIncident</c> resting only on unconfirmed memory becomes a rule that can never fire,
+    /// under a configuration that loads without complaint.
+    /// </para>
     /// </summary>
     private static void ValidateRelevanceJudge(string toolName, TriageToolSettings tool)
     {
@@ -157,13 +164,14 @@ internal sealed class TriageToolConfigurationLoadValidator(IAgentToolRegistry to
 
         var confirmScore = tool.RelevanceConfirmScore ?? MemoryRelevanceJudgeSetting.DefaultConfirmScore;
         var floorScore = tool.RelevanceFloorScore ?? MemoryRelevanceJudgeSetting.DefaultFloorScore;
-        if (floorScore > confirmScore)
+        if (floorScore >= confirmScore)
         {
             throw Invalid(
                 "Tools." + toolName + "." + MemoryRelevanceJudgeSetting.FloorScoreSettingName,
                 floorScore.ToString(CultureInfo.InvariantCulture),
-                "a score at or below Tools." + toolName + "." +
-                    MemoryRelevanceJudgeSetting.ConfirmScoreSettingName);
+                "a score strictly below Tools." + toolName + "." +
+                    MemoryRelevanceJudgeSetting.ConfirmScoreSettingName +
+                    ", so that a candidate can be admitted without being confirmed");
         }
     }
 

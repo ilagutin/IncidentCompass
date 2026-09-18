@@ -133,10 +133,13 @@ public sealed class MemorySearchRelevanceJudgeSweepListTests
         Assert.Equal(
             81,
             measured.Count(static value => value is >= -2.0 and <= 0.0));
+        // The confirm sweep starts one step above the held floor rather than at it: an equal pair is
+        // refused, because it leaves the unconfirmed band empty by construction.
         Assert.Equal(
-            70,
+            69,
             MeasuredConfirmScores().Count);
-        Assert.Equal(MemoryRelevanceJudgeSetting.DefaultFloorScore, MeasuredConfirmScores()[0]);
+        Assert.True(MeasuredConfirmScores()[0] > MemoryRelevanceJudgeSetting.DefaultFloorScore);
+        Assert.Equal(MemoryRelevanceJudgeSetting.DefaultFloorScore + 0.05, MeasuredConfirmScores()[0], 6);
     }
 
     /// <summary>

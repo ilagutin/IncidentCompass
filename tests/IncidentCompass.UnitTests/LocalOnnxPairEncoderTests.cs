@@ -1,3 +1,4 @@
+using IncidentCompass.Application.Memory;
 using IncidentCompass.Infrastructure.EmbeddingModels;
 using IncidentCompass.Infrastructure.Relevance.LocalOnnx;
 
@@ -95,32 +96,76 @@ public sealed class LocalOnnxPairEncoderTests
     }
 
     /// <summary>
-    /// Only when the passage has nothing left to give is the query cut, and then it is cut on a token
+    /// The query is cut at half the content budget however long it is, and it is cut on a token
     /// boundary: every id it keeps is the id the uncapped encoding had in that position, so no token
     /// was split into a different piece.
+    /// <para>
+    /// The half is the defect this test exists for. Giving the query the whole budget first let a
+    /// long enough query leave the passage nothing, and every candidate scored against an empty
+    /// passage receives the same score, so the judge admitted all of them or none whatever they
+    /// contained.
+    /// </para>
     /// </summary>
     [Fact]
-    public async Task Encode_CutsTheQueryOnlyWhenThePassageCannotMakeRoomAndNeverSplitsAToken()
+    public async Task Encode_CutsTheQueryAtHalfTheBudgetSoThePassageIsNeverStarved()
     {
         var encoder = await LoadFixtureEncoderAsync();
         var longQuery = string.Concat(Enumerable.Repeat("checkout timeout while calling the payment service ", 8));
+        var longPassage = string.Concat(Enumerable.Repeat("payment service latency ", 80));
         var uncappedQueryIds = ContentIds(encoder, longQuery);
-        Assert.True(uncappedQueryIds.Length > encoder.MaxContentTokens);
+        Assert.True(uncappedQueryIds.Length > encoder.MaxQueryTokens);
 
-        var ids = encoder.Encode(longQuery, "payment service latency");
+        var ids = encoder.Encode(longQuery, longPassage);
 
-        Assert.Equal(encoder.MaxContentTokens + LocalOnnxPairEncoder.SpecialTokenCount, ids.Length);
-        var keptQueryIds = ids[1..(1 + encoder.MaxContentTokens)];
-        Assert.Equal(uncappedQueryIds.Take(encoder.MaxContentTokens), keptQueryIds);
+        var (queryCount, passageCount) = SegmentLengths(ids);
+        Assert.Equal(encoder.MaxQueryTokens, queryCount);
+        Assert.Equal(encoder.MaxContentTokens - encoder.MaxQueryTokens, passageCount);
+        Assert.True(passageCount >= encoder.MaxContentTokens / 2);
+        Assert.Equal(uncappedQueryIds.Take(encoder.MaxQueryTokens), ids[1..(1 + queryCount)]);
+    }
 
-        // The passage kept nothing: the two separators and the closing marker are all that follow.
-        Assert.Equal(
-            [
-                LocalOnnxSentencePieceVocabulary.EndOfSequenceId,
-                LocalOnnxSentencePieceVocabulary.EndOfSequenceId,
-                LocalOnnxSentencePieceVocabulary.EndOfSequenceId
-            ],
-            ids[(1 + encoder.MaxContentTokens)..]);
+    /// <summary>
+    /// The tool refuses a query longer than <c>MemorySearchQueryBound.MaxQueryCharacters</c>, and
+    /// that bound is derived from this window. At the pinned window a query written right up to it
+    /// still leaves the passage at least half the sequence, so the bound and the split agree rather
+    /// than each assuming the other.
+    /// </summary>
+    [Fact]
+    public async Task Encode_AQueryAtTheToolsOwnBoundStillLeavesThePassageHalfThePinnedWindow()
+    {
+        var manifest = await LocalOnnxRelevanceJudgeFixtureModel.ReadFixtureManifestAsync(
+            TestContext.Current.CancellationToken);
+        var encoder = LocalOnnxRelevanceJudgeFixtureModel.LoadFixtureEncoder(
+            manifest with { MaxTokens = MemorySearchQueryBound.JudgeTokenWindow });
+        var query = string.Concat(Enumerable.Repeat("checkout timeout payment ", 200))[
+            ..MemorySearchQueryBound.MaxQueryCharacters];
+        var passage = string.Concat(Enumerable.Repeat("payment service latency circuit breaker ", 200));
+
+        var ids = encoder.Encode(query, passage);
+
+        var (queryCount, passageCount) = SegmentLengths(ids);
+        Assert.InRange(ids.Length, LocalOnnxPairEncoder.SpecialTokenCount, MemorySearchQueryBound.JudgeTokenWindow);
+        Assert.Equal(MemorySearchQueryBound.MaxQueryTokens, encoder.MaxQueryTokens);
+        Assert.True(queryCount <= encoder.MaxQueryTokens);
+        Assert.True(passageCount >= encoder.MaxContentTokens / 2);
+    }
+
+    /// <summary>
+    /// The query and the passage ids, read back out of the pair layout: one opening marker, the
+    /// query, two separators, the passage, one closing marker.
+    /// </summary>
+    private static (int QueryCount, int PassageCount) SegmentLengths(long[] ids)
+    {
+        for (var index = 1; index + 1 < ids.Length; index++)
+        {
+            if (ids[index] == LocalOnnxSentencePieceVocabulary.EndOfSequenceId &&
+                ids[index + 1] == LocalOnnxSentencePieceVocabulary.EndOfSequenceId)
+            {
+                return (index - 1, ids.Length - index - 3);
+            }
+        }
+
+        throw new InvalidOperationException("The encoded pair carries no separator pair.");
     }
 
     [Fact]

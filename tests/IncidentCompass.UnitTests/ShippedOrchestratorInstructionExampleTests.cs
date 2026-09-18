@@ -98,6 +98,37 @@ public sealed class ShippedOrchestratorInstructionExampleTests
         Assert.Equal(
             memoryRoleItem.GetProperty("quote").GetString(),
             orchestratorItem.GetProperty("quote").GetString());
+        Assert.Equal(
+            memoryRoleItem.GetProperty("retrievalConfidence").GetString(),
+            orchestratorItem.GetProperty("retrievalConfidence").GetString());
+    }
+
+    /// <summary>
+    /// The one-shot example classifies <c>KnownIncident</c> on a single cited memory document, so the
+    /// band it shows for that document is what decides whether the example teaches a report the
+    /// backend would publish. Run through the same rule the publication transaction refuses with.
+    /// </summary>
+    [Fact]
+    public void ShippedPublishExample_SatisfiesTheMemoryCitationConfirmationRuleItWouldBeMeasuredBy()
+    {
+        var publishExample = PublishExample();
+        var shownBands = MemoryResultExample().GetProperty("items")
+            .EnumerateArray()
+            .ToDictionary(
+                static item => item.GetProperty("artifactId").GetString()!,
+                static item => item.TryGetProperty("retrievalConfidence", out var band) ? band.GetString() : null,
+                StringComparer.Ordinal);
+        var citedBands = publishExample.GetProperty("evidence")
+            .EnumerateArray()
+            .Select(item => shownBands[item.GetProperty("referenceId").GetString()!])
+            .ToArray();
+
+        Assert.Equal("KnownIncident", publishExample.GetProperty("classification").GetString());
+        Assert.NotEmpty(citedBands);
+        Assert.False(MemoryCitationConfirmationRule.RefusesUnconfirmedMemoryCitations(
+            TriageReportStatus.Completed,
+            publishExample.GetProperty("classification").GetString()!,
+            citedBands));
     }
 
     /// <summary>

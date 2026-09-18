@@ -54,6 +54,26 @@ public sealed class MockMemoryWorkerConfidenceTests
         Assert.Equal(2, output["items"]!.AsArray().Count);
     }
 
+    /// <summary>
+    /// The band of a kept item is copied through, because it is the orchestrator's only view of which
+    /// documents can carry a <c>KnownIncident</c> classification. A mock that dropped it would ship a
+    /// demo profile whose orchestrator can meet that rule only by being refused first.
+    /// </summary>
+    [Fact]
+    public void MemoryWorkerResponse_CopiesTheBandOfEveryItemItKeeps()
+    {
+        var output = RunMemoryWorker(ToolResult(
+            "matches found",
+            ("a1", "Checkout Timeout Runbook", "high"),
+            ("a2", "Inventory Latency Note", "medium"),
+            ("a3", "Unrelated Note", "low")));
+
+        var items = output["items"]!.AsArray();
+        Assert.Equal(
+            ["high", "medium"],
+            items.Select(static item => item!["retrievalConfidence"]!.GetValue<string>()));
+    }
+
     [Fact]
     public void MemoryWorkerResponse_EmptyToolResultKeepsTheToolsOwnNoMatchReason()
     {

@@ -1,4 +1,5 @@
 using IncidentCompass.Application.Investigation.Reports;
+using IncidentCompass.Application.Memory;
 
 namespace IncidentCompass.Application.Investigation.Jobs;
 
@@ -83,6 +84,10 @@ internal static class OrchestratorRepromptDiagnostics
             LimitationTooLong,
             TooManyEvidenceItems,
             QuoteTooLong,
+            // One fixed sentence pair, derived from a band the backend itself wrote onto the cited
+            // artifact. It names the rule and the classification it is scoped to and nothing else,
+            // so it is a constant in this allowlist rather than a family.
+            MemoryCitationConfirmationRule.UnconfirmedMemoryCitationRefusal,
             ReservedReportText.ReservedTextRefusal
         };
 

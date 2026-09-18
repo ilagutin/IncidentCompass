@@ -15,12 +15,19 @@ namespace IncidentCompass.Infrastructure.Relevance.LocalOnnx;
 /// </para>
 /// <para>
 /// Content is capped at <see cref="LocalOnnxModelManifest.MaxTokens" /> minus the four markers,
-/// because the model fails outright on a longer sequence. The passage is cut to whatever the query
-/// leaves, and the query is cut only when it alone does not fit: a query is short, and losing part
-/// of it would change the question being asked. Both cuts land on a token boundary, never inside a
+/// because the model fails outright on a longer sequence. The query is allowed at most half that
+/// budget and the passage takes the rest, so a short query still leaves the passage almost the whole
+/// window while a long one can never take it all. Both cuts land on a token boundary, never inside a
 /// token, because the cap is applied while tokenizing rather than to the text. This differs from the
 /// reference tokenizer's default, which shortens whichever segment is currently longer; the two
 /// agree for every pair that fits.
+/// </para>
+/// <para>
+/// The half is not a style choice. Giving the query the whole budget first let a long enough query
+/// leave the passage nothing, and every candidate then scored against an empty passage receives the
+/// same score, so the judge admits all of them or none whatever they contain. Splitting the budget
+/// keeps every candidate's own text in the sequence. The caller bounds the query as well, so at the
+/// pinned window this cut is a backstop rather than the normal path.
 /// </para>
 /// </summary>
 internal sealed class LocalOnnxPairEncoder
@@ -42,6 +49,13 @@ internal sealed class LocalOnnxPairEncoder
 
     internal int MaxContentTokens => maxContentTokens;
 
+    /// <summary>
+    /// The most tokens the query may occupy: half the content budget, and never less than one, so a
+    /// window too narrow to split at all still asks a question. Whatever the query does not use goes
+    /// to the passage, so the passage is never given less than the other half.
+    /// </summary>
+    internal int MaxQueryTokens => Math.Max(1, maxContentTokens / 2);
+
     public static LocalOnnxPairEncoder Load(string tokenizerFilePath, LocalOnnxModelManifest manifest)
     {
         ArgumentNullException.ThrowIfNull(manifest);
@@ -55,7 +69,7 @@ internal sealed class LocalOnnxPairEncoder
     {
         ArgumentNullException.ThrowIfNull(query);
         ArgumentNullException.ThrowIfNull(passage);
-        var queryIds = EncodeSegment(query, maxContentTokens);
+        var queryIds = EncodeSegment(query, MaxQueryTokens);
         var passageIds = EncodeSegment(passage, maxContentTokens - queryIds.Count);
 
         var ids = new long[queryIds.Count + passageIds.Count + SpecialTokenCount];

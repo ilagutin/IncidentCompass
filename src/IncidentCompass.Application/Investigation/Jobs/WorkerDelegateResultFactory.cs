@@ -72,7 +72,11 @@ internal static class WorkerDelegateResultFactory
                     title = item.Title,
                     quote = item.Quote,
                     score = item.Score,
-                    documentationStatus = item.DocumentationStatus
+                    documentationStatus = item.DocumentationStatus,
+                    // The band travels for the orchestrator's benefit only. What refuses a report is
+                    // the band stored on the artifact memory_search wrote, so a worker that alters
+                    // this value misleads its own reader and nothing else.
+                    retrievalConfidence = item.RetrievalConfidence
                 }),
                 noMatchReason = output.NoMatchReason,
                 artifactId = workerOutputArtifactId

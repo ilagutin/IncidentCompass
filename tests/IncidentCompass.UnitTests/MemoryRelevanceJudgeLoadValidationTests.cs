@@ -91,6 +91,68 @@ public sealed class MemoryRelevanceJudgeLoadValidationTests
         Assert.Contains("Tools." + ReadTool + "." + settingName, exception.Message, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// The floor must sit strictly below the confirm score. An equal pair is the quiet mistake: every
+    /// candidate the judge admits is then confirmed, the <c>low</c> band cannot occur, and the
+    /// publication rule that refuses a <c>KnownIncident</c> resting only on unconfirmed memory becomes
+    /// a rule that can never fire, under a configuration that would otherwise load without complaint.
+    /// </summary>
+    [Theory]
+    [InlineData(1.15, 1.15)]
+    [InlineData(0.0, 0.0)]
+    [InlineData(-3.0, -3.0)]
+    public void Materialize_FloorEqualToTheConfirmScore_IsRefused(double confirmScore, double floorScore)
+    {
+        var node = ConfigNode();
+        Tool(node, ReadTool)[MemoryRelevanceJudgeSetting.ConfirmScoreSettingName] = confirmScore;
+        Tool(node, ReadTool)[MemoryRelevanceJudgeSetting.FloorScoreSettingName] = floorScore;
+
+        var exception = Assert.Throws<TriageConfigurationLoadException>(() => Materialize(node));
+
+        Assert.Contains(
+            "Tools." + ReadTool + "." + MemoryRelevanceJudgeSetting.FloorScoreSettingName,
+            exception.Message,
+            StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The other side of the same boundary: a floor just below the confirm score leaves a band that
+    /// can be reached, so it loads and resolves to exactly the pair that was written.
+    /// </summary>
+    [Theory]
+    [InlineData(1.15, 1.14)]
+    [InlineData(0.0, -0.01)]
+    public void Materialize_FloorJustBelowTheConfirmScore_Loads(double confirmScore, double floorScore)
+    {
+        var node = ConfigNode();
+        Tool(node, ReadTool)[MemoryRelevanceJudgeSetting.ConfirmScoreSettingName] = confirmScore;
+        Tool(node, ReadTool)[MemoryRelevanceJudgeSetting.FloorScoreSettingName] = floorScore;
+
+        var resolved = MemoryRelevanceJudgeSetting.Resolve(Materialize(node).Tools[ReadTool]);
+
+        Assert.Equal(confirmScore, resolved.ConfirmScore);
+        Assert.Equal(floorScore, resolved.FloorScore);
+        Assert.True(resolved.FloorScore < resolved.ConfirmScore);
+    }
+
+    /// <summary>
+    /// The resolver is the snapshot-side half of the same check, and it fails closed rather than
+    /// resolving a pair a loader should never have written.
+    /// </summary>
+    [Fact]
+    public void Resolve_FloorEqualToTheConfirmScore_FailsClosed()
+    {
+        var tool = Materialize(ConfigNode()).Tools[ReadTool] with
+        {
+            RelevanceConfirmScore = 0.5,
+            RelevanceFloorScore = 0.5
+        };
+
+        var exception = Assert.Throws<InvalidOperationException>(() => MemoryRelevanceJudgeSetting.Resolve(tool));
+
+        Assert.Contains("no admitted candidate could be unconfirmed", exception.Message, StringComparison.Ordinal);
+    }
+
     [Theory]
     [InlineData(1.15, 2.0)]
     [InlineData(-3.0, 0.0)]
