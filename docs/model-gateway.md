@@ -333,6 +333,35 @@ host's judge install state and logs it, and every judge call is refused with tha
 start or a `memory model install` succeeds. `docs/architecture.md`, "Memory Worker", says which of
 those codes `memory_search` may answer without a judge and which propagate.
 
+The judge adapter's own provider error codes are these fifteen, and none of them is an
+`embedding_model_*` code: the model store's vocabulary is spelled for the embedding model, and a
+store code is translated into one of these at the two places it enters the judge's world, the install
+pass and the installed-judge reader.
+
+- The two states in which this host is not running a judge at all: `relevance_judge_not_configured`,
+  no judge model directory is configured, and `relevance_judge_model_not_installed`, a directory is
+  configured and nothing is installed in it yet. These are the only two `memory_search` may answer
+  without a judge.
+- Install and store states, each of which describes a judge this host meant to run and therefore
+  propagates: `relevance_judge_install_in_progress`, `relevance_judge_model_digest_mismatch`,
+  `relevance_judge_model_file_missing`, `relevance_judge_model_fetch_failed`,
+  `relevance_judge_model_download_too_large`, `relevance_judge_install_timed_out`,
+  `relevance_judge_manifest_invalid`, `relevance_judge_store_unavailable` and
+  `relevance_judge_model_unusable`, the last of which exists so that a store code with no judge-side
+  name cannot leak through the translation untranslated.
+- `relevance_judge_model_mismatch`, an installed judge that is not the configured one or is not a
+  judge at all.
+- Runtime states: `relevance_judge_model_load_failed`, `relevance_judge_inference_failed` and
+  `relevance_judge_output_shape_invalid`, the last for a graph that produced something other than one
+  score per row.
+
+Every code down to `relevance_judge_model_unusable` is carried as the provider error code of a
+refusal whose normalized code is `memory_relevance_judge_unavailable`;
+`relevance_judge_model_mismatch` is carried the same way under `memory_relevance_judge_mismatch`. The
+three runtime states are different in shape: each is the refusal's own error code, with no separate
+normalized code and no provider error code, so the two absence states can never be confused with
+them.
+
 The judge is composed only where the embedding host is composed, which is the Worker. The Api never
 loads it, has no model volume and reports nothing about it, and no health endpoint carries its state.
 `memory model status` and `memory model install`, both run in a one-off worker container, are the
@@ -351,7 +380,7 @@ model directory; a Worker that does not pays none of the judge's cost.
   and about 180 ms for a full 512-token passage. The judge is the heavier of the two by a wide
   margin: on the same machine, 20 pairs, which is `TopK * 4` at the shipped `TopK` of 5, took a
   median of 2247 ms at the shipped one thread and 550 ms at eight, with bit-identical scores at both.
-  The tool's default execution limit of 120 seconds is unchanged and was nowhere near approached.
+  The 120-second default execution limit of an immediate worker tool was nowhere near approached.
 - Memory: each model is loaded on its first call and kept for the life of the Worker process. Plan
   for the Worker to grow by roughly each model file's size plus 100 to 200 MB, so by roughly 1 GiB
   once both are loaded; that is a planning figure derived from the two file sizes, not a measurement

@@ -1,9 +1,12 @@
-# IncidentCompass 0.5.0 - local embeddings, sectioned memory, and limits that fit a slow model
+# IncidentCompass 0.5.0 - local embeddings and a relevance judge, sectioned memory, and limits that fit a slow model
 
-IncidentCompass 0.5.0 changes three things an operator meets on the first day. Memory embeddings no
+IncidentCompass 0.5.0 changes four things an operator meets on the first day. Memory embeddings no
 longer need an external embedding server: the Worker runs a pinned multilingual model in process and
-installs it itself, and memory search now judges a chunk only on the query words it could carry, so a
-query in another script is answered instead of silently finding nothing. A slow local chat model no longer fails an investigation at a short total
+installs it itself. Memory search no longer decides relevance by counting words: a second in-process
+model, a multilingual cross-encoder, reads the query together with each retrieved candidate and
+decides which documents come back at all and which of them are reported as confirmed, so a Polish or
+Russian incident reaches an English runbook and an off-topic query in any of the three reaches
+nothing. A slow local chat model no longer fails an investigation at a short total
 deadline: each provider call is bounded by what it is waiting for, chat answers are streamed by
 default so a stall is visible as a stall, and the attempt as a whole gets a four-hour safety ceiling.
 And an investigation now polices its own tool use and its own progress: every tool call has its own
@@ -120,11 +123,17 @@ the production `memory_search` pipeline across `MinScore` values, the same pipel
 `VectorOnlyFallback` mode, the raw vector ranking and query embedding latency. The deterministic gates
 keep the mock embedder.
 
-The measurement keeps `multilingual-e5-small` as the shipped model and `MinScore` at 0.25. On that
-model the floor removes nothing: every relevant match on the benchmark scored well above it, and so
-did unrelated chunks. What keeps unrelated chunks out is the reranker's lexical coverage rule.
+The measurement keeps `multilingual-e5-small` as the shipped model and `MinScore` at 0.25. It was
+taken on the smaller 12-item corpus, which this release then grew; the leg itself now runs on the
+24-item corpus the judge section describes. On that
+model the floor removes nothing: every relevant match scored well above it, and so
+did unrelated chunks. What keeps unrelated chunks out is the reranker's lexical coverage rule on a
+host that runs no relevance judge, and the judge itself on a host that runs one.
 
 ### Memory search reads another script, and says how sure it is
+
+This is the lexical path, and it is what decides admission on a host that runs no relevance judge.
+Where a judge is installed, the judge decides instead and the next section describes what it does.
 
 Lexical coverage is now judged per candidate over the query words that candidate could carry at all.
 A counted query word is eligible when it has no letter, such as a number, or when its writing system
@@ -137,21 +146,211 @@ Latin words over an English corpus.
 returns nothing as before, `always` returns the top `TopK` candidates unconfirmed, and the default
 `foreign_script` does so only when the query uses a writing system no candidate writes. The key is
 optional, no shipped or sample configuration sets it, and it cannot reach below `MinScore`. On the
-benchmark Russian pipeline recall@5 was 0 before this release; eligibility alone raises it to 0.17,
+smaller 12-item benchmark corpus these three figures were measured against, Russian pipeline recall@5
+was 0 before this release; eligibility alone raises it to 0.17,
 because it admits the one query that keeps its Latin identifiers, and the default fallback takes it
-from there to 1.00 over the six positive queries. English stays exactly as it was. **A language in the
-same script as the corpus, such as Polish over English runbooks, still finds nothing by default**;
+from there to 1.00 over that corpus's six positive queries. English stays exactly as it was. **On a
+host that runs no relevance judge, a language in the same script as the corpus, such as Polish over
+English runbooks, still finds nothing by default**;
 `always` recovers it, at the price of unconfirmed items for every query without lexical support,
 English off-topic queries included. The default also compares scripts against the whole candidate set,
 so a candidate set that holds even one chunk in the query's script turns the default fallback off for
 that query. See [Trade-offs](trade-offs.md).
 
-`retrievalConfidence` now names how an item was admitted rather than where its vector score fell. The
-values keep their names: `high` is full lexical coverage with no word excluded for script, `medium` is
-partial or script-reduced coverage, and `low` is a vector-only match. The numeric `score` is unchanged.
+`retrievalConfidence` now names how an item was admitted rather than where its vector score fell. On
+an unjudged call the values keep their names: `high` is full lexical coverage with no word excluded
+for script, `medium` is partial or script-reduced coverage, and `low` is a vector-only match. A judged
+call bands the same three values differently, and the next section says how. The numeric `score` is
+unchanged.
 A vector-only result also carries its own top-level `message`, `vector-only matches, not lexically
-confirmed`, and the memory role is instructed to query in the corpus language and to drop a `low` item
-whose quote is not about the fault.
+confirmed`, and the memory role is instructed to keep identifiers verbatim and to drop a `low` item
+whose quote is not about the fault. The role is told it may write the query in the incident's own
+language, because the judge described next reads across languages.
+
+### A relevance judge decides what memory search returns
+
+The Worker now runs a second in-process model, and it is not an embedding model.
+`BAAI/bge-reranker-v2-m3` is a cross-encoder: it reads one query together with one candidate chunk
+inside a single 512-token window and returns one score for that pair, instead of producing a vector
+that is later compared with another vector. It is Apache-2.0 and pinned by revision and SHA-256 as two
+files, an int8 ONNX export of 570,727,094 bytes, about 544 MiB, and the XLM-RoBERTa SentencePiece
+tokenizer. The tokenizer is byte-identical to the embedding model's, so the same digest is pinned in
+both sections; each model directory still installs its own copy. The ONNX export repository declares
+no license of its own and names only its base model, so the export is taken under the base model's
+Apache-2.0 license, and `THIRD-PARTY-NOTICES.md` records that reading together with both source URLs.
+
+The judge has no provider entry, no route and no `ModelCall` row. It is one Application port,
+`IMemoryRelevanceJudge`, with one in-process adapter, and
+`IncidentCompass:RelevanceJudge:LocalOnnx:ModelDirectory` is the only setting that decides whether a
+host runs one: an absolute path turns it on and has every other judge setting validated before the
+host starts, and a blank or absent value leaves the host without one rather than failing a start over
+a model the host was never asked to run. `docker-compose.yml` and `compose.production.yml` set it to
+`/app/models/relevance-judge`, inside the existing model volume, so one volume holds both models and
+one `memory model install` fills both. The mock and evaluation stacks set it empty. The judge is
+composed only where the embedding host is composed, which is the Worker; the API loads neither model,
+reports nothing about the judge and no health endpoint carries its state.
+
+Installation and verification follow the embedding model's rules exactly, and the pass runs last on
+the Worker's start, after the embedding install and after the memory seed pass, so the corpus the
+Worker serves is never held up behind the larger download, and still before the claim loop, so a
+Worker that has started has either verified its judge or recorded why it could not. One pass is
+bounded by `InstallTimeoutSeconds`, 1800 seconds by default rather than the embedding model's 900
+because the file is about five times the size. A failed pass does not stop the Worker: it records its
+code, logs it, and judge calls are refused with that code until a later start or a
+`memory model install` succeeds.
+
+**Where a judge is installed, it and not the lexical coverage rule is the admission authority, for
+every query rather than only for a query the gate emptied.** The gate's worse failure is the query it
+passes: one whose eligible words are all Latin identifiers every candidate carries, where coverage is
+complete for that reason alone and an unrelated chunk comes back reported as a confirmed match. Two
+thresholds give three outcomes. Below `Tools.memory_search.RelevanceFloorScore` a candidate is dropped
+outright, between the two it is returned as related but unconfirmed, and at or above
+`Tools.memory_search.RelevanceConfirmScore` it is confirmed. The default floor is -0.25 and the
+default confirm score 1.15, both measured through the product. Both are code defaults: no shipped or
+sample configuration sets either of them, or
+`Tools.memory_search.RelevanceJudge`, which takes `off` or `on` and means `on` when absent.
+Configuration load refuses an unknown mode, a score outside -50 through 50 and a floor that is not
+below the confirm score. `VectorOnlyFallback` does not apply on a judged call, because there is no
+lexical gate left to leave anything empty.
+
+`on` does not mean required. Exactly two states are a host that is not running a judge at all: no
+judge model directory is configured, and nothing is installed in the configured one yet. Those keep
+the pre-judge behaviour and say so in a new top-level `limitation` string, so a reading role is not
+left assuming a result was judged. Every other failure propagates with its own error code and nothing
+falls back, an install still running included: a digest mismatch, a missing file, a failed fetch, an
+oversized download, an install timeout, an invalid manifest, an unreadable store, an installed judge
+that is not the configured one and a failure at load or inference are all a broken host rather than a
+judge-less one, and answering such a call from the lexical gate while reporting that no judge is
+installed is the silent degradation the judge exists to remove.
+
+**One unjudged result says nothing about being unjudged: `RelevanceJudge` set to `off`.** The
+`limitation` string reports the two absence states, which are not the operator's choice, and setting
+the mode to `off` is. An `off` result therefore looks exactly like a pre-judge result, ordinary
+`matches found` message included, on a host that has a judge installed and loaded. An operator who
+turns the judge off has to know that the reading role cannot tell.
+
+On a judged call the band a match carries never claims more than the weaker of the two judgements
+says: `high` is the judge confirming with full lexical coverage, `medium` is the judge alone, and
+`low` is admitted but unconfirmed. `memory_search` reports the judge's own number beside the unchanged
+vector `score` as `judgeScore`, null when nothing judged, and a judged set in which nothing reached
+the confirm score carries the top-level `message` `related matches, none confirmed by the relevance
+judge`, which is a different sentence from the unjudged fallback's. Ordering keeps the combination the
+reranker already applied, with the judge's score substituted for the vector score as the base term.
+The memory role copies `retrievalConfidence` into every item it returns, and that field is now
+required rather than optional in the role's output schema.
+
+Because the judge reads the query and the candidate in one window, `memory_search` now refuses a query
+longer than 1016 characters as `invalid_arguments`. The number is derived from the window rather than
+chosen: half of what the 512-token window leaves after the pair's four markers, at the same
+conservative four characters per token the chunker already estimates with.
+
+### The model store installs any pinned artifact set
+
+The local model store was written for the embedding model and now installs any pinned artifact set,
+because a pinned artifact set is a pinned artifact set whatever it is for. A manifest records the kind
+of model its directory holds, `embedding` or `relevance_judge`, beside the id, revision, license, run
+settings and each file's path, source URL and digest, and the embedding-only settings are required of
+an embedding manifest and absent from every other kind. A directory holding the wrong kind is reported
+as exactly that rather than loaded as something it is not. The earlier embedding-only manifest, which
+carries no kind field, is still read as the embedding manifest it always was, so a model directory
+filled before this change is not orphaned.
+
+The two models need two directories because a directory holds one active manifest, not because they
+are kept apart. Both directories hold the same three things: `manifest.json`,
+`manifest.previous.json` and each file at `artifacts/<its SHA-256>/<its file name>`.
+
+Both `memory model` commands now cover both models. `memory model status` prints the installed judge's
+id, revision, license and digests after the embedding model's report, and `memory model install`
+installs the judge in the judge's directory under the judge's own timeout and prints where the
+previous judge manifest is kept. Each failure is reported rather than thrown and the exit code is the
+worse of the two, so a broken judge never hides the embedding model's report. **Both commands exit 1
+on a host that configures no judge directory**, where they previously exited 0.
+
+### A known incident may not rest on memory nothing confirmed
+
+A `Completed` report classified `KnownIncident` that cites at least one memory-backed retrieved
+document must cite at least one whose recorded band confirms the match, and is refused otherwise with
+one fixed backend-authored sentence pair that carries no artifact id, title or quote. `KnownIncident`
+is the classification a ticket and a remediation proposal follow from, and the consumer of a retrieved
+item is a model rather than a person who would notice the difference between a document about this
+subsystem and a document about this failure.
+
+The rule is scoped by the cited artifact's memory item id, not by the evidence kind. A ticket-search
+or source-lookup result is also stored as a `RetrievedItem` and its closed payload carries no band at
+all, so a `KnownIncident` grounded on one of those stays publishable, as does a report citing no
+retrieved document. The durable `ToolResult` of a `memory_search` call is memory-backed too, and it
+carries no band at its top level, which is the only place the publication rule reads one: its payload
+is the tool's whole output, so the per-item bands inside it are one level down and are never read, and
+a `KnownIncident` cannot rest on that artifact alone. **A memory payload with no
+band recorded does not count as confirmed**, which is what an artifact written before this release
+looks like: the safe reading of that silence costs one correction turn on a re-triage, where reading
+it as confirmation would rest a ticket and a diff on a match nothing ever judged.
+
+**What "confirmed" means depends on whether a judge ran, and on a judge-less host it is lexical
+coverage alone.** The band on an unjudged call is still computed from lexical support, so full
+coverage reads `high` and partial coverage reads `medium`, and the rule accepts either. On a
+deployment that runs no judge, including the mock and evaluation stacks, the bar therefore means that
+at least half of the query's eligible words appeared in a cited chunk, and it refuses only a report
+whose every memory citation came from the vector-only fallback. That is a real bar and a new one, but
+it is not the judge's finding: only a judged `high` or `medium` says a model read the query and the
+document together and said they match. The upgrade notes say what that changes for an existing
+deployment.
+
+So that the orchestrator can meet the bar rather than only be refused by it, the band travels to it.
+The memory role copies `retrievalConfidence`, the delegate result carries it, and the shipped
+orchestrator instruction states the rule in terms of that field. Handing a model a
+governance-relevant field forges nothing: the refusal is decided against the band `memory_search`
+stored on the artifact, never against the worker's copy of it.
+
+### The judge was measured through the real tool
+
+The retrieval benchmark corpus grew from 12 items with 8 queries per language, 6 of them positive, to
+24 items with 24 queries per language in three declared categories, 12
+positive, 6 off topic and 6 hard negative, so a threshold could be measured rather than guessed. Every
+number in this section is from the grown corpus, and both benchmark legs now run on it; the earlier
+figures in "The local models were measured" and "Memory search reads another script" are from the
+smaller one. The
+measurement below runs the real `memory_search` over the grown corpus with the judge off and then on. The
+off column is the shipped lexical behaviour with its default `foreign_script` fallback, not a stripped
+pipeline. Recall@5 counts the positive category.
+
+| Language | recall@5 off, on | off-topic false positives off, on | hard negatives confirmed off, on |
+| --- | --- | --- | --- |
+| English | 1.000, 0.958 | 0 of 6, 0 of 6 | 0, 0 |
+| Polish | 0.000, 0.500 | 0 of 6, 0 of 6 | 0, 0 |
+| Russian | 1.000, 0.500 | 6 of 6, 0 of 6 | 4, 0 |
+
+Russian is the row the judge was built for. The vector-only fallback was already carrying its positive
+queries, and it was carrying every off-topic and hard-negative query with them, because a fallback is
+not relevance. With the judge on, none of the twelve comes back, in any language. Polish is the case
+the lexical rules could not reach at all, and it moves off zero for the first time.
+
+No English positive query comes back empty with the judge on. The 0.958 is one query returning one of
+its two labelled chunks, and the chunk it loses is the redundant second chunk of a query whose first
+chunk is still returned. The two 0.500 figures are entirely the eight keyword-shaped queries carried
+over from the older fixture, which are lists of terms rather than questions; on queries written in the
+shape a model produces from an incident, recall@5 is 1.000 in all three languages. The keyword queries
+are kept because they are the honest lower bound: a role that degenerates into keyword search gets
+keyword-search results.
+
+The floor is a choice between two things that cannot both hold, not a value sitting in a gap. On this
+corpus the strongest off-topic pair scores above the weakest labelled relevant chunk, so no floor
+returns every labelled chunk and also leaves every off-topic query empty; Polish and Russian have the
+same shape, and no labelled chunk is missing from the candidate sets, so this is the judge's ordering
+rather than a retrieval shortfall. The release takes the empty off-topic result, which is the stated
+product requirement, and gives up the duplicate chunk. [Trade-offs](trade-offs.md) carries the two
+bounding scores.
+
+Both thresholds were measured through the product and nowhere else. An offline sweep of the same graph
+under another ONNX runtime build put those two bounding pairs 0.167 apart in the opposite order, a
+reordering larger than the whole window, so a threshold for this judge cannot be transferred from
+anything but a run of the real tool.
+
+The judge is what a `memory_search` now costs. On one desktop x64 processor, 20 scored pairs, which is
+`TopK` times four at the shipped `TopK` of 5, took a median of 2247 ms at the shipped single intra-op
+thread and 550 ms at eight, with bit-identical scores at both, so an operator with cores to spare can
+buy the time back. The 120-second default execution limit this release gives an immediate worker tool,
+described above, was nowhere near approached.
 
 ### A non-Latin incident reaches the model as words
 
@@ -422,10 +621,70 @@ at the output ceiling is refused whatever it carried, so a verbose model on a ti
 dead-letters where it previously published a half answer. Raise the route's `MaxOutputTokens` toward
 what the model allows, or give the call a smaller task.
 
-**`memory_search` answers a foreign-script query where it returned nothing.** Items admitted that way
-are banded `low` and the result carries the `vector-only matches, not lexically confirmed` message;
-dropping them is the memory role's job. Set `Tools.memory_search.VectorOnlyFallback` to `off` to keep
-the previous empty result.
+**`memory_search` answers a foreign-script query where it returned nothing.** On a host with no
+relevance judge, items admitted that way are banded `low` and the result carries the `vector-only
+matches, not lexically confirmed` message; dropping them is the memory role's job. Set
+`Tools.memory_search.VectorOnlyFallback` to `off` to keep the previous empty result. The fallback does
+not run on a host that has a judge, because there is no lexical gate left to leave anything empty.
+
+**An upgrade that does not set the judge's model directory runs no judge, and still gets the rest of
+this release's retrieval changes.** `IncidentCompass:RelevanceJudge:LocalOnnx:ModelDirectory` is the
+only setting that turns a judge on. A deployment that does not set it downloads nothing, starts
+normally and keeps the pre-judge admission path: `memory_search` admits on lexical support alone and
+says so in its new top-level `limitation` string. What it does not keep is the behaviour that path had
+in 0.4.1. All of the following reach it:
+
+- Lexical coverage is judged per candidate and per script, so a word in a writing system a candidate
+  never uses is no longer counted against it.
+- `Tools.memory_search.VectorOnlyFallback` defaults to `foreign_script`, so a query in a script no
+  candidate writes now returns unconfirmed items where it returned nothing, as the note above says.
+- `retrievalConfidence` no longer derives from the vector score. It reports lexical support, and the
+  numeric `score` is unchanged beside it.
+- A `memory_search` query longer than 1016 characters is refused as `invalid_arguments`, whether or
+  not a judge is there to read it.
+- The new `KnownIncident` publication bar applies. On this host it is satisfied by lexical coverage,
+  because an unjudged `high` or `medium` band is lexical support and the rule accepts either.
+- **A `KnownIncident` report can now be refused where it would have published.** The two changes
+  above combine: the `foreign_script` default newly returns exactly the `low` items that trigger the
+  bar, so a report whose every memory citation came from that fallback is refused and costs one
+  correction turn. Set `VectorOnlyFallback` to `off` to keep the previous empty result and with it the
+  previous outcome.
+- **`memory model status` and `memory model install` now exit 1 where they used to exit 0**, because
+  each command reports both models and takes the worse of the two results. That is the intended
+  signal, and a deployment that means to run no judge is the one case to ignore it.
+
+**A deployment that does set it downloads about 544 MiB on the first Worker start.** The judge's
+install pass runs after the memory seed pass, bounded by
+`IncidentCompass:RelevanceJudge:LocalOnnx:InstallTimeoutSeconds`, 1800 seconds by default. Both
+shipped Compose files put the judge's directory inside the existing model volume at
+`/app/models/relevance-judge`, so no new volume is needed, `down --volumes` deletes it with the rest
+and the backup script does not back it up because its contents are reproducible from the pinned
+source. Plan for the Worker's memory to grow by roughly each model file's size plus 100 to 200 MB, so
+by roughly 1 GiB once both are loaded; that is a planning figure, not a measurement. The files can be
+placed offline instead, and the runbook gives that procedure.
+
+**A host that redacts `retrievalConfidence` no longer loads.** Naming it in
+`Redaction.AttributeKeys` or `Redaction.UserIdentifierAttributes`, in any casing, is refused when the
+configuration loads and in `config validate`. Redaction replaces a matching property's value with the
+marker whatever its kind, so the key would turn every confirmed band into a value that confirms
+nothing, on the durable artifact as well as in the tool result, and every `KnownIncident` resting on
+memory would then be refused. No shipped or sample configuration names it. Remove the key to load.
+
+**Nothing durable has to be rebuilt in either direction.** Nothing the judge produces is stored, no
+corpus, generation or chunk records which judge ran, and there is no re-embedding, no `memory rebuild`
+and no route model to keep in step. Adding a judge to an existing corpus, or emptying the directory to
+remove one, is reversible.
+
+**The judge's three triage-configuration keys are optional, and a configuration that sets none of them
+keeps its hash.** `Tools.memory_search.RelevanceJudge`, `RelevanceConfirmScore` and
+`RelevanceFloorScore` are absent from every shipped and sample configuration, and the hash is taken
+over the file as written, so adding this release's keys to a host without setting them leaves every
+stored snapshot rehydrating unchanged. **The shipped configuration's own hash does move**, because the
+shipped instruction files and the memory role's output schema changed: the role is told it may query
+in the incident's own language, the three top-level `message` sentences are explained, the
+orchestrator instruction states the `KnownIncident` bar, and `retrievalConfidence` became a required
+property of a memory item rather than an optional one. Queued jobs keep rehydrating the snapshot they
+were created under.
 
 **Streaming is on by default.** Set `IncidentCompass:ModelGateway:OpenAiCompatible:Streaming` to
 `false` for a provider that rejects `stream` or `stream_options`, or that streams tool calls in a shape
@@ -448,40 +707,80 @@ create the GitHub App described in [Versioning and release flow](versioning.md) 
   `memory_chunk_policy_changed` and the local model install codes listed in
   [Model gateway](model-gateway.md), `tool_execution_timeout`, `tool_execution_failed`,
   `dispatch_not_invoked`, `repeated_call_without_new_evidence`, `worker_stopped_repeating` and
-  `triage_no_progress_termination_failed`. New log
+  `triage_no_progress_termination_failed`. The relevance judge adds
+  `memory_relevance_judge_unavailable`, `memory_relevance_judge_mismatch`,
+  `memory_relevance_judge_score_not_finite` and `memory_relevance_judge_score_count_mismatch`, over
+  the adapter's own fifteen `relevance_judge_...` absence, install, store and runtime codes, which
+  [Model gateway](model-gateway.md) lists in full. New log
   events: 2701 and 2801 for the deprecated keys, 3213 for a skipped fallback whose budget event could
-  not be recorded, 3305 to 3309 and 3521 for tool execution limits, and 3404 to 3411 for repetition,
-  progress, recovery and termination.
+  not be recorded, 3305 to 3309 and 3521 for tool execution limits, 3404 to 3411 for repetition,
+  progress, recovery and termination, and 2320 to 2322 for the judge's install state, including the
+  once-per-start note on a host that configures no judge.
 - New optional configuration keys: `Tools.<id>.TimeoutSeconds`, `Tools.memory_search.VectorOnlyFallback`,
-  `Orchestrator.Budget.MaxEquivalentCalls`, `MaxTurnsWithoutProgress`, `MaxRecoveries` and
-  `Orchestrator.RecoveryInstructions`. The shipped configuration sets none of them. `ModelCall` rows
+  `Orchestrator.Budget.MaxEquivalentCalls`, `MaxTurnsWithoutProgress`, `MaxRecoveries`,
+  `Orchestrator.RecoveryInstructions` and the judge's `Tools.memory_search.RelevanceJudge`,
+  `RelevanceConfirmScore` and `RelevanceFloorScore`. The shipped configuration sets none of them, so
+  none of them moves a configuration hash by being added. `ModelCall` rows
   gain the call kind `recovery`, and tool-call telemetry gains the outcome `refused`.
-- `memory_search` keeps its output shape, but two of its values change meaning. Each item's
+- The relevance judge is a host setting, not a provider or a route.
+  `IncidentCompass:RelevanceJudge:LocalOnnx` is new, and only its `ModelDirectory` has to be set; a
+  blank or absent value is a host that runs no judge. No triage-configuration provider entry names
+  the judge, nothing in the model gateway dispatches to it, it writes no `ModelCall` row and no
+  health endpoint reports it. Its cost is Worker CPU, memory and disk.
+- `memory_search` keeps its existing output shape and adds two nullable values. Each item gains
+  `judgeScore`, the judge's own number beside the unchanged vector `score`, null when nothing judged,
+  and the result gains a top-level `limitation`, non-null only on a host that runs no judge. Two
+  values change meaning. Each item's
   `retrievalConfidence` still reads `high`, `medium` or `low` and no longer derives from the vector
-  score: it now reports lexical support, because on the shipped model relevant and unrelated chunks
-  score alike. A result returned by the vector-only fallback carries the top-level `message` value
-  `vector-only matches, not lexically confirmed`; `matched`, `items` and `noMatchReason` are unchanged.
-- Configuration validation is stricter in two places: a role output schema with a secret-named
-  non-string property, and a configuration that sets both names of a deprecated key. Neither affects
-  the shipped configuration.
+  score: on an unjudged call it reports lexical support, because on the shipped embedding model
+  relevant and unrelated chunks score alike, and on a judged call `high` is the judge confirming with
+  full lexical coverage, `medium` the judge alone and `low` admitted without being confirmed. The
+  top-level `message` gains a fourth value, `related matches, none confirmed by the relevance judge`,
+  beside `matches found`, `vector-only matches, not lexically confirmed` and `no matches`. `matched`,
+  `items` and `noMatchReason` are unchanged.
+- `memory_search` refuses a query longer than 1016 characters as `invalid_arguments`, derived from
+  the judge's 512-token window. The memory role's output schema now requires `retrievalConfidence` on
+  every item it returns, where it was optional.
+- Report publication gains one bar. A `Completed` report classified `KnownIncident` that cites at
+  least one memory-backed retrieved document is refused unless at least one of them carries a
+  confirmed band. Every other classification, a report citing no retrieved document, and a report
+  grounded on a ticket-search or source-lookup `RetrievedItem` are untouched. A memory payload
+  carrying no band does not count as confirmed.
+- Configuration validation is stricter in three places: a role output schema with a secret-named
+  non-string property, a configuration that sets both names of a deprecated key, and
+  `retrievalConfidence` named as a redaction attribute key. None of the three affects the shipped
+  configuration, but the third can fail the load of a host that configured it; see the upgrade notes.
 - An embedding call still writes no `ModelCall` row, whichever adapter serves it. The local model has
   no provider to bill; its cost is Worker CPU and memory.
 - Automated tests do not call a real model or embedding provider. The local model is exercised against
   a tiny generated fixture model; one integration test runs the real pinned model, downloading it when
   its cache is empty, where the Docker-backed tier is required (CI or
-  `INCIDENTCOMPASS_REQUIRE_DOCKER_TESTS`).
+  `INCIDENTCOMPASS_REQUIRE_DOCKER_TESTS`). The judge is exercised the same way, against a tiny
+  generated fixture cross-encoder in the deterministic suites and against the real pinned judge only
+  in opt-in legs that install it.
 
 ## Not in this release
 
 - Semantic progress detection. Repetition and progress are judged from result identities and the
   candidate classification, so a model that loops through reworded tasks or calls is not caught as
   repeating.
-- Cross-language retrieval for a language in the corpus's own script. Another script works by default,
-  because a word that cannot occur in the corpus is no longer counted against a candidate and the
-  vector-only fallback covers what is left. A Latin-script language over a Latin-script corpus, such as
-  Polish over English runbooks, still finds nothing unless an operator sets
-  `Tools.memory_search.VectorOnlyFallback` to `always`, which also removes the empty result for every
-  other query without lexical support.
+- Cross-language retrieval on a host that runs no relevance judge. There, the lexical rules are still
+  the whole answer: another script works by default, because a word that cannot occur in the corpus is
+  no longer counted against a candidate and the vector-only fallback covers what is left, but a
+  Latin-script language over a Latin-script corpus, such as Polish over English runbooks, still finds
+  nothing unless an operator sets `Tools.memory_search.VectorOnlyFallback` to `always`, which also
+  removes the empty result for every other query without lexical support. A host that runs the judge
+  answers all three measured languages without that setting.
+- A confirmed band is not proof that the document describes the fault. The band records that the
+  relevance judge found the document relevant to the query it was asked, and that query is written by
+  the model from the incident. A query that repeats a document's own wording will score highly against
+  that document, so a model can raise a band by re-querying with text it has already been shown, and
+  telemetry crafted to paraphrase a runbook can do the same from untrusted input. The publication rule
+  therefore bounds what an unconfirmed document is allowed to justify; it does not prove a confirmed
+  one is about this failure. The designed fix is to judge confirmation against a query the backend
+  builds from the signal rather than against the model's own query. It is deferred because it changes
+  what confirmation means and needs a fixture in which the model's query and the fault text differ,
+  which the current corpus does not provide.
 - Accounting of external embedding calls. An embedding call served by an OpenAI-compatible server
   still appears in no count, token total or spend figure.
 - Requeueing a job across a change of the embedding route model. A job created before the route model
@@ -499,10 +798,14 @@ gate.
 including the PostgreSQL-backed integration tests through Testcontainers with
 `INCIDENTCOMPASS_REQUIRE_DOCKER_TESTS` set.
 
-On the release tree the full solution run reported 2835 tests: 2831 passed, 0 failed and 4
-skipped. The skips are three symbolic-link tests the Windows test process cannot create links for
-and the explicit OpenAPI baseline regeneration, which only `scripts/update-openapi-baseline.ps1`
-runs.
+On the release tree the full solution run reported 3120 tests: 3115 passed, 0 failed and 5 skipped.
+The skips are three symbolic-link tests the Windows test process cannot create links for, the explicit
+OpenAPI baseline regeneration, which only `scripts/update-openapi-baseline.ps1` runs, and the real
+relevance judge test, which is skipped unless `INCIDENTCOMPASS_REQUIRE_REAL_RELEVANCE_JUDGE` is set.
+The judge benchmark is gated too, by `INCIDENTCOMPASS_RELEVANCE_JUDGE_BENCHMARK`, but it returns
+without doing anything rather than reporting as skipped, so it is not one of the five. Neither judge
+leg runs merely because `CI` is set: the ONNX file is about 544 MiB, and fetching it on every run buys
+less than it costs.
 
 The suites were also run on Linux in the .NET 10 SDK container, since CI and the release workflow
 run on Linux. There, every test passed except those that drive the Docker CLI and Compose against the
@@ -510,11 +813,49 @@ host daemon from inside the container, which that setup cannot serve; they run i
 exercised the shipped defaults, and a scripted streaming provider check exercised the streamed chat
 path.
 
+The judge was verified on a fresh host on this tree: empty volumes, shipped defaults and the mock chat
+provider. Both models install on the first Worker start with no operator action, and
+`memory model status` exits 0 reporting both, with the judge's pinned revision, its Apache-2.0 license
+and both digests. The model volume ends up holding the two models in separate directories with no
+collision between them, at the sizes [Model gateway](model-gateway.md) records: about 123 MB for the
+whole embedding model directory and about 549 MiB for the whole judge directory, each figure covering
+that directory's manifests and both of its artifact files.
+
+Eight signals were probed against the English seed corpus. English, Polish with Latin identifiers,
+Polish with full diacritics, and Russian with Latin identifiers each reached a completed
+known-incident report whose two cited documents were both confirmed, at judge scores of 3.0 to 3.9
+against the shipped confirm threshold of 1.15. An all-Cyrillic Russian signal, and off-topic signals
+in English, Polish and Russian, each returned no matches and an insufficient-evidence report. Every
+job succeeded on its first attempt. The threshold and latency figures in this release come from the
+opt-in benchmark leg that runs the real `memory_search` over the grown corpus, not from an offline
+sweep.
+
+The documented embedding-model change procedure was re-run on a fresh host as well, because this
+release generalized the model store and moved the manifest to schema 2. The result is identical to the
+record made when that procedure was first verified: the corpus rebuilds onto the new embedding model,
+a report published after the change cites its documents again, and the one probe created by the old
+API while the Worker was stopped still dead-letters, which is the documented residual of that window.
+**Changing the embedding model does not affect the judge and needs no judge action.** The judge was
+untouched throughout, and `memory model status` exited 0 on both models at the end.
+
 What that does not cover:
 
-- No automated test reaches a real chat provider or an external embedding server. The real local
-  embedding model runs in one integration test in the Docker-backed tier and in the opt-in benchmark;
-  the benchmark is not part of any gate.
+- No automated test reaches a real chat provider or an external embedding server. No real chat model
+  ran anywhere in this verification, the fresh-host check included, which used the mock chat provider.
+  The real local embedding model runs in one integration test in the Docker-backed tier and in the
+  opt-in benchmark; the benchmark is not part of any gate.
+- The judge's real artifact is exercised by the fresh-host check and by the two opt-in legs above, and
+  by nothing CI runs. Everything the adapter does with a model is covered deterministically against a
+  committed fixture cross-encoder, which says nothing about the pinned model's own scores. The
+  thresholds therefore rest on one measured run of the real tool rather than on a gate.
+- The measured retrieval figures are three languages over one 24-item corpus of shipped-style
+  runbooks. They are a measurement of this corpus, not of the judge in general, and a corpus whose
+  answers are not duplicated across chunks would pay the floor's cost as a lost answer rather than as
+  a lost duplicate.
+- An incident carrying no Latin identifier at all was not answered end to end. The all-Cyrillic
+  Russian probe returned no matches and an insufficient-evidence report, where the same incident with
+  its service name and error type left intact reached a confirmed known-incident report. The honest
+  empty result is the designed outcome of finding nothing, not a claim that nothing was there.
 - The Docker-backed integration coverage is enforced by an opt-in environment variable rather than by
   default.
 - The streaming checks use scripted providers. Behavior against a specific provider's stream is

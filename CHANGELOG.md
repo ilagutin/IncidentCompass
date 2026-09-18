@@ -4,11 +4,13 @@
 
 - No unreleased changes.
 
-## 0.5.0 - 2026-09-17
+## 0.5.0 - 2026-09-18
 
-Memory embeddings run inside the Worker by default, seed documents are chunked by section, and a slow
-model is bounded by per-phase provider limits and a long attempt ceiling instead of a short total
-deadline, with chat completions streamed by default. Every tool call has an execution limit, and an
+Memory embeddings run inside the Worker by default, seed documents are chunked by section, and a
+multilingual cross-encoder judges whether a retrieved chunk answers the query, deciding what
+`memory_search` returns and what a `KnownIncident` report may rest on. A slow model is bounded by
+per-phase provider limits and a long attempt ceiling instead of a short total deadline, with chat
+completions streamed by default. Every tool call has an execution limit, and an
 investigation that stops making progress gets bounded recovery and then an honest backend-authored
 report.
 
@@ -96,6 +98,57 @@ report.
   without lexical support, and `off` keeps the empty result. It never applies while the lexical gate
   kept something and cannot reach below `MinScore`. The shipped configuration does not set it, and the
   key is refused on any other tool.
+- An in-process multilingual relevance judge for `memory_search`. `BAAI/bge-reranker-v2-m3`,
+  Apache-2.0, is a cross-encoder that reads one query with one candidate chunk inside a single
+  512-token window and returns one score for that pair; it is pinned by revision and SHA-256 as an
+  int8 ONNX file of 570,727,094 bytes, about 544 MiB, and the XLM-RoBERTa SentencePiece tokenizer,
+  which is byte-identical to the embedding model's. The ONNX export repository declares no license of
+  its own and is taken under the base model's, which `THIRD-PARTY-NOTICES.md` records. It has no
+  provider entry, no route and no `ModelCall` row: one Application port, `IMemoryRelevanceJudge`, with
+  one in-process adapter, composed only on the Worker.
+  `IncidentCompass:RelevanceJudge:LocalOnnx:ModelDirectory` is the only setting that turns it on, both
+  shipped Compose files set it to `/app/models/relevance-judge` inside the existing model volume, and
+  its install pass runs last on the Worker's start, after the memory seed pass, under
+  `InstallTimeoutSeconds` of 1800. A failed pass does not stop the Worker.
+- Judge-decided admission for `memory_search`. Where a judge is installed it, and not the lexical
+  coverage rule, decides admission for every query. Below `Tools.memory_search.RelevanceFloorScore` a
+  candidate is dropped, between the thresholds it is returned as related but unconfirmed, and at or
+  above `Tools.memory_search.RelevanceConfirmScore` it is confirmed. `Tools.memory_search.RelevanceJudge`
+  takes `off` or `on` and means `on` when absent; the default floor is -0.25 and the default confirm
+  score 1.15, both measured through the real tool and both code defaults, since no shipped or sample
+  configuration sets any of the three keys. Load validation refuses an unknown mode, a score outside
+  -50 through
+  50 and a floor that is not below the confirm score. Exactly two states answer without a judge, no
+  configured model directory and nothing installed in the configured one, and both are reported in a
+  new top-level `limitation` string; every other judge failure propagates with its own code, an
+  install still running included. A judge set to `off` reports no limitation, because that state is
+  the operator's own choice, so an `off` result on a judge host is indistinguishable from a pre-judge
+  one.
+- A publication bar for one classification. A `Completed` report classified `KnownIncident` that cites
+  at least one memory-backed retrieved document is refused unless at least one of them carries a
+  confirmed band, with one fixed backend-authored refusal carrying no artifact id, title or quote. The
+  rule is scoped by the cited artifact's memory item id, so a report grounded on a ticket-search or
+  source-lookup `RetrievedItem`, or citing no retrieved document, is untouched. A memory payload with
+  no band recorded does not count as confirmed, and the durable `ToolResult` of a `memory_search` call
+  carries no band at its top level, which is the only level the rule reads, so a `KnownIncident`
+  cannot rest on that artifact alone. What the bar means depends on whether a judge ran: on a host
+  with no judge the band is lexical support, so `high` and `medium` mean at least half of the query's
+  eligible words appeared in the chunk, and the bar refuses only a report whose every memory citation
+  came from the vector-only fallback. Because the `foreign_script` fallback default newly produces
+  exactly those items, a judge-less deployment can have a `KnownIncident` report refused where it
+  would previously have published.
+- A retrieval benchmark that measures the judge through the product. The corpus grew to 24 items and
+  24 queries per language in three declared categories, 12 positive, 6 off topic and 6 hard negative,
+  in English, Polish and Russian, and the leg runs the real `memory_search` with the judge off and
+  then on. It runs only when `INCIDENTCOMPASS_RELEVANCE_JUDGE_BENCHMARK` is set, and the real judge
+  adapter test only when `INCIDENTCOMPASS_REQUIRE_REAL_RELEVANCE_JUDGE` is; neither runs because `CI`
+  is set.
+- Log events 2320, 2321 and 2322 for the judge's install state, the last written once at Worker start
+  on a host that configures no judge. New error codes `memory_relevance_judge_unavailable`,
+  `memory_relevance_judge_mismatch`, `memory_relevance_judge_score_not_finite` and
+  `memory_relevance_judge_score_count_mismatch`, over the adapter's own fifteen
+  `relevance_judge_...` absence, install, store and runtime codes, which `docs/model-gateway.md`
+  lists in full.
 
 ### Changed
 
@@ -106,13 +159,45 @@ report.
   script the candidate never writes is no longer counted against it.
 - `retrievalConfidence` on a `memory_search` item and on its `RetrievedItem` artifact keeps the values
   `high`, `medium` and `low` but no longer derives from the vector score, which separates nothing on
-  the shipped embedding model. It now reports lexical support: `high` is full coverage with no word
-  excluded for script, `medium` is partial or script-reduced coverage, and `low` is a vector-only
-  match. The numeric `score` is unchanged, and a vector-only result carries the top-level `message`
+  the shipped embedding model. On an unjudged call it reports lexical support: `high` is full coverage
+  with no word excluded for script, `medium` is partial or script-reduced coverage, and `low` is a
+  vector-only match. On a judged call it reports the weaker of the two judgements: `high` is the judge
+  confirming with full lexical coverage, `medium` the judge alone, and `low` admitted without being
+  confirmed. The numeric `score` is unchanged, and a vector-only result carries the top-level `message`
   `vector-only matches, not lexically confirmed`.
-- The memory role instructions tell the worker to query in the language the corpus is written in, to
-  keep identifiers verbatim, and to drop a `low` item whose quote is not about the fault rather than
-  pass it on.
+- `memory_search` output gains two nullable values and one message. Each item carries `judgeScore`
+  beside the unchanged vector `score`, null when nothing judged, and the result carries a top-level
+  `limitation`, non-null only on a host that runs no judge. The top-level `message` gains
+  `related matches, none confirmed by the relevance judge` for a judged set in which nothing reached
+  the confirm score. `matched`, `items` and `noMatchReason` are unchanged. Ordering substitutes the
+  judge's score for the vector score as the base term on a judged call, and `VectorOnlyFallback` does
+  not apply there, because no lexical gate is left to leave anything empty.
+- `memory_search` refuses a query longer than 1016 characters as `invalid_arguments`. The bound is
+  derived from the judge's 512-token window rather than chosen: half of what is left after the pair's
+  four markers, at four characters per token.
+- The memory role instructions tell the worker it may write the query in the incident's own language,
+  because the judge reads across languages, to keep identifiers verbatim, and to drop a `low` item
+  whose quote is not about the fault rather than pass it on. The role's output schema now requires
+  `retrievalConfidence` on every item, where it was optional, and the orchestrator instruction states
+  the `KnownIncident` bar in terms of that field, which the delegate result carries. The refusal is
+  decided against the band `memory_search` stored on the artifact, never against the worker's copy.
+- `retrievalConfidence` is refused as a redaction attribute key, in `Redaction.AttributeKeys` and
+  `Redaction.UserIdentifierAttributes` alike and in any casing, when the configuration loads and in
+  `config validate`. Redaction replaces a matching property's value whatever its kind, so the key
+  would turn every confirmed band into a value that confirms nothing and make every `KnownIncident`
+  resting on memory refusable. No shipped or sample configuration names it; a host that configured it
+  no longer loads.
+- The local model store installs any pinned artifact set, not only the embedding model. A manifest
+  records the kind of model its directory holds, `embedding` or `relevance_judge`, beside the id,
+  revision, license, run settings and each file's path, source URL and digest; the embedding-only
+  settings are required of an embedding manifest and absent from every other kind, and a directory
+  holding the wrong kind is reported as that rather than loaded. The earlier embedding-only manifest,
+  which carries no kind field, is still read as the embedding manifest it always was.
+- `memory model status` and `memory model install` cover both local models, the embedding model first
+  and the judge after it. Each failure is reported rather than thrown and the exit code is the worse
+  of the two, so both commands now exit 1 on a host that configures no judge model directory, where
+  they exited 0 before. A judge install keeps the replaced judge manifest as `manifest.previous.json`
+  and prints how to roll back to it.
 - The documented procedure for changing the embedding route model has an order and runs its one-off
   commands with `--no-deps`: install, drain and stop the Worker, recreate the API alone, rebuild,
   recreate the Worker. A job is pinned to the route model of the API that created it, so the old order
@@ -232,7 +317,17 @@ report.
   started during restore cannot affect the push through `$GITHUB_ENV`, `$GITHUB_PATH` or
   `.git/config`, and the pushed files are limited to validated tracked `packages.lock.json` paths.
 - The local embedding model is fetched only from HTTPS locations and accepted only when both files
-  match their pinned SHA-256; a mismatch is refused and never repaired.
+  match their pinned SHA-256; a mismatch is refused and never repaired. The relevance judge's two
+  files are installed and verified under the same rules.
+- A judge that does not verify never silently degrades to the lexical gate. Only an unconfigured judge
+  directory and a directory nothing is installed in yet answer without a judge; a digest mismatch, a
+  missing file, a failed fetch, an oversized download, an install timeout, an invalid manifest, an
+  unreadable store, an installed judge that is not the configured one, an install still running and a
+  failure at load or inference all propagate with their own code.
+- No query, candidate chunk or relevance score reaches the application log at any level. The judge's
+  install events carry the model id, revision, a 16-character digest prefix, a bounded error code and
+  one host setting name. A judged result's per-item `judgeScore` goes to the calling role and into
+  that call's durable artifacts under the same redaction as the rest of the payload.
 
 ## 0.4.1 - 2026-09-12
 
