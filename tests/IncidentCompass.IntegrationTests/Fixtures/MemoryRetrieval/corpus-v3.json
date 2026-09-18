@@ -1,0 +1,824 @@
+{
+  "schemaVersion": 3,
+  "corpusVersion": "memory-retrieval-corpus-v3",
+  "generationId": "40000000-0000-0000-0000-000000000003",
+  "tenantId": "memory-benchmark",
+  "seedOwner": "memory-retrieval-corpus-v3",
+  "embeddingModel": "mock-memory-embedding-v1",
+  "embeddingDimensions": 16,
+  "topK": 5,
+  "minScore": 0.25,
+  "currentReleases": {
+    "checkout-api": "2.4.0",
+    "orders-api": "7.1.0",
+    "notifications-api": "1.6.0",
+    "search-indexer": "3.2.0",
+    "session-store": "4.0.0",
+    "report-export": "1.2.0",
+    "flag-service": "5.3.0"
+  },
+  "items": [
+    {
+      "id": "10000000-0000-0000-0000-000000000001",
+      "kind": "runbook",
+      "source": "samples/runbooks/checkout-timeout.md",
+      "title": "Checkout Timeout Runbook",
+      "content": "Use this runbook when checkout requests time out while waiting on the inventory service. Symptoms: Payment or checkout API requests fail with TimeoutException. The failing route is usually /checkout. Logs mention waiting for inventory reservation or stock confirmation. Immediate checks: Confirm inventory service health and request latency. Check the checkout API outbound timeout and retry settings. Compare timeout spikes with inventory deployment or database saturation events. Recommended action: Reduce checkout retry fan-out, verify inventory capacity, and fail gracefully with a retryable user-facing message until inventory latency returns to baseline.",
+      "tags": ["checkout", "timeout", "payments"],
+      "serviceName": "checkout-api",
+      "component": "payments",
+      "releaseName": "0.1",
+      "isActive": true,
+      "chunks": [
+        {
+          "id": "20000000-0000-0000-0000-000000000001",
+          "position": 0,
+          "text": "Use this runbook when checkout requests time out while waiting on the inventory service. Payment or checkout API requests fail with TimeoutException. Logs mention inventory reservation, stock confirmation, request latency, retry settings, database saturation, and checkout retry fan-out."
+        }
+      ]
+    },
+    {
+      "id": "10000000-0000-0000-0000-000000000002",
+      "kind": "known_incident",
+      "source": "samples/incidents/checkout-timeout-known-incident.md",
+      "title": "Known Incident: Checkout Inventory Timeout",
+      "content": "Known incident pattern for checkout failures caused by inventory latency. Matching signals usually contain service name payments-api or checkout-api, error type TimeoutException, and messages mentioning checkout timeout, inventory timeout, stock reservation, or inventory dependency latency. Prior resolution: Inventory request latency increased after a connection-pool configuration change. Restoring the pool limit and restarting saturated inventory workers stopped checkout timeouts.",
+      "tags": ["checkout", "timeout", "known-incident"],
+      "serviceName": "checkout-api",
+      "component": "payments",
+      "releaseName": "0.1",
+      "isActive": true,
+      "chunks": [
+        {
+          "id": "20000000-0000-0000-0000-000000000002",
+          "position": 0,
+          "text": "Known checkout incident caused by inventory dependency latency and TimeoutException. The prior resolution restored a connection-pool limit and restarted saturated inventory workers. Signals mention checkout timeout, stock reservation, and inventory latency."
+        }
+      ]
+    },
+    {
+      "id": "10000000-0000-0000-0000-000000000003",
+      "kind": "runbook",
+      "source": "benchmark/current-checkout-inventory.md",
+      "title": "Current Checkout Inventory Mitigation",
+      "content": "Current checkout-api release 2.4.0 guidance for inventory latency and payment retry fanout.",
+      "tags": ["checkout", "inventory", "current"],
+      "serviceName": "checkout-api",
+      "component": "payments",
+      "releaseName": "2.4.0",
+      "isActive": true,
+      "chunks": [
+        {
+          "id": "20000000-0000-0000-0000-000000000003",
+          "position": 0,
+          "text": "inventory latency circuit breaker mitigation for checkout-api release 2.4.0"
+        },
+        {
+          "id": "20000000-0000-0000-0000-000000000004",
+          "position": 1,
+          "text": "payments retry fanout guard for stock reservation delay in checkout-api"
+        }
+      ]
+    },
+    {
+      "id": "10000000-0000-0000-0000-000000000004",
+      "kind": "runbook",
+      "source": "benchmark/stale-checkout-inventory.md",
+      "title": "Legacy Checkout Inventory Rollback",
+      "content": "Stale checkout-api release 2.3.0 inventory response procedure.",
+      "tags": ["checkout", "inventory", "stale"],
+      "serviceName": "checkout-api",
+      "component": "payments",
+      "releaseName": "2.3.0",
+      "isActive": true,
+      "chunks": [
+        {
+          "id": "20000000-0000-0000-0000-000000000005",
+          "position": 0,
+          "text": "inventory latency circuit breaker mitigation legacy rollback procedure for checkout-api release 2.3.0"
+        }
+      ]
+    },
+    {
+      "id": "10000000-0000-0000-0000-000000000005",
+      "kind": "runbook",
+      "source": "benchmark/wrong-service-inventory.md",
+      "title": "Orders Inventory Mitigation",
+      "content": "Orders-api inventory latency guidance, irrelevant to checkout-api incidents.",
+      "tags": ["orders", "inventory"],
+      "serviceName": "orders-api",
+      "component": "fulfillment",
+      "releaseName": "7.1.0",
+      "isActive": true,
+      "chunks": [
+        {
+          "id": "20000000-0000-0000-0000-000000000006",
+          "position": 0,
+          "text": "inventory latency circuit breaker mitigation for orders-api release 7.1.0"
+        }
+      ]
+    },
+    {
+      "id": "10000000-0000-0000-0000-000000000006",
+      "kind": "operational_note",
+      "source": "benchmark/distractor-01.md",
+      "title": "Unrelated Note 01",
+      "content": "Fixture-only vector distractor.",
+      "tags": ["distractor"],
+      "serviceName": "catalog-api",
+      "component": "catalog",
+      "releaseName": null,
+      "isActive": true,
+      "chunks": [{ "id": "20000000-0000-0000-0000-000000000007", "position": 0, "text": "quantum version sandbox" }]
+    },
+    {
+      "id": "10000000-0000-0000-0000-000000000007",
+      "kind": "operational_note",
+      "source": "benchmark/distractor-02.md",
+      "title": "Unrelated Note 02",
+      "content": "Fixture-only vector distractor.",
+      "tags": ["distractor"],
+      "serviceName": "catalog-api",
+      "component": "catalog",
+      "releaseName": null,
+      "isActive": true,
+      "chunks": [{ "id": "20000000-0000-0000-0000-000000000008", "position": 0, "text": "silver session billing" }]
+    },
+    {
+      "id": "10000000-0000-0000-0000-000000000008",
+      "kind": "operational_note",
+      "source": "benchmark/distractor-03.md",
+      "title": "Unrelated Note 03",
+      "content": "Fixture-only vector distractor.",
+      "tags": ["distractor"],
+      "serviceName": "catalog-api",
+      "component": "catalog",
+      "releaseName": null,
+      "isActive": true,
+      "chunks": [{ "id": "20000000-0000-0000-0000-000000000009", "position": 0, "text": "school version nickel" }]
+    },
+    {
+      "id": "10000000-0000-0000-0000-000000000009",
+      "kind": "operational_note",
+      "source": "benchmark/distractor-04.md",
+      "title": "Unrelated Note 04",
+      "content": "Fixture-only vector distractor.",
+      "tags": ["distractor"],
+      "serviceName": "catalog-api",
+      "component": "catalog",
+      "releaseName": null,
+      "isActive": true,
+      "chunks": [{ "id": "20000000-0000-0000-0000-000000000010", "position": 0, "text": "prairie session gateway" }]
+    },
+    {
+      "id": "10000000-0000-0000-0000-000000000010",
+      "kind": "operational_note",
+      "source": "benchmark/distractor-05.md",
+      "title": "Unrelated Note 05",
+      "content": "Fixture-only vector distractor.",
+      "tags": ["distractor"],
+      "serviceName": "catalog-api",
+      "component": "catalog",
+      "releaseName": null,
+      "isActive": true,
+      "chunks": [{ "id": "20000000-0000-0000-0000-000000000011", "position": 0, "text": "quantum session sandbox" }]
+    },
+    {
+      "id": "10000000-0000-0000-0000-000000000011",
+      "kind": "operational_note",
+      "source": "benchmark/distractor-06.md",
+      "title": "Unrelated Note 06",
+      "content": "Fixture-only vector distractor.",
+      "tags": ["distractor"],
+      "serviceName": "catalog-api",
+      "component": "catalog",
+      "releaseName": null,
+      "isActive": true,
+      "chunks": [{ "id": "20000000-0000-0000-0000-000000000012", "position": 0, "text": "silver version billing" }]
+    },
+    {
+      "id": "10000000-0000-0000-0000-000000000012",
+      "kind": "runbook",
+      "source": "benchmark/inactive-retired-inventory.md",
+      "title": "Retired Inventory Emergency Procedure",
+      "content": "Retired content must not be retrieved.",
+      "tags": ["inactive"],
+      "serviceName": "checkout-api",
+      "component": "payments",
+      "releaseName": "2.4.0",
+      "isActive": false,
+      "chunks": [{ "id": "20000000-0000-0000-0000-000000000013", "position": 0, "text": "retired inventory emergency exact procedure" }]
+    },
+    {
+      "id": "10000000-0000-0000-0000-000000000013",
+      "kind": "runbook",
+      "source": "benchmark/notifications-dispatch-backlog.md",
+      "title": "Notification Dispatch Backlog Runbook",
+      "content": "Use this runbook when notifications-api reports QueueSaturatedException and the dispatch queue backlog keeps growing. Symptoms: delivery lag alerts on /notifications/dispatch, rising queue depth per channel, and retries that never drain. Immediate checks: Confirm the dispatch worker count, inspect queue depth per channel, and compare the backlog with the last notifications-api deployment. Recommended action: Add dispatch workers, shed low-priority channels, and hold the retry interval steady so it does not compound until queue depth returns to baseline.",
+      "tags": ["notifications", "queue", "backlog"],
+      "serviceName": "notifications-api",
+      "component": "notifications",
+      "releaseName": "1.6.0",
+      "isActive": true,
+      "chunks": [
+        {
+          "id": "20000000-0000-0000-0000-000000000014",
+          "position": 0,
+          "text": "notifications-api dispatch queue backlog with QueueSaturatedException on /notifications/dispatch. Delivery lag alerts, rising queue depth per channel, retries that never drain, and dispatch worker scaling."
+        },
+        {
+          "id": "20000000-0000-0000-0000-000000000015",
+          "position": 1,
+          "text": "Shed low-priority notification channels and hold the retry interval steady until dispatch queue depth in notifications-api returns to baseline."
+        }
+      ]
+    },
+    {
+      "id": "10000000-0000-0000-0000-000000000014",
+      "kind": "runbook",
+      "source": "benchmark/retired-notification-provider-failover.md",
+      "title": "Retired Notification Provider Failover Procedure",
+      "content": "Retired content must not be retrieved. The exact provider failover steps for notifications-api are no longer supported.",
+      "tags": ["notifications", "inactive"],
+      "serviceName": "notifications-api",
+      "component": "notifications",
+      "releaseName": "1.4.0",
+      "isActive": false,
+      "chunks": [
+        {
+          "id": "20000000-0000-0000-0000-000000000016",
+          "position": 0,
+          "text": "retired SMS provider failover procedure for notifications-api: drain the primary gateway, switch the dispatch route to the secondary provider, and replay the unsent batch"
+        }
+      ]
+    },
+    {
+      "id": "10000000-0000-0000-0000-000000000015",
+      "kind": "runbook",
+      "source": "benchmark/search-index-lag.md",
+      "title": "Search Index Lag Runbook",
+      "content": "Use this runbook when search-indexer reports IndexLagException and search results go stale. Symptoms: a reindex backlog on /search/reindex, growing document age, and partial result sets. Immediate checks: Compare indexer throughput with the ingest rate, confirm the reindex worker is still claiming batches, and look for a poison document blocking a batch. Recommended action: Pause low-priority reindex batches, raise indexer concurrency, and let the lag drain before reprocessing the blocked document.",
+      "tags": ["search", "index", "lag"],
+      "serviceName": "search-indexer",
+      "component": "search",
+      "releaseName": "3.2.0",
+      "isActive": true,
+      "chunks": [
+        {
+          "id": "20000000-0000-0000-0000-000000000017",
+          "position": 0,
+          "text": "search-indexer IndexLagException with a reindex backlog on /search/reindex. Stale search results, growing document age, indexer throughput below the ingest rate, and a poison document blocking a batch."
+        }
+      ]
+    },
+    {
+      "id": "10000000-0000-0000-0000-000000000016",
+      "kind": "runbook",
+      "source": "benchmark/retired-search-index-full-rebuild.md",
+      "title": "Retired Search Index Full Rebuild Procedure",
+      "content": "Retired content must not be retrieved. The exact full index rebuild steps for search-indexer are no longer supported.",
+      "tags": ["search", "inactive"],
+      "serviceName": "search-indexer",
+      "component": "search",
+      "releaseName": "2.9.0",
+      "isActive": false,
+      "chunks": [
+        {
+          "id": "20000000-0000-0000-0000-000000000018",
+          "position": 0,
+          "text": "retired full index rebuild procedure for search-indexer: quiesce ingest, drop the index alias, rebuild every shard from the source of record, and swap the alias back"
+        }
+      ]
+    },
+    {
+      "id": "10000000-0000-0000-0000-000000000017",
+      "kind": "runbook",
+      "source": "benchmark/session-eviction-storm.md",
+      "title": "Session Eviction Storm Runbook",
+      "content": "Use this runbook when session-store reports SessionNotFoundException and signed-in users are logged out in bursts. Symptoms: eviction storms after a memory pressure spike, sudden drops in live session count, and repeated re-authentication. Immediate checks: Confirm the eviction policy and memory headroom, compare the storm with a session payload size regression, and check replica lag. Recommended action: Raise memory headroom, cap session payload size, and stagger eviction so the store never sheds a whole shard at once.",
+      "tags": ["sessions", "eviction", "memory"],
+      "serviceName": "session-store",
+      "component": "identity",
+      "releaseName": "4.0.0",
+      "isActive": true,
+      "chunks": [
+        {
+          "id": "20000000-0000-0000-0000-000000000019",
+          "position": 0,
+          "text": "session-store SessionNotFoundException during eviction storms. Signed-in users logged out in bursts, memory pressure spikes, live session count drops, and repeated re-authentication."
+        },
+        {
+          "id": "20000000-0000-0000-0000-000000000020",
+          "position": 1,
+          "text": "Cap session payload size and stagger eviction so session-store never sheds a whole shard at once."
+        }
+      ]
+    },
+    {
+      "id": "10000000-0000-0000-0000-000000000018",
+      "kind": "runbook",
+      "source": "benchmark/retired-session-store-manual-failover.md",
+      "title": "Retired Session Store Manual Failover Procedure",
+      "content": "Retired content must not be retrieved. The exact manual failover steps for session-store are no longer supported.",
+      "tags": ["sessions", "inactive"],
+      "serviceName": "session-store",
+      "component": "identity",
+      "releaseName": "3.7.0",
+      "isActive": false,
+      "chunks": [
+        {
+          "id": "20000000-0000-0000-0000-000000000021",
+          "position": 0,
+          "text": "retired manual session store failover procedure for session-store: freeze writes on the primary, promote the standby replica by hand, and repoint the session route"
+        }
+      ]
+    },
+    {
+      "id": "10000000-0000-0000-0000-000000000019",
+      "kind": "runbook",
+      "source": "benchmark/report-export-timeout.md",
+      "title": "Report Export Timeout Runbook",
+      "content": "Use this runbook when report-export reports ExportTimeoutException on /reports/export. Symptoms: scheduled exports that time out before the first page is written, long-running queries against the reporting replica, and export jobs stuck in the running state. Immediate checks: Confirm reporting replica lag, inspect the slowest export query plan, and compare the timeout with the configured export page size. Recommended action: Reduce the export page size, move the schedule off the replica maintenance window, and fail the job fast so the next run is not blocked.",
+      "tags": ["reporting", "export", "timeout"],
+      "serviceName": "report-export",
+      "component": "reporting",
+      "releaseName": "1.2.0",
+      "isActive": true,
+      "chunks": [
+        {
+          "id": "20000000-0000-0000-0000-000000000022",
+          "position": 0,
+          "text": "report-export ExportTimeoutException on /reports/export. Scheduled exports timing out before the first page is written, reporting replica lag, slow export query plans, and export jobs stuck in the running state."
+        }
+      ]
+    },
+    {
+      "id": "10000000-0000-0000-0000-000000000020",
+      "kind": "runbook",
+      "source": "benchmark/retired-report-export-nightly-replay.md",
+      "title": "Retired Report Export Nightly Replay Procedure",
+      "content": "Retired content must not be retrieved. The exact nightly replay steps for report-export are no longer supported.",
+      "tags": ["reporting", "inactive"],
+      "serviceName": "report-export",
+      "component": "reporting",
+      "releaseName": "1.0.0",
+      "isActive": false,
+      "chunks": [
+        {
+          "id": "20000000-0000-0000-0000-000000000023",
+          "position": 0,
+          "text": "retired nightly export replay procedure for report-export: rebuild the missing batch manifest, replay each export partition in order, and reconcile the delivered file count"
+        }
+      ]
+    },
+    {
+      "id": "10000000-0000-0000-0000-000000000021",
+      "kind": "runbook",
+      "source": "benchmark/feature-flag-evaluation-fallback.md",
+      "title": "Feature Flag Evaluation Fallback Runbook",
+      "content": "Use this runbook when flag-service reports FlagEvaluationException and /flags/evaluate falls back to default values. Symptoms: every request served with default flag values, a stale rules snapshot, and evaluation errors that clear on restart. Immediate checks: Confirm the rules snapshot version in use, check the flag store connection, and compare the fallback with the last rules publish. Recommended action: Republish the last good rules snapshot, keep the cached snapshot serving while the store recovers, and alert on snapshot age rather than on evaluation errors alone.",
+      "tags": ["flags", "rollout", "fallback"],
+      "serviceName": "flag-service",
+      "component": "platform",
+      "releaseName": "5.3.0",
+      "isActive": true,
+      "chunks": [
+        {
+          "id": "20000000-0000-0000-0000-000000000024",
+          "position": 0,
+          "text": "flag-service FlagEvaluationException with a default fallback on /flags/evaluate. Stale rules snapshot, flag store connection failures, snapshot age alerting, and republishing the last good rules snapshot."
+        }
+      ]
+    },
+    {
+      "id": "10000000-0000-0000-0000-000000000022",
+      "kind": "runbook",
+      "source": "benchmark/retired-feature-flag-kill-switch.md",
+      "title": "Retired Feature Flag Emergency Kill Switch Procedure",
+      "content": "Retired content must not be retrieved. The exact emergency kill switch steps for flag-service are no longer supported.",
+      "tags": ["flags", "inactive"],
+      "serviceName": "flag-service",
+      "component": "platform",
+      "releaseName": "4.8.0",
+      "isActive": false,
+      "chunks": [
+        {
+          "id": "20000000-0000-0000-0000-000000000025",
+          "position": 0,
+          "text": "retired emergency kill switch procedure for flag-service: force the global off switch, invalidate every cached rules snapshot, and pin the evaluation route to default values"
+        }
+      ]
+    },
+    {
+      "id": "10000000-0000-0000-0000-000000000023",
+      "kind": "runbook",
+      "source": "benchmark/orders-fulfillment-backlog.md",
+      "title": "Orders Fulfillment Backlog Runbook",
+      "content": "Use this runbook when orders-api reports FulfillmentBacklogException and the fulfillment backlog keeps growing after release 7.1.0. Symptoms: orders accepted faster than the fulfillment workers drain them, rising order age, and warehouse callbacks that arrive late. Immediate checks: Confirm the fulfillment worker count, compare the accepted order rate with the drained rate, and look for a single slow warehouse partner. Recommended action: Scale fulfillment workers, throttle the slow partner, and hold new promotions until order age returns to baseline.",
+      "tags": ["orders", "fulfillment", "backlog"],
+      "serviceName": "orders-api",
+      "component": "fulfillment",
+      "releaseName": "7.1.0",
+      "isActive": true,
+      "chunks": [
+        {
+          "id": "20000000-0000-0000-0000-000000000026",
+          "position": 0,
+          "text": "orders-api FulfillmentBacklogException with a growing fulfillment backlog after release 7.1.0. Orders accepted faster than fulfillment workers drain them, rising order age, and late warehouse callbacks."
+        },
+        {
+          "id": "20000000-0000-0000-0000-000000000027",
+          "position": 1,
+          "text": "Throttle the slow warehouse partner and hold new promotions until order age in orders-api returns to baseline."
+        }
+      ]
+    },
+    {
+      "id": "10000000-0000-0000-0000-000000000024",
+      "kind": "operational_note",
+      "source": "benchmark/distractor-07.md",
+      "title": "Unrelated Note 07",
+      "content": "Fixture-only vector distractor.",
+      "tags": ["distractor"],
+      "serviceName": "catalog-api",
+      "component": "catalog",
+      "releaseName": null,
+      "isActive": true,
+      "chunks": [{ "id": "20000000-0000-0000-0000-000000000028", "position": 0, "text": "prairie version nickel" }]
+    }
+  ],
+  "queries": [
+    {
+      "id": "false-empty-checkout-timeout",
+      "category": "positive",
+      "text": "checkout timeout inventory",
+      "serviceName": "checkout-api",
+      "relevantItemIds": [
+        "10000000-0000-0000-0000-000000000001",
+        "10000000-0000-0000-0000-000000000002"
+      ],
+      "relevantChunkIds": [
+        "20000000-0000-0000-0000-000000000001",
+        "20000000-0000-0000-0000-000000000002"
+      ],
+      "signal": {
+        "serviceName": "checkout-api",
+        "errorType": "TimeoutException",
+        "errorMessage": "Checkout request timed out while waiting on the inventory service to confirm the stock reservation",
+        "httpRoute": "/checkout",
+        "operationName": null
+      }
+    },
+    {
+      "id": "current-inventory-mitigation",
+      "category": "positive",
+      "text": "inventory latency circuit breaker",
+      "serviceName": "checkout-api",
+      "relevantItemIds": ["10000000-0000-0000-0000-000000000003"],
+      "relevantChunkIds": ["20000000-0000-0000-0000-000000000003"],
+      "signal": {
+        "serviceName": "checkout-api",
+        "errorType": "InventoryLatencyException",
+        "errorMessage": "Inventory dependency latency exceeded the checkout budget and calls to the inventory service kept piling up behind slow responses",
+        "httpRoute": "/checkout",
+        "operationName": null
+      }
+    },
+    {
+      "id": "payments-component-variant",
+      "category": "positive",
+      "text": "payments retry fanout guard",
+      "serviceName": "checkout-api",
+      "relevantItemIds": ["10000000-0000-0000-0000-000000000003"],
+      "relevantChunkIds": ["20000000-0000-0000-0000-000000000004"],
+      "signal": {
+        "serviceName": "checkout-api",
+        "errorType": "RetryBudgetExceededException",
+        "errorMessage": "Payment retries fanned out across every inventory call and exhausted the checkout retry budget while stock was slow to reserve",
+        "httpRoute": "/checkout",
+        "operationName": null
+      }
+    },
+    {
+      "id": "known-incident-pool",
+      "category": "positive",
+      "text": "connection pool saturation",
+      "serviceName": "checkout-api",
+      "relevantItemIds": ["10000000-0000-0000-0000-000000000002"],
+      "relevantChunkIds": ["20000000-0000-0000-0000-000000000002"],
+      "signal": {
+        "serviceName": "checkout-api",
+        "errorType": "ConnectionPoolExhaustedException",
+        "errorMessage": "Inventory requests from checkout waited for a free database connection until the pool limit was reached and requests began timing out",
+        "httpRoute": "/checkout",
+        "operationName": null
+      }
+    },
+    {
+      "id": "stock-reservation-query-variant",
+      "category": "positive",
+      "text": "stock reservation delay",
+      "serviceName": "checkout-api",
+      "relevantItemIds": [
+        "10000000-0000-0000-0000-000000000001",
+        "10000000-0000-0000-0000-000000000003"
+      ],
+      "relevantChunkIds": [
+        "20000000-0000-0000-0000-000000000001",
+        "20000000-0000-0000-0000-000000000004"
+      ],
+      "signal": {
+        "serviceName": "checkout-api",
+        "errorType": "ReservationTimeoutException",
+        "errorMessage": "Reserving items for an order took several seconds and checkout held the payment step until the inventory service answered",
+        "httpRoute": "/checkout",
+        "operationName": null
+      }
+    },
+    {
+      "id": "stale-only-procedure",
+      "category": "positive",
+      "text": "legacy rollback procedure",
+      "serviceName": "checkout-api",
+      "relevantItemIds": ["10000000-0000-0000-0000-000000000004"],
+      "relevantChunkIds": ["20000000-0000-0000-0000-000000000005"],
+      "signal": {
+        "serviceName": "checkout-api",
+        "errorType": "ReleaseRegressionException",
+        "errorMessage": "Inventory latency regressed right after the latest checkout deployment and the previous release has to be restored",
+        "httpRoute": "/checkout",
+        "operationName": null
+      }
+    },
+    {
+      "id": "notification-backlog-dispatch",
+      "category": "positive",
+      "text": "notifications-api QueueSaturatedException Dispatch queue backlog grew past the delivery lag alert on /notifications/dispatch",
+      "serviceName": "notifications-api",
+      "relevantItemIds": ["10000000-0000-0000-0000-000000000013"],
+      "relevantChunkIds": ["20000000-0000-0000-0000-000000000014"],
+      "signal": {
+        "serviceName": "notifications-api",
+        "errorType": "QueueSaturatedException",
+        "errorMessage": "Dispatch queue backlog grew past the delivery lag alert",
+        "httpRoute": "/notifications/dispatch",
+        "operationName": null
+      }
+    },
+    {
+      "id": "search-index-lag",
+      "category": "positive",
+      "text": "search-indexer IndexLagException Search results are stale because the reindex worker fell behind on /search/reindex",
+      "serviceName": "search-indexer",
+      "relevantItemIds": ["10000000-0000-0000-0000-000000000015"],
+      "relevantChunkIds": ["20000000-0000-0000-0000-000000000017"],
+      "signal": {
+        "serviceName": "search-indexer",
+        "errorType": "IndexLagException",
+        "errorMessage": "Search results are stale because the reindex worker fell behind",
+        "httpRoute": "/search/reindex",
+        "operationName": null
+      }
+    },
+    {
+      "id": "session-eviction-storm",
+      "category": "positive",
+      "text": "session-store SessionNotFoundException Signed-in users are logged out in bursts during an eviction storm",
+      "serviceName": "session-store",
+      "relevantItemIds": ["10000000-0000-0000-0000-000000000017"],
+      "relevantChunkIds": ["20000000-0000-0000-0000-000000000019"],
+      "signal": {
+        "serviceName": "session-store",
+        "errorType": "SessionNotFoundException",
+        "errorMessage": "Signed-in users are logged out in bursts during an eviction storm",
+        "httpRoute": null,
+        "operationName": null
+      }
+    },
+    {
+      "id": "report-export-timeout",
+      "category": "positive",
+      "text": "report-export ExportTimeoutException Scheduled report export timed out on /reports/export before the first page was written",
+      "serviceName": "report-export",
+      "relevantItemIds": ["10000000-0000-0000-0000-000000000019"],
+      "relevantChunkIds": ["20000000-0000-0000-0000-000000000022"],
+      "signal": {
+        "serviceName": "report-export",
+        "errorType": "ExportTimeoutException",
+        "errorMessage": "Scheduled report export timed out on /reports/export before the first page was written",
+        "httpRoute": "/reports/export",
+        "operationName": null
+      }
+    },
+    {
+      "id": "feature-flag-evaluation-fallback",
+      "category": "positive",
+      "text": "flag-service FlagEvaluationException Flag evaluation fell back to default values for every request on /flags/evaluate",
+      "serviceName": "flag-service",
+      "relevantItemIds": ["10000000-0000-0000-0000-000000000021"],
+      "relevantChunkIds": ["20000000-0000-0000-0000-000000000024"],
+      "signal": {
+        "serviceName": "flag-service",
+        "errorType": "FlagEvaluationException",
+        "errorMessage": "Flag evaluation fell back to default values for every request",
+        "httpRoute": "/flags/evaluate",
+        "operationName": null
+      }
+    },
+    {
+      "id": "orders-fulfillment-backlog",
+      "category": "positive",
+      "text": "orders-api FulfillmentBacklogException Order fulfillment backlog kept growing after release 7.1.0",
+      "serviceName": "orders-api",
+      "relevantItemIds": ["10000000-0000-0000-0000-000000000023"],
+      "relevantChunkIds": ["20000000-0000-0000-0000-000000000026"],
+      "signal": {
+        "serviceName": "orders-api",
+        "errorType": "FulfillmentBacklogException",
+        "errorMessage": "Order fulfillment backlog kept growing after release 7.1.0",
+        "httpRoute": null,
+        "operationName": null
+      }
+    },
+    {
+      "id": "explicit-no-match",
+      "category": "off_topic",
+      "text": "certificate rotation handshake",
+      "serviceName": "checkout-api",
+      "relevantItemIds": [],
+      "relevantChunkIds": [],
+      "signal": {
+        "serviceName": "checkout-api",
+        "errorType": "TlsHandshakeException",
+        "errorMessage": "Outbound calls to the payment gateway failed the TLS handshake after the gateway rotated its server certificate",
+        "httpRoute": "/checkout",
+        "operationName": null
+      }
+    },
+    {
+      "id": "off-topic-dns-resolution",
+      "category": "off_topic",
+      "text": "edge-gateway DnsResolutionException Upstream name resolution started failing for every outbound call",
+      "serviceName": "edge-gateway",
+      "relevantItemIds": [],
+      "relevantChunkIds": [],
+      "signal": {
+        "serviceName": "edge-gateway",
+        "errorType": "DnsResolutionException",
+        "errorMessage": "Upstream name resolution started failing for every outbound call",
+        "httpRoute": null,
+        "operationName": null
+      }
+    },
+    {
+      "id": "off-topic-clock-skew",
+      "category": "off_topic",
+      "text": "audit-api ClockSkewException Signed audit entries were rejected because the host clock drifted",
+      "serviceName": "audit-api",
+      "relevantItemIds": [],
+      "relevantChunkIds": [],
+      "signal": {
+        "serviceName": "audit-api",
+        "errorType": "ClockSkewException",
+        "errorMessage": "Signed audit entries were rejected because the host clock drifted",
+        "httpRoute": null,
+        "operationName": null
+      }
+    },
+    {
+      "id": "off-topic-disk-pressure",
+      "category": "off_topic",
+      "text": "build-runner DiskPressureException The build agent ran out of scratch disk during artifact upload",
+      "serviceName": "build-runner",
+      "relevantItemIds": [],
+      "relevantChunkIds": [],
+      "signal": {
+        "serviceName": "build-runner",
+        "errorType": "DiskPressureException",
+        "errorMessage": "The build agent ran out of scratch disk during artifact upload",
+        "httpRoute": null,
+        "operationName": null
+      }
+    },
+    {
+      "id": "off-topic-checkout-price-rounding",
+      "category": "off_topic",
+      "text": "checkout-api PriceRoundingException Checkout totals were a cent off for inventory bundles after a currency rounding change",
+      "serviceName": "checkout-api",
+      "relevantItemIds": [],
+      "relevantChunkIds": [],
+      "signal": {
+        "serviceName": "checkout-api",
+        "errorType": "PriceRoundingException",
+        "errorMessage": "Checkout totals were a cent off for inventory bundles after a currency rounding change",
+        "httpRoute": null,
+        "operationName": null
+      }
+    },
+    {
+      "id": "off-topic-notification-template-render",
+      "category": "off_topic",
+      "text": "notifications-api TemplateRenderException The dispatch preview page failed to render a localized email template",
+      "serviceName": "notifications-api",
+      "relevantItemIds": [],
+      "relevantChunkIds": [],
+      "signal": {
+        "serviceName": "notifications-api",
+        "errorType": "TemplateRenderException",
+        "errorMessage": "The dispatch preview page failed to render a localized email template",
+        "httpRoute": null,
+        "operationName": null
+      }
+    },
+    {
+      "id": "inactive-item-no-match",
+      "category": "hard_negative",
+      "text": "retired inventory emergency exact procedure",
+      "serviceName": "checkout-api",
+      "relevantItemIds": [],
+      "relevantChunkIds": [],
+      "signal": {
+        "serviceName": "checkout-api",
+        "errorType": "InventoryUnavailableException",
+        "errorMessage": "The inventory service is down for every checkout and we need the emergency inventory procedure to keep orders flowing",
+        "httpRoute": "/checkout",
+        "operationName": null
+      }
+    },
+    {
+      "id": "hard-negative-notification-provider-failover",
+      "category": "hard_negative",
+      "text": "notifications-api ProviderUnavailableException The SMS provider stopped accepting dispatches and we need the provider failover procedure",
+      "serviceName": "notifications-api",
+      "relevantItemIds": [],
+      "relevantChunkIds": [],
+      "signal": {
+        "serviceName": "notifications-api",
+        "errorType": "ProviderUnavailableException",
+        "errorMessage": "The SMS provider stopped accepting dispatches and we need the provider failover procedure",
+        "httpRoute": null,
+        "operationName": null
+      }
+    },
+    {
+      "id": "hard-negative-search-full-rebuild",
+      "category": "hard_negative",
+      "text": "search-indexer IndexCorruptException The search index is corrupt and we need the full index rebuild procedure",
+      "serviceName": "search-indexer",
+      "relevantItemIds": [],
+      "relevantChunkIds": [],
+      "signal": {
+        "serviceName": "search-indexer",
+        "errorType": "IndexCorruptException",
+        "errorMessage": "The search index is corrupt and we need the full index rebuild procedure",
+        "httpRoute": null,
+        "operationName": null
+      }
+    },
+    {
+      "id": "hard-negative-session-manual-failover",
+      "category": "hard_negative",
+      "text": "session-store ReplicaUnavailableException The session replica is down and we need the manual session store failover procedure",
+      "serviceName": "session-store",
+      "relevantItemIds": [],
+      "relevantChunkIds": [],
+      "signal": {
+        "serviceName": "session-store",
+        "errorType": "ReplicaUnavailableException",
+        "errorMessage": "The session replica is down and we need the manual session store failover procedure",
+        "httpRoute": null,
+        "operationName": null
+      }
+    },
+    {
+      "id": "hard-negative-report-nightly-replay",
+      "category": "hard_negative",
+      "text": "report-export ExportBatchMissingException The nightly export batch is missing and we need the nightly export replay procedure",
+      "serviceName": "report-export",
+      "relevantItemIds": [],
+      "relevantChunkIds": [],
+      "signal": {
+        "serviceName": "report-export",
+        "errorType": "ExportBatchMissingException",
+        "errorMessage": "The nightly export batch is missing and we need the nightly export replay procedure",
+        "httpRoute": null,
+        "operationName": null
+      }
+    },
+    {
+      "id": "hard-negative-flag-kill-switch",
+      "category": "hard_negative",
+      "text": "flag-service FlagRolloutException A bad flag rollout is live and we need the emergency kill switch procedure",
+      "serviceName": "flag-service",
+      "relevantItemIds": [],
+      "relevantChunkIds": [],
+      "signal": {
+        "serviceName": "flag-service",
+        "errorType": "FlagRolloutException",
+        "errorMessage": "A bad flag rollout is live and we need the emergency kill switch procedure",
+        "httpRoute": null,
+        "operationName": null
+      }
+    }
+  ]
+}

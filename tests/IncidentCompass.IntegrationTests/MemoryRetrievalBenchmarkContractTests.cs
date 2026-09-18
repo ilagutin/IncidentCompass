@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using IncidentCompass.Application.Memory;
 
 namespace IncidentCompass.IntegrationTests;
@@ -343,6 +344,212 @@ public sealed class MemoryRetrievalBenchmarkContractTests
         Assert.Equal(0, evaluation.Metrics.HardNegativeReturnedCount);
         Assert.Equal(0, evaluation.Metrics.HardNegativeConfirmedCount);
     }
+
+    [Fact]
+    public void V3Corpus_CarriesEveryVersionTwoItemChunkAndQueryVerbatimExceptTheAddedSignal()
+    {
+        var repoRoot = FindRepoRoot();
+        var version2 = MemoryRetrievalBenchmarkCorpus.LoadV2(repoRoot);
+        var corpus = MemoryRetrievalBenchmarkCorpus.LoadV3(repoRoot);
+
+        Assert.Equal(3, corpus.SchemaVersion);
+        Assert.Equal(MemoryRetrievalBenchmarkCorpus.Version3, corpus.CorpusVersion);
+        Assert.Equal(version2.TenantId, corpus.TenantId);
+        Assert.Equal(version2.EmbeddingModel, corpus.EmbeddingModel);
+        Assert.Equal(version2.EmbeddingDimensions, corpus.EmbeddingDimensions);
+        Assert.Equal(version2.TopK, corpus.TopK);
+        Assert.Equal(version2.MinScore, corpus.MinScore);
+        Assert.Equal(version2.CurrentReleases.OrderBy(static pair => pair.Key), corpus.CurrentReleases.OrderBy(static pair => pair.Key));
+        Assert.Equal(version2.Items.Select(static item => item.Id), corpus.Items.Select(static item => item.Id));
+        var noTags = Array.Empty<string>();
+        var noChunks = Array.Empty<MemoryRetrievalBenchmarkChunk>();
+        foreach (var (expected, actual) in version2.Items.Zip(corpus.Items))
+        {
+            Assert.Equal(expected with { Tags = noTags, Chunks = noChunks }, actual with { Tags = noTags, Chunks = noChunks });
+            Assert.Equal(expected.Tags, actual.Tags);
+            Assert.Equal(expected.Chunks, actual.Chunks);
+        }
+
+        Assert.Equal(version2.Queries.Select(static query => query.Id), corpus.Queries.Select(static query => query.Id));
+        foreach (var (expected, actual) in version2.Queries.Zip(corpus.Queries))
+        {
+            Assert.Null(expected.Signal);
+            Assert.NotNull(actual.Signal);
+            Assert.Equal(expected.Text, actual.Text);
+            Assert.Equal(expected.ServiceName, actual.ServiceName);
+            Assert.Equal(expected.Category, actual.Category);
+            Assert.Equal(expected.RelevantItemIds, actual.RelevantItemIds);
+            Assert.Equal(expected.RelevantChunkIds, actual.RelevantChunkIds);
+        }
+    }
+
+    [Fact]
+    public void V3Corpus_SplitsEveryIncidentQueryIntoItsSignalAndGivesEveryKeywordQueryADistinctFault()
+    {
+        var corpus = MemoryRetrievalBenchmarkCorpus.LoadV3(FindRepoRoot());
+        var incidentShaped = corpus.Queries.Where(IsIncidentShaped).ToArray();
+        var keywordShaped = corpus.Queries.Where(static query => !IsIncidentShaped(query)).ToArray();
+
+        Assert.All(corpus.Queries, query =>
+        {
+            var signal = Assert.IsType<MemoryRetrievalBenchmarkSignal>(query.Signal);
+            Assert.False(string.IsNullOrWhiteSpace(signal.ServiceName), query.Id + " has no signal service name.");
+            Assert.False(string.IsNullOrWhiteSpace(signal.ErrorType), query.Id + " has no signal error type.");
+            Assert.False(string.IsNullOrWhiteSpace(signal.ErrorMessage), query.Id + " has no signal message.");
+            Assert.Equal(query.ServiceName, signal.ServiceName);
+            Assert.EndsWith("Exception", signal.ErrorType, StringComparison.Ordinal);
+        });
+        Assert.Equal(16, incidentShaped.Length);
+        Assert.All(incidentShaped, query =>
+        {
+            var signal = query.Signal!;
+            foreach (var field in new[] { signal.ServiceName, signal.ErrorType, signal.ErrorMessage, signal.HttpRoute, signal.OperationName })
+            {
+                Assert.True(
+                    field is null || query.Text.Contains(field, StringComparison.Ordinal),
+                    query.Id + " carries the signal field '" + field + "', which its query text does not.");
+            }
+
+            var prefix = signal.ServiceName + " " + signal.ErrorType + " " + signal.ErrorMessage;
+            Assert.StartsWith(prefix, query.Text, StringComparison.Ordinal);
+            var remainder = query.Text[prefix.Length..];
+            Assert.True(
+                remainder.Length == 0 || remainder == " on " + signal.HttpRoute,
+                query.Id + " leaves '" + remainder + "' of its query text out of its signal.");
+        });
+        Assert.Equal(8, keywordShaped.Length);
+        Assert.Equal(
+            MemoryRetrievalQueryCategory.All.Order(StringComparer.Ordinal),
+            keywordShaped.Select(static query => query.Category!).Distinct().Order(StringComparer.Ordinal));
+        Assert.All(keywordShaped, query =>
+        {
+            var message = query.Signal!.ErrorMessage;
+            Assert.False(
+                query.Text.Contains(message, StringComparison.OrdinalIgnoreCase),
+                query.Id + " repeats its signal message as its query.");
+            Assert.False(
+                message.Contains(query.Text, StringComparison.OrdinalIgnoreCase),
+                query.Id + " repeats its query inside its signal message.");
+            Assert.True(
+                WordCount(message) > 2 * WordCount(query.Text),
+                query.Id + " has a signal message no longer than a keyword query.");
+        });
+    }
+
+    [Fact]
+    public void V3MultilingualQueries_CoverEveryQueryOncePerLanguageAndCutEachMessageFromTheirOwnText()
+    {
+        var repoRoot = FindRepoRoot();
+        var corpus = MemoryRetrievalBenchmarkCorpus.LoadV3(repoRoot);
+        var multilingual = MemoryRetrievalMultilingualQueries.LoadV3(repoRoot);
+        var version2 = MemoryRetrievalMultilingualQueries.LoadV2(repoRoot);
+        var languages = new[] { MemoryRetrievalMultilingualQueries.Polish, MemoryRetrievalMultilingualQueries.Russian };
+        var sources = corpus.Queries.ToDictionary(static query => query.Id, StringComparer.Ordinal);
+
+        Assert.Equal(3, multilingual.SchemaVersion);
+        Assert.Equal(MemoryRetrievalMultilingualQueries.Version3, multilingual.Version);
+        Assert.Equal(corpus.CorpusVersion, multilingual.CorpusVersion);
+        Assert.Equal(
+            version2.Queries.Select(static entry => (entry.Id, entry.SourceQueryId, entry.Language, entry.Text)),
+            multilingual.Queries.Select(static entry => (entry.Id, entry.SourceQueryId, entry.Language, entry.Text)));
+        foreach (var language in languages)
+        {
+            var covered = multilingual.Queries
+                .Where(entry => entry.Language == language)
+                .Select(static entry => entry.SourceQueryId)
+                .ToArray();
+            Assert.Equal(sources.Count, covered.Length);
+            Assert.True(sources.Keys.ToHashSet(StringComparer.Ordinal).SetEquals(covered), language + " does not cover every corpus query exactly once.");
+        }
+
+        Assert.All(multilingual.Queries, entry =>
+        {
+            var message = entry.ErrorMessage;
+            Assert.NotNull(message);
+            Assert.False(string.IsNullOrWhiteSpace(message), entry.Id + " has no error message.");
+            Assert.True(
+                entry.Text.Contains(message, StringComparison.Ordinal),
+                entry.Id + " has an error message that is not a contiguous part of its own text.");
+            var source = sources[entry.SourceQueryId];
+            var signal = source.Signal!;
+            if (IsIncidentShaped(source))
+            {
+                Assert.StartsWith(signal.ServiceName + " " + signal.ErrorType + " " + message, entry.Text, StringComparison.Ordinal);
+            }
+            else
+            {
+                Assert.Equal(entry.Text, message);
+            }
+        });
+
+        var pooled = multilingual.ToCorpus(corpus, languages);
+        var entries = multilingual.Queries.ToDictionary(static entry => entry.Id, StringComparer.Ordinal);
+        Assert.Equal(corpus.Queries.Count * languages.Length, pooled.Queries.Count);
+        Assert.All(pooled.Queries, query =>
+        {
+            var entry = entries[query.Id];
+            var english = sources[entry.SourceQueryId].Signal!;
+            Assert.Equal(english with { ErrorMessage = entry.ErrorMessage! }, query.Signal);
+        });
+        Assert.All(
+            version2.ToCorpus(MemoryRetrievalBenchmarkCorpus.LoadV2(repoRoot), languages).Queries,
+            static query => Assert.Null(query.Signal));
+    }
+
+    [Theory]
+    [InlineData("corpus-v3.json", "missing")]
+    [InlineData("corpus-v3.json", "blank-message")]
+    [InlineData("corpus-v3.json", "other-service")]
+    [InlineData("corpus-v2.json", "present")]
+    public void CorpusLoader_RequiresASignalFromSchemaThreeOnAndRefusesOneBeforeIt(string fileName, string mutation)
+    {
+        var repoRoot = FindRepoRoot();
+        var fixtureDirectory = Path.Combine("tests", "IncidentCompass.IntegrationTests", "Fixtures", "MemoryRetrieval");
+        var document = JsonNode.Parse(File.ReadAllText(Path.Combine(repoRoot, fixtureDirectory, fileName)))!;
+        var firstQuery = document["queries"]![0]!.AsObject();
+        switch (mutation)
+        {
+            case "missing":
+                Assert.True(firstQuery.Remove("signal"));
+                break;
+            case "blank-message":
+                firstQuery["signal"]!["errorMessage"] = " ";
+                break;
+            case "other-service":
+                firstQuery["signal"]!["serviceName"] = "orders-api";
+                break;
+            default:
+                Assert.False(firstQuery.ContainsKey("signal"));
+                firstQuery["signal"] = JsonNode.Parse(
+                    "{\"serviceName\":\"checkout-api\",\"errorType\":\"TimeoutException\",\"errorMessage\":\"timed out\"}");
+                break;
+        }
+
+        var scratchRoot = Path.Combine(Path.GetTempPath(), "memory-retrieval-contract-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(scratchRoot, fixtureDirectory));
+            File.WriteAllText(Path.Combine(scratchRoot, fixtureDirectory, fileName), document.ToJsonString());
+
+            Assert.Throws<InvalidOperationException>(() => fileName == "corpus-v3.json"
+                ? MemoryRetrievalBenchmarkCorpus.LoadV3(scratchRoot)
+                : MemoryRetrievalBenchmarkCorpus.LoadV2(scratchRoot));
+        }
+        finally
+        {
+            Directory.Delete(scratchRoot, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// An incident-shaped query reads like the fault that triggered it: its own service name, then an
+    /// exception type. A keyword query is the terse wording a model would send instead.
+    /// </summary>
+    private static bool IsIncidentShaped(MemoryRetrievalBenchmarkQuery query) =>
+        query.Text.StartsWith(query.ServiceName + " ", StringComparison.Ordinal);
+
+    private static int WordCount(string text) =>
+        text.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length;
 
     private static MemoryRetrievalBenchmarkCorpus HardNegativeCorpus(
         Guid itemId,
