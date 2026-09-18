@@ -7,8 +7,9 @@
 ## 0.5.0 - 2026-09-18
 
 Memory embeddings run inside the Worker by default, seed documents are chunked by section, and a
-multilingual cross-encoder judges whether a retrieved chunk answers the query, deciding what
-`memory_search` returns and what a `KnownIncident` report may rest on. A slow model is bounded by
+multilingual cross-encoder judges retrieved chunks twice: against the model's query, deciding what
+`memory_search` returns, and against the incident's own trigger signal, deciding which returned
+documents are confirmed and so what a `KnownIncident` report may rest on. A slow model is bounded by
 per-phase provider limits and a long attempt ceiling instead of a short total deadline, with chat
 completions streamed by default. Every tool call has an execution limit, and an
 investigation that stops making progress gets bounded recovery and then an honest backend-authored
@@ -106,24 +107,51 @@ report.
   its own and is taken under the base model's, which `THIRD-PARTY-NOTICES.md` records. It has no
   provider entry, no route and no `ModelCall` row: one Application port, `IMemoryRelevanceJudge`, with
   one in-process adapter, composed only on the Worker.
-  `IncidentCompass:RelevanceJudge:LocalOnnx:ModelDirectory` is the only setting that turns it on, both
-  shipped Compose files set it to `/app/models/relevance-judge` inside the existing model volume, and
-  its install pass runs last on the Worker's start, after the memory seed pass, under
-  `InstallTimeoutSeconds` of 1800. A failed pass does not stop the Worker.
+  `IncidentCompass:RelevanceJudge:LocalOnnx:ModelDirectory` is the setting that turns it on;
+  `docker-compose.yml` and `compose.production.yml` set it to `/app/models/relevance-judge` inside the
+  existing model volume and `compose.evaluation.yml` inherits it, so the evaluation stack runs the
+  real judge and downloads it, about 544 MiB, on its first start. Its install pass runs last on the
+  Worker's start, after the memory seed pass, under `InstallTimeoutSeconds` of 1800. A failed pass
+  does not stop the Worker.
+- `IncidentCompass:RelevanceJudge:Provider`, a Worker host setting taking `LocalOnnx`, the default, or
+  `Mock`, parsed like the other provider settings, ignoring case, surrounding space, hyphens and
+  underscores; a value that is not one of those two provider kinds stops the Worker at start. `Mock` is a deterministic stand-in that needs no
+  model and confirms a document when it names an error type the query names, so the mock stack, which
+  `compose.mock.yml` switches to it, takes the same judged path as the product. It is not a governance
+  boundary, and its confirmations are indistinguishable from real ones in the tool output and the
+  stored artifact. `compose.production.yml` pins the provider to `LocalOnnx` on the worker,
+  `scripts/production-preflight.ps1` refuses an environment entry naming any other judge provider and
+  checks the rendered worker's value, a Worker that composes the mock logs warning event 2323 on every
+  start, and `memory model status` and `memory model install` report it as the mock and exit 1.
+- Confirmation against the incident. After admission, the documents `memory_search` returns, and only
+  those, are judged a second time against a query the backend builds from the trigger signal: service
+  name, error type, error message and HTTP route, blank parts skipped. The sender's summary stands in
+  only when the message is blank and only when it is not intake's own synthesized summary. A
+  re-triage confirms against the fault's original trigger signal. No model output reaches that query,
+  so a model searching again with a document's wording cannot raise that document's band. Each item
+  reports the judge's score for that query as `confirmationScore` beside `score` and `judgeScore`,
+  null when nothing judged it.
 - Judge-decided admission for `memory_search`. Where a judge is installed it, and not the lexical
-  coverage rule, decides admission for every query. Below `Tools.memory_search.RelevanceFloorScore` a
-  candidate is dropped, between the thresholds it is returned as related but unconfirmed, and at or
-  above `Tools.memory_search.RelevanceConfirmScore` it is confirmed. `Tools.memory_search.RelevanceJudge`
-  takes `off` or `on` and means `on` when absent; the default floor is -0.25 and the default confirm
-  score 1.15, both measured through the real tool and both code defaults, since no shipped or sample
-  configuration sets any of the three keys. Load validation refuses an unknown mode, a score outside
-  -50 through
-  50 and a floor that is not below the confirm score. Exactly two states answer without a judge, no
-  configured model directory and nothing installed in the configured one, and both are reported in a
-  new top-level `limitation` string; every other judge failure propagates with its own code, an
-  install still running included. A judge set to `off` reports no limitation, because that state is
-  the operator's own choice, so an `off` result on a judge host is indistinguishable from a pre-judge
-  one.
+  coverage rule, decides admission for every query: a candidate the judge scores below
+  `Tools.memory_search.RelevanceFloorScore` against the model's query is dropped. A returned document
+  whose confirmation score reaches `Tools.memory_search.RelevanceConfirmScore` is confirmed.
+  `Tools.memory_search.RelevanceJudge` takes `off` or `on` and means `on` when absent; the default
+  floor is -0.25 and the default confirm score 0.85, the latter measured against the signal-built
+  query it now decides against, both measured through the real tool and both code defaults, since no
+  shipped or sample configuration sets any of the three keys. Load validation refuses an unknown mode,
+  a score outside -50 through 50 and a floor that is not below the confirm score. Two host states
+  answer without a judge, no configured model directory and nothing installed in the configured one,
+  and so does `RelevanceJudge: off`, as the operator's own choice. Every other judge failure
+  propagates with its own code. A judge whose install failed or timed out, whose files do not verify,
+  that is still installing or that is not the configured one refuses the call with
+  `memory_relevance_judge_unavailable` or `memory_relevance_judge_mismatch`, a configuration failure
+  that spends the job's ordinary attempt budget and dead-letters the job under that code when the
+  budget runs out; a judge that is installed but fails to load is a provider outage, retried without
+  spending attempts. The Worker does not claim work until the judge's install pass has ended. Without
+  a judge nothing is confirmed: in those two states, with the judge set to `off`, and when the judge
+  becomes absent between the admission and the confirmation call, every item is `low` and a new
+  top-level `limitation` string says nothing was confirmed. Documents are still retrieved and passed
+  on as context, and `VectorOnlyFallback` still governs admission.
 - A publication bar for one classification. A `Completed` report classified `KnownIncident` that cites
   at least one memory-backed retrieved document is refused unless at least one of them carries a
   confirmed band, with one fixed backend-authored refusal carrying no artifact id, title or quote. The
@@ -131,20 +159,21 @@ report.
   source-lookup `RetrievedItem`, or citing no retrieved document, is untouched. A memory payload with
   no band recorded does not count as confirmed, and the durable `ToolResult` of a `memory_search` call
   carries no band at its top level, which is the only level the rule reads, so a `KnownIncident`
-  cannot rest on that artifact alone. What the bar means depends on whether a judge ran: on a host
-  with no judge the band is lexical support, so `high` and `medium` mean at least half of the query's
-  eligible words appeared in the chunk, and the bar refuses only a report whose every memory citation
-  came from the vector-only fallback. Because the `foreign_script` fallback default newly produces
-  exactly those items, a judge-less deployment can have a `KnownIncident` report refused where it
-  would previously have published.
+  cannot rest on that artifact alone. No ticket, remediation or post-report workflow reads the
+  classification; the bar exists because the classification is part of the report the approver of a
+  ticket, a branch push or a pull request reads when deciding. Because nothing is confirmed without a
+  judge, a deployment that runs no judge can no longer have a memory-based `KnownIncident` report at
+  all; the shipped compose files run the judge.
 - A retrieval benchmark that measures the judge through the product. The corpus grew to 24 items and
   24 queries per language in three declared categories, 12 positive, 6 off topic and 6 hard negative,
   in English, Polish and Russian, and the leg runs the real `memory_search` with the judge off and
-  then on. It runs only when `INCIDENTCOMPASS_RELEVANCE_JUDGE_BENCHMARK` is set, and the real judge
-  adapter test only when `INCIDENTCOMPASS_REQUIRE_REAL_RELEVANCE_JUDGE` is; neither runs because `CI`
-  is set.
+  then on, sweeps the confirm score against the signal-built query, and runs an attack in which the
+  model's query is replaced with the text of the closest document. It runs only when
+  `INCIDENTCOMPASS_RELEVANCE_JUDGE_BENCHMARK` is set, and the real judge adapter test only when
+  `INCIDENTCOMPASS_REQUIRE_REAL_RELEVANCE_JUDGE` is; neither runs because `CI` is set.
 - Log events 2320, 2321 and 2322 for the judge's install state, the last written once at Worker start
-  on a host that configures no judge. New error codes `memory_relevance_judge_unavailable`,
+  on a host that configures no judge, and warning event 2323 at every start of a Worker that runs the
+  mock judge. New error codes `memory_relevance_judge_unavailable`,
   `memory_relevance_judge_mismatch`, `memory_relevance_judge_score_not_finite` and
   `memory_relevance_judge_score_count_mismatch`, over the adapter's own fifteen
   `relevance_judge_...` absence, install, store and runtime codes, which `docs/model-gateway.md`
@@ -159,34 +188,39 @@ report.
   script the candidate never writes is no longer counted against it.
 - `retrievalConfidence` on a `memory_search` item and on its `RetrievedItem` artifact keeps the values
   `high`, `medium` and `low` but no longer derives from the vector score, which separates nothing on
-  the shipped embedding model. On an unjudged call it reports lexical support: `high` is full coverage
-  with no word excluded for script, `medium` is partial or script-reduced coverage, and `low` is a
-  vector-only match. On a judged call it reports the weaker of the two judgements: `high` is the judge
-  confirming with full lexical coverage, `medium` the judge alone, and `low` admitted without being
-  confirmed. The numeric `score` is unchanged, and a vector-only result carries the top-level `message`
-  `vector-only matches, not lexically confirmed`.
-- `memory_search` output gains two nullable values and one message. Each item carries `judgeScore`
-  beside the unchanged vector `score`, null when nothing judged, and the result carries a top-level
-  `limitation`, non-null only on a host that runs no judge. The top-level `message` gains
-  `related matches, none confirmed by the relevance judge` for a judged set in which nothing reached
-  the confirm score. `matched`, `items` and `noMatchReason` are unchanged. Ordering substitutes the
-  judge's score for the vector score as the base term on a judged call, and `VectorOnlyFallback` does
-  not apply there, because no lexical gate is left to leave anything empty.
+  the shipped embedding model. It says whether the document was confirmed as describing the incident,
+  decided against the signal-built query rather than the model's: `high` is the judge confirming with
+  every counted word of that query also in the document, `medium` the judge's confirmation alone, and
+  `low` admitted without being confirmed. On an unjudged call every item is `low`. The numeric `score`
+  is unchanged, and a vector-only result carries the top-level `message` `vector-only matches, not
+  lexically confirmed`.
+- `memory_search` output gains three nullable values and one message. Each item carries `judgeScore`,
+  the admission score against the model's query, and `confirmationScore`, the score against the
+  signal-built query, beside the unchanged vector `score`, each null when nothing judged it. The
+  result carries a top-level `limitation`, non-null whenever no judge ran, `RelevanceJudge: off`
+  included. The top-level `message` gains `related matches, none confirmed by the relevance judge` for
+  a set in which nothing was confirmed other than a vector-only fallback set, and `matches found` now
+  means at least one item is confirmed. `matched`, `items` and `noMatchReason` are unchanged. Ordering
+  substitutes the judge's admission score for the vector score as the base term on a judged call, and
+  `VectorOnlyFallback` does not apply there, because no lexical gate is left to leave anything empty.
 - `memory_search` refuses a query longer than 1016 characters as `invalid_arguments`. The bound is
   derived from the judge's 512-token window rather than chosen: half of what is left after the pair's
   four markers, at four characters per token.
 - The memory role instructions tell the worker it may write the query in the incident's own language,
-  because the judge reads across languages, to keep identifiers verbatim, and to drop a `low` item
-  whose quote is not about the fault rather than pass it on. The role's output schema now requires
+  because the judge reads across languages, to search with the fault's service, error type, message
+  and route, to keep identifiers verbatim, and to drop a `low` item whose quote is not about the fault
+  rather than pass it on. The memory and orchestrator instructions say that searching again cannot
+  raise the band of a document already shown. The role's output schema now requires
   `retrievalConfidence` on every item, where it was optional, and the orchestrator instruction states
   the `KnownIncident` bar in terms of that field, which the delegate result carries. The refusal is
   decided against the band `memory_search` stored on the artifact, never against the worker's copy.
-- `retrievalConfidence` is refused as a redaction attribute key, in `Redaction.AttributeKeys` and
-  `Redaction.UserIdentifierAttributes` alike and in any casing, when the configuration loads and in
-  `config validate`. Redaction replaces a matching property's value whatever its kind, so the key
-  would turn every confirmed band into a value that confirms nothing and make every `KnownIncident`
-  resting on memory refusable. No shipped or sample configuration names it; a host that configured it
-  no longer loads.
+- `retrievalConfidence` and `confirmationScore` are refused as redaction attribute keys, in
+  `Redaction.AttributeKeys` and `Redaction.UserIdentifierAttributes` alike and in any casing, when the
+  configuration loads and in `config validate`. Redaction replaces a matching property's value
+  whatever its kind, so the first key would turn every confirmed band into a value that confirms
+  nothing and make every `KnownIncident` resting on memory refusable, and the second would erase the
+  score the band was decided from. No shipped or sample configuration names either; a host that
+  configured one no longer loads.
 - The local model store installs any pinned artifact set, not only the embedding model. A manifest
   records the kind of model its directory holds, `embedding` or `relevance_judge`, beside the id,
   revision, license, run settings and each file's path, source URL and digest; the embedding-only
@@ -196,8 +230,8 @@ report.
 - `memory model status` and `memory model install` cover both local models, the embedding model first
   and the judge after it. Each failure is reported rather than thrown and the exit code is the worse
   of the two, so both commands now exit 1 on a host that configures no judge model directory, where
-  they exited 0 before. A judge install keeps the replaced judge manifest as `manifest.previous.json`
-  and prints how to roll back to it.
+  they exited 0 before, and on a Worker that runs the mock judge. A judge install keeps the replaced
+  judge manifest as `manifest.previous.json` and prints how to roll back to it.
 - The documented procedure for changing the embedding route model has an order and runs its one-off
   commands with `--no-deps`: install, drain and stop the Worker, recreate the API alone, rebuild,
   recreate the Worker. A job is pinned to the route model of the API that created it, so the old order
@@ -320,14 +354,37 @@ report.
   match their pinned SHA-256; a mismatch is refused and never repaired. The relevance judge's two
   files are installed and verified under the same rules.
 - A judge that does not verify never silently degrades to the lexical gate. Only an unconfigured judge
-  directory and a directory nothing is installed in yet answer without a judge; a digest mismatch, a
+  directory and a directory nothing is installed in yet answer without a judge, besides
+  `RelevanceJudge: off` as the operator's choice; a digest mismatch, a
   missing file, a failed fetch, an oversized download, an install timeout, an invalid manifest, an
   unreadable store, an installed judge that is not the configured one, an install still running and a
   failure at load or inference all propagate with their own code.
 - No query, candidate chunk or relevance score reaches the application log at any level. The judge's
   install events carry the model id, revision, a 16-character digest prefix, a bounded error code and
-  one host setting name. A judged result's per-item `judgeScore` goes to the calling role and into
-  that call's durable artifacts under the same redaction as the rest of the payload.
+  one host setting name. A judged result's per-item `judgeScore` and `confirmationScore` go to the
+  calling role and into that call's durable artifacts under the same redaction as the rest of the
+  payload.
+- A model cannot raise a document's confirmed band by searching again with the document's wording,
+  because the band is decided against a query the backend builds from the trigger signal, which no
+  model output reaches. Measured through the real `memory_search` at the shipped confirm score, an
+  attack that replaces the model's query with the text of the closest document confirms 0 of 12
+  attack queries in each of English, Polish and Russian, where confirming against the model's query
+  confirmed 12 of 12 in each.
+- What that does not close: the confirming query is the signal, so a signal that itself paraphrases a
+  runbook is judged to describe it, and nothing in retrieval can tell a truthful signal from a crafted
+  one. A user or manual report confirms against the reporter's own summary, so a memory-based
+  `KnownIncident` resting on one is only as trustworthy as the reporter. The control is the approval
+  outward actions already wait for: a ticket, a ticket update, a code write applied through
+  `remediation_apply`, a branch push and a pull request each wait for a person. The exception is the
+  remediation diff pass, `remediation_diff` in category `code_write`, which runs without approval once
+  an operator enables it; it writes only a disposable copy of the checkout, and its diff can leave the
+  host only through that approved apply.
+- The mock relevance judge is not a governance boundary. Two things refuse it on production:
+  `compose.production.yml` pins the production worker to `LocalOnnx`, and the production preflight
+  refuses any other judge provider. Two things detect it without stopping it: a Worker that runs the
+  mock logs warning event 2323 on every start, and `memory model status` and `memory model install`
+  report it as the mock and exit 1. A host that bypasses the preflight with its own override file is
+  not covered by the two refusals.
 
 ## 0.4.1 - 2026-09-12
 

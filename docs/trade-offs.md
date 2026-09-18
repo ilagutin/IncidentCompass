@@ -702,7 +702,9 @@ therefore separates a relevant chunk from an unrelated one at a usable margin wh
 does not. Where one is installed it decides admission for every query, which is deliberately wider than
 letting it rescue only a query the lexical gate emptied: the gate's worse failure is the query it
 passes, where every eligible word is a Latin identifier the candidates all carry, coverage is complete
-for that reason alone, and an unrelated chunk comes back reported as a confirmed match.
+for that reason alone, and an unrelated chunk is admitted; until confirmation moved to the judge, it
+was also reported as a confirmed match. The gate itself confirms nothing: every match it admits is
+banded `low`.
 
 Its own costs are real. It is another pinned model, about 544 MiB, installed on the Worker and nowhere
 else, and it runs the encoder once per candidate instead of once per query, so a `memory_search` call
