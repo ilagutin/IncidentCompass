@@ -37,7 +37,7 @@ namespace IncidentCompass.Infrastructure.Relevance.Mock;
 /// </remarks>
 internal sealed partial class MockMemoryRelevanceJudge : IMemoryRelevanceJudge
 {
-    /// <summary>Well above the default confirm score of 0.75.</summary>
+    /// <summary>Well above the default confirm score of 0.85.</summary>
     public const float Confirmed = 4.0f;
 
     /// <summary>Between the default floor of -0.25 and the default confirm score.</summary>

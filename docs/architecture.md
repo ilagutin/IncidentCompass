@@ -304,7 +304,7 @@ an off-topic query in any language returns nothing; every other candidate is adm
 match is confirmed only when a second judgement, described below, reaches
 `Tools.memory_search.RelevanceConfirmScore`.
 `Tools.memory_search.RelevanceJudge` takes `off` or `on`; all three keys are optional, an absent
-`RelevanceJudge` means `on`, an absent floor means `-0.25` and an absent confirm score means `0.75`,
+`RelevanceJudge` means `on`, an absent floor means `-0.25` and an absent confirm score means `0.85`,
 and no shipped or sample configuration sets any of them. The default floor is tuned so that an
 off-topic query returns nothing. That is the stronger of the two guarantees and the one the defaults
 keep: on the benchmark corpus it costs one redundant secondary chunk of one query whose primary chunk
@@ -351,8 +351,8 @@ unconfirmed match.
 `retrievalConfidence` reports whether a returned item was confirmed as describing the incident, not how
 high its vector score was and not how well it answered the role's query. Admission and order answer the
 query the role wrote; the band answers a fault query the backend builds from fields the signal's sender
-supplied: its service name, error type and error message, joined in that order, blank parts skipped,
-with the summary in place of a blank message, and cut to the same 1016-character bound. That is the
+supplied: its service name, error type, error message and HTTP route, joined in that order, blank parts
+skipped, with the summary in place of a blank message, and cut to the same 1016-character bound. That is the
 query the memory role is told to write. The role cannot rewrite those fields, so re-querying with a
 document's own text cannot raise the band of a document it has already been shown; it only changes
 which documents come back. A re-triage confirms against the fault's original trigger signal, because

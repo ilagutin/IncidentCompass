@@ -780,8 +780,8 @@ judge cannot be transferred from anywhere but a run of the real tool.
 `retrievalConfidence` names whether a returned document was confirmed against the incident rather than
 a score band, and it is decided against a fault query built from the trigger signal, not against the
 role's query. The fault query is built by the backend from fields the sender of the signal supplied:
-the service name, the error type and the error message, or the summary when there is no message, which
-for a user report is the reporter's own text. A role cannot rewrite those fields, so re-querying cannot
+the service name, the error type, the error message and the HTTP route, with the summary in place of
+the message when there is none, which for a user report is the reporter's own text. A role cannot rewrite those fields, so re-querying cannot
 raise the band of a document it has already been shown; it only changes which documents come back. On
 a judged call confirmation costs a second judge call over the returned items: `high` means the judge
 confirmed the document against the fault query and lexical coverage of that query was full, `medium`
@@ -789,28 +789,29 @@ the judge alone, and `low` admitted but unconfirmed. The synthesized summary is 
 query whenever there is a message, because its templated "failed" frame pulled unrelated faults
 towards every incident document about the same service: measured through the product, an off-topic
 checkout price-rounding fault scored 2.97 against the known checkout-timeout incident with the summary
-in, above the confirm score.
+in, above the confirm score. The route is in the fault query for the opposite reason: it is the
+sender's own data rather than a templated frame, and it gives a signal written in another language, or
+without its diacritics, an anchor against English documents. A live Polish checkout timeout written
+without diacritics scored 0.47 against the checkout documents without it, below the confirm score, and
+measured through the product the route took Polish incident-shaped positives from 4 of 6 confirmed to
+6 of 6, with no hard negative and no attack query confirmed in any language.
 
-The confirm score is 0.75, measured against the fault query rather than transferred from the earlier
+The confirm score is 0.85, measured against the fault query rather than transferred from the earlier
 1.15, which was measured against the role's query and does not apply to fault text. The confirm score
 was swept through the real `memory_search` over the grown corpus in all three languages, with the
 fault query built from each query's own trigger signal:
 
-| Confirm score | Hard negatives confirmed | English incident-shaped | Russian incident-shaped | Polish incident-shaped |
-| --- | --- | --- | --- | --- |
-| 0.50 and below | 1 English | 6 of 6 | 6 of 6 | 5 of 6 |
-| 0.55 | 1 English | 6 of 6 | 6 of 6 | 4 of 6 |
-| 0.60 to 0.90 | 0 | 6 of 6 | 6 of 6 | 4 of 6 |
-| 0.95 to 1.20 | 0 | 6 of 6 | 5 of 6 | 4 of 6 |
+| Confirm score | Hard negatives confirmed | Incident-shaped positives confirmed |
+| --- | --- | --- |
+| 0.55 and below | 1 English | every one, in all three languages |
+| 0.60 to 1.10 | 0 | every one, in all three languages |
+| from 1.15 | 0 | Polish drops to 5 of 6 |
 
-The window that keeps every hard negative unconfirmed and confirms every English and Russian
-incident-shaped positive is (0.60, 0.90]; 0.75 sits in its middle, about 0.15 from either side. Across
-it the attack leg, in which a role re-queries with the full text of the document the judge scored
-highest for an off-topic or hard-negative query, confirms 0 of 12 in every language, against 12 of 12
-when the same documents are confirmed against the role's own query. Polish is the stated cost: its
-fifth incident-shaped positive scores below the English hard negative, so no confirm score confirms
-it without confirming that hard negative, and the release keeps the hard negative out. Polish stays at
-4 of 6 confirmed; the other two are still returned, banded `low` as related context.
+The window that keeps every hard negative unconfirmed and confirms every incident-shaped positive in
+all three languages is (0.55, 1.10]; 0.85 sits in its middle, about 0.25 to 0.3 from either side.
+Across it the attack leg, in which a role re-queries with the full text of the document the judge
+scored highest for an off-topic or hard-negative query, confirms 0 of 12 in every language, against
+12 of 12 when the same documents are confirmed against the role's own query.
 
 A host with no relevance judge confirms nothing. Every returned item is `low`, the result carries a
 limitation that says no judge ran, and no memory-based `KnownIncident` report can be published there.

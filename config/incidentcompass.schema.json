@@ -196,7 +196,7 @@
           "type": ["number", "null"],
           "minimum": -50,
           "maximum": 50,
-          "description": "memory_search only. The judge score, against the fault query built from the trigger signal, at or above which a returned match is reported as confirmed. Absent: 0.75, measured for the pinned cross-encoder against fault queries on the retrieval benchmark corpus. It must not be below RelevanceFloorScore."
+          "description": "memory_search only. The judge score, against the fault query built from the trigger signal, at or above which a returned match is reported as confirmed. Absent: 0.85, measured for the pinned cross-encoder against fault queries on the retrieval benchmark corpus. It must not be below RelevanceFloorScore."
         },
         "RelevanceFloorScore": {
           "type": ["number", "null"],
