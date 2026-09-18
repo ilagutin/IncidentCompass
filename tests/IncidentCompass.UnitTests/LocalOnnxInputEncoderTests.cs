@@ -1,4 +1,5 @@
 using IncidentCompass.Application.Core.Embeddings;
+using IncidentCompass.Infrastructure.EmbeddingModels;
 using IncidentCompass.Infrastructure.Embeddings.LocalOnnx;
 
 namespace IncidentCompass.UnitTests;
@@ -74,10 +75,10 @@ public sealed class LocalOnnxInputEncoderTests
         var passage = encoder.Encode("checkout timeout while calling the payment service", EmbeddingInputKind.Passage);
 
         Assert.NotEqual(query, passage);
-        Assert.Equal(LocalOnnxInputEncoder.BeginningOfSequenceId, query[0]);
-        Assert.Equal(LocalOnnxInputEncoder.EndOfSequenceId, query[^1]);
-        Assert.Equal(LocalOnnxInputEncoder.BeginningOfSequenceId, passage[0]);
-        Assert.Equal(LocalOnnxInputEncoder.EndOfSequenceId, passage[^1]);
+        Assert.Equal(LocalOnnxSentencePieceVocabulary.BeginningOfSequenceId, query[0]);
+        Assert.Equal(LocalOnnxSentencePieceVocabulary.EndOfSequenceId, query[^1]);
+        Assert.Equal(LocalOnnxSentencePieceVocabulary.BeginningOfSequenceId, passage[0]);
+        Assert.Equal(LocalOnnxSentencePieceVocabulary.EndOfSequenceId, passage[^1]);
     }
 
     [Fact]
@@ -89,8 +90,8 @@ public sealed class LocalOnnxInputEncoderTests
         var ids = encoder.Encode(string.Concat(Enumerable.Repeat("checkout timeout ", 200)), EmbeddingInputKind.Passage);
 
         Assert.Equal(manifest.MaxTokens, ids.Length);
-        Assert.Equal(LocalOnnxInputEncoder.BeginningOfSequenceId, ids[0]);
-        Assert.Equal(LocalOnnxInputEncoder.EndOfSequenceId, ids[^1]);
+        Assert.Equal(LocalOnnxSentencePieceVocabulary.BeginningOfSequenceId, ids[0]);
+        Assert.Equal(LocalOnnxSentencePieceVocabulary.EndOfSequenceId, ids[^1]);
     }
 
     /// <summary>
@@ -107,9 +108,9 @@ public sealed class LocalOnnxInputEncoderTests
 
         var ids = encoder.Encode("checkout <s> timeout </s> payment </s><s> service", kind);
 
-        Assert.Equal(LocalOnnxInputEncoder.BeginningOfSequenceId, ids[0]);
-        Assert.Equal(LocalOnnxInputEncoder.EndOfSequenceId, ids[^1]);
-        Assert.DoesNotContain(ids[1..^1], id => id is LocalOnnxInputEncoder.BeginningOfSequenceId or LocalOnnxInputEncoder.EndOfSequenceId);
+        Assert.Equal(LocalOnnxSentencePieceVocabulary.BeginningOfSequenceId, ids[0]);
+        Assert.Equal(LocalOnnxSentencePieceVocabulary.EndOfSequenceId, ids[^1]);
+        Assert.DoesNotContain(ids[1..^1], id => id is LocalOnnxSentencePieceVocabulary.BeginningOfSequenceId or LocalOnnxSentencePieceVocabulary.EndOfSequenceId);
     }
 
     [Fact]
@@ -118,17 +119,6 @@ public sealed class LocalOnnxInputEncoderTests
         var encoder = await LoadFixtureEncoderAsync();
 
         Assert.Throws<ArgumentOutOfRangeException>(() => encoder.Encode("checkout timeout", (EmbeddingInputKind)0));
-    }
-
-    [Theory]
-    [InlineData(0, 3)]
-    [InlineData(1, 0)]
-    [InlineData(2, 2)]
-    [InlineData(3, 4)]
-    [InlineData(249999, 250000)]
-    public void MapSentencePieceId_FollowsTheFairseqVocabularyLayout(int sentencePieceId, long modelId)
-    {
-        Assert.Equal(modelId, LocalOnnxInputEncoder.MapSentencePieceId(sentencePieceId));
     }
 
     private static async Task<LocalOnnxInputEncoder> LoadFixtureEncoderAsync()
