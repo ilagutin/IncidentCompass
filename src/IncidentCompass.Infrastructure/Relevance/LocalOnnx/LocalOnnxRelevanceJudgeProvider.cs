@@ -1,3 +1,5 @@
+using IncidentCompass.Application.Memory;
+
 namespace IncidentCompass.Infrastructure.Relevance.LocalOnnx;
 
 /// <summary>
@@ -24,11 +26,17 @@ internal static class LocalOnnxRelevanceJudgeProvider
     /// This host runs no judge at all: no model directory is configured for one. It is a different
     /// answer from every code below, all of which describe a judge this host meant to run, and it is
     /// deliberately not reported as an unavailable store: nothing is wrong with the store.
+    /// <para>
+    /// This code and <see cref="ModelNotInstalledErrorCode" /> are the only two an Application caller
+    /// may answer without a judge, so their spelling is owned by
+    /// <see cref="MemoryRelevanceJudgeAbsence" /> and taken from there. Every other code in this file
+    /// is the adapter's own and propagates.
+    /// </para>
     /// </summary>
-    public const string NotConfiguredErrorCode = "relevance_judge_not_configured";
+    public const string NotConfiguredErrorCode = MemoryRelevanceJudgeAbsence.NotConfigured;
 
     /// <summary>The stable error code of a call on a host where no install pass has put a judge in place.</summary>
-    public const string ModelNotInstalledErrorCode = "relevance_judge_model_not_installed";
+    public const string ModelNotInstalledErrorCode = MemoryRelevanceJudgeAbsence.NotInstalled;
 
     /// <summary>A judge file's SHA-256 is not the pinned one. The file is never repaired or replaced.</summary>
     public const string ModelDigestMismatchErrorCode = "relevance_judge_model_digest_mismatch";

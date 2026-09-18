@@ -96,7 +96,7 @@ internal sealed class TriageToolConfigurationLoadValidator(IAgentToolRegistry to
             return;
         }
 
-        if (tool.VectorOnlyFallback is not null)
+        if (HasMemorySearchRetrievalSettings(tool))
         {
             throw Invalid("Tools." + toolName, toolName, "no memory_search retrieval settings");
         }
@@ -131,7 +131,61 @@ internal sealed class TriageToolConfigurationLoadValidator(IAgentToolRegistry to
                 vectorOnlyFallback,
                 MemorySearchVectorOnlyFallbackSetting.KnownValues);
         }
+
+        ValidateRelevanceJudge(toolName, tool);
     }
+
+    /// <summary>
+    /// The three relevance-judge keys. Each score is bounded on its own, and the pair is then checked
+    /// against itself: a floor above the confirm score would leave a band that can never be reached,
+    /// which is a configuration mistake rather than a strict policy.
+    /// </summary>
+    private static void ValidateRelevanceJudge(string toolName, TriageToolSettings tool)
+    {
+        if (tool.RelevanceJudge is { } relevanceJudge)
+        {
+            RequireKnown(
+                "Tools." + toolName + "." + MemoryRelevanceJudgeSetting.ModeSettingName,
+                relevanceJudge,
+                MemoryRelevanceJudgeSetting.KnownModeValues);
+        }
+
+        RequireJudgeScoreInRange(
+            toolName, MemoryRelevanceJudgeSetting.ConfirmScoreSettingName, tool.RelevanceConfirmScore);
+        RequireJudgeScoreInRange(
+            toolName, MemoryRelevanceJudgeSetting.FloorScoreSettingName, tool.RelevanceFloorScore);
+
+        var confirmScore = tool.RelevanceConfirmScore ?? MemoryRelevanceJudgeSetting.DefaultConfirmScore;
+        var floorScore = tool.RelevanceFloorScore ?? MemoryRelevanceJudgeSetting.DefaultFloorScore;
+        if (floorScore > confirmScore)
+        {
+            throw Invalid(
+                "Tools." + toolName + "." + MemoryRelevanceJudgeSetting.FloorScoreSettingName,
+                floorScore.ToString(CultureInfo.InvariantCulture),
+                "a score at or below Tools." + toolName + "." +
+                    MemoryRelevanceJudgeSetting.ConfirmScoreSettingName);
+        }
+    }
+
+    private static void RequireJudgeScoreInRange(string toolName, string settingName, double? value)
+    {
+        if (value is { } score && !MemoryRelevanceJudgeSetting.IsScoreInRange(score))
+        {
+            throw Invalid(
+                "Tools." + toolName + "." + settingName,
+                score.ToString(CultureInfo.InvariantCulture),
+                "a score between " + MemoryRelevanceJudgeSetting.MinimumScore.ToString(CultureInfo.InvariantCulture) +
+                    " and " + MemoryRelevanceJudgeSetting.MaximumScore.ToString(CultureInfo.InvariantCulture) +
+                    " when set");
+        }
+    }
+
+    /// <summary>Every retrieval setting that belongs to <c>memory_search</c> and to no other tool.</summary>
+    private static bool HasMemorySearchRetrievalSettings(TriageToolSettings tool) =>
+        tool.VectorOnlyFallback is not null ||
+        tool.RelevanceJudge is not null ||
+        tool.RelevanceConfirmScore is not null ||
+        tool.RelevanceFloorScore is not null;
 
     private static void ValidateExternalTool(
         string toolName,
@@ -151,7 +205,7 @@ internal sealed class TriageToolConfigurationLoadValidator(IAgentToolRegistry to
         }
 
         if (tool.EmbeddingRouteId is not null || tool.TopK is not null || tool.MinScore is not null ||
-            tool.VectorOnlyFallback is not null)
+            HasMemorySearchRetrievalSettings(tool))
         {
             throw Invalid("Tools." + toolName, toolName, "no immediate-read settings");
         }

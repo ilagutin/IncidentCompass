@@ -13,6 +13,14 @@ namespace IncidentCompass.Application.Intake.Configuration;
 /// <c>foreign_script</c> or <c>always</c>. It is optional for the same reason the timeout is, and an
 /// absent key resolves to <c>foreign_script</c>.
 /// </para>
+/// <para>
+/// <see cref="RelevanceJudge"/>, <see cref="RelevanceConfirmScore"/> and
+/// <see cref="RelevanceFloorScore"/> belong to <c>memory_search</c> alone and are refused on any other
+/// tool. The first names whether that tool asks a relevance judge about a query, <c>off</c> or
+/// <c>on</c>; the other two are the judge scores at or above which a candidate is confirmed and below
+/// which it is dropped. All three are optional for the same reason the timeout is, and their defaults
+/// live in <c>MemoryRelevanceJudgeSetting</c>.
+/// </para>
 /// </summary>
 public sealed record TriageToolSettings(
     string Kind,
@@ -23,7 +31,10 @@ public sealed record TriageToolSettings(
     string? LogicalTargetId = null,
     string? Mode = null,
     int? TimeoutSeconds = null,
-    string? VectorOnlyFallback = null)
+    string? VectorOnlyFallback = null,
+    string? RelevanceJudge = null,
+    double? RelevanceConfirmScore = null,
+    double? RelevanceFloorScore = null)
 {
     public const int MinimumTimeoutSeconds = 1;
 

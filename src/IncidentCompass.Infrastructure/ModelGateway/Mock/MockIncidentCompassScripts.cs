@@ -8,12 +8,16 @@ namespace IncidentCompass.Infrastructure.ModelGateway.Mock;
 
 internal static class MockIncidentCompassScripts
 {
-    /// <summary>The band memory_search gives an item the vector-only fallback returned.</summary>
+    /// <summary>
+    /// The band memory_search gives an item nothing confirmed: one the relevance judge admitted
+    /// without confirming, or, on a host that runs no judge, one the vector-only fallback returned.
+    /// The mock reads the band rather than the message, so it stays correct under both.
+    /// </summary>
     private const string UnconfirmedBand = "low";
 
     private const string NoMatchesReason = "no matches";
 
-    private const string UnconfirmedOnlyReason = "no lexically confirmed matches";
+    private const string UnconfirmedOnlyReason = "no confirmed matches";
 
     public static AiModelResponse OrchestratorResponse(AiModelRequest request)
     {
@@ -143,9 +147,9 @@ internal static class MockIncidentCompassScripts
 
     /// <summary>
     /// Follows the shipped memory role instructions rather than trusting <c>matched</c>: an item banded
-    /// <c>low</c> came from the vector-only fallback and is not lexically confirmed, so the mock drops
-    /// it instead of quoting it, and returns the honest empty result when nothing else is left. Without
-    /// this the mock profile would turn an unconfirmed cross-language hit into a KnownIncident report.
+    /// <c>low</c> was admitted without being confirmed, so the mock drops it instead of quoting it, and
+    /// returns the honest empty result when nothing else is left. Without this the mock profile would
+    /// turn an unconfirmed cross-language hit into a KnownIncident report.
     /// </summary>
     private static string MemoryWorkerJson(string toolResult)
     {
