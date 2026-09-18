@@ -10,12 +10,13 @@ The model chooses investigation steps and proposes tool calls. The backend owns 
 grants, budgets, evidence checks, approvals and external actions.
 
 Version **0.5.0** runs memory embeddings on an in-process multilingual model the Worker installs and
-verifies itself, chunks memory documents by section, bounds each provider call by connect,
-first-output and stream-inactivity limits under a four-hour attempt ceiling, and streams chat
-completions by default. The first Worker start downloads the embedding model unless it is placed
-offline, two configuration keys are deprecated, and an existing corpus keeps its whole-file chunks
-until `memory rebuild`; read [the notes](docs/release-notes-v0.5.0.md) before upgrading. Earlier
-releases: [0.4.1](docs/release-notes-v0.4.1.md), [0.4.0](docs/release-notes-v0.4.0.md).
+verifies itself, admits memory matches through an in-process multilingual cross-encoder that judges
+whether a chunk answers the query, chunks memory documents by section, bounds each provider call by
+connect, first-output and stream-inactivity limits under a four-hour attempt ceiling, and streams chat
+completions by default. The first Worker start downloads both models unless they are placed offline,
+two configuration keys are deprecated, and an existing corpus keeps its whole-file chunks until
+`memory rebuild`; read [the notes](docs/release-notes-v0.5.0.md) before upgrading. Earlier releases:
+[0.4.1](docs/release-notes-v0.4.1.md), [0.4.0](docs/release-notes-v0.4.0.md).
 
 ## One investigation
 
@@ -116,8 +117,9 @@ actually proved.
 
 Prerequisites: Docker Compose, the .NET 10 SDK for configuration validation, PowerShell and an
 OpenAI-compatible chat endpoint. On Windows and macOS, Compose uses `host.docker.internal:1234` by
-default. Memory embeddings run in-process on the Worker, which downloads its model, about 123 MB, from
-Hugging Face on its first start.
+default. The Worker runs two in-process models and downloads both from Hugging Face on its first
+start: the embedding model, about 123 MB, and the relevance judge memory search admits matches with,
+about 544 MiB.
 
 ~~~powershell
 Copy-Item .env.example .env
@@ -153,8 +155,9 @@ are in [Integration configuration](docs/integrations.md).
 - Automated tests use deterministic providers by default. The mock injection scenario checks the
   disabled-action configuration; separate integration tests exercise configured policy and approval.
 - There is no prompt or provider-body logging switch, because no code path writes that material
-  anywhere. Rendered prompts, provider request and response bodies, document text, credentials and
-  embedding vectors reach neither the application logs nor the triage ledger, at any log level.
+  anywhere. Rendered prompts, provider request and response bodies, document text, credentials,
+  embedding vectors and relevance-judge scores reach neither the application logs nor the triage
+  ledger, at any log level.
 
 One deployment envelope is supported: **one trusted machine, one trusted operator, one host-owned
 monitored checkout, one configured repository and one PostgreSQL database under Docker Compose, with

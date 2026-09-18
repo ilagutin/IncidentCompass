@@ -39,8 +39,10 @@ either inner layer fails the test rather than passing because only project refer
     and post-report evaluation and action approval contracts and use cases.
   - `Intake/`: source normalization, input limits, redaction, fingerprinting, fault grouping, triage-job creation, grounded intake artifacts for ingestion and raw signal payload compaction.
   - `Investigation/`: Worker job claim/runtime seams that rehydrate claimed jobs by config hash and hand them to the governed investigation processor, plus reaping of artifacts belonging to an attempt that is no longer a job's current attempt.
-  - `Memory/`: memory search contracts, seed records, corpus generation identity and state, and the
-    governed `memory_search` worker tool.
+  - `Memory/`: memory search contracts, seed records, corpus generation identity and state, the
+    governed `memory_search` worker tool, and the relevance-judge port with the admission pass and
+    threshold settings that turn one judge score per candidate into an admitted, confirmed or dropped
+    match. The judge itself is an adapter; nothing here knows it is a cross-encoder.
   - `Notifications/`: ordered notification routing and the non-secret Telegram tool descriptor.
     The Worker-owned workflow accepts report identity and a configured route id, not recipient or
     message text.
@@ -62,7 +64,9 @@ either inner layer fails the test rather than passing because only project refer
 - `IncidentCompass.Domain`: simple domain records, enums and workflow state types shared by Application use cases.
 - `IncidentCompass.Infrastructure`: PostgreSQL persistence adapters, intake repositories/config loading,
   post-report evaluation and action approval/provenance repositories, model clients, embedding clients,
-  memory adapters, the model-cost rollup persistence adapter and other infrastructure adapters.
+  the in-process relevance-judge adapter and the model store both local models are installed and
+  verified through, memory adapters, the model-cost rollup persistence adapter and other infrastructure
+  adapters.
 - `IncidentCompass.Worker`: DB-backed background host with separate bounded triage-job, post-report
   evaluation and approved-action pumps. Triage jobs and evaluations use renewable ownership-fenced
   leases and per-process concurrency limits; approved actions use immutable dispatch fences, deadlines
@@ -183,7 +187,11 @@ The Worker is the only host composed with an embedding client, and the corpus co
 `memory status` and `memory rebuild` and the model commands `memory model status` and
 `memory model install` run there; the API serves the corpus status and health reads. By default the
 Worker embeds with the in-process `LocalOnnx` model, which it installs into its `embedding-models`
-volume at start; see `docs/model-gateway.md`, "Local Embedding Model".
+volume at start; see `docs/model-gateway.md`, "Local Embedding Model". The relevance judge below is
+the second in-process model and is composed on the same host and nowhere else, in a directory of its
+own on the same volume, installed after the memory seed pass so the corpus is never held up behind the
+larger download; see `docs/model-gateway.md`, "Local Relevance Judge". The Api loads neither and
+reports nothing about the judge.
 
 Within a configured seed owner, source path is the stable identity: changed files update and
 re-embed one active item, while removed files are deactivated and excluded from search. Each
