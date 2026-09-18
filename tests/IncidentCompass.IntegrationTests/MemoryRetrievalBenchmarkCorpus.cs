@@ -31,11 +31,21 @@ public sealed record MemoryRetrievalBenchmarkCorpus(
     /// </summary>
     public const string Version2 = "memory-retrieval-corpus-v2";
 
+    /// <summary>
+    /// The version 2 corpus with every item, chunk and query carried over verbatim, and every query
+    /// additionally naming the <see cref="MemoryRetrievalBenchmarkSignal" /> that triggered it, so a
+    /// judgement can be made against the fault itself rather than against the query text.
+    /// </summary>
+    public const string Version3 = "memory-retrieval-corpus-v3";
+
     /// <summary>Loads the version 1 corpus, the one the versioned baseline is recorded against.</summary>
     public static MemoryRetrievalBenchmarkCorpus Load(string repoRoot) => LoadFile(repoRoot, "corpus-v1.json");
 
     /// <summary>Loads the version 2 corpus, the one that carries hard negatives and query categories.</summary>
     public static MemoryRetrievalBenchmarkCorpus LoadV2(string repoRoot) => LoadFile(repoRoot, "corpus-v2.json");
+
+    /// <summary>Loads the version 3 corpus, the one whose every query carries its trigger signal.</summary>
+    public static MemoryRetrievalBenchmarkCorpus LoadV3(string repoRoot) => LoadFile(repoRoot, "corpus-v3.json");
 
     private static MemoryRetrievalBenchmarkCorpus LoadFile(string repoRoot, string fileName)
     {
@@ -166,7 +176,7 @@ public sealed record MemoryRetrievalBenchmarkCorpus(
 
     private void Validate()
     {
-        if ((SchemaVersion, CorpusVersion) is not ((1, Version1) or (2, Version2)) || TopK != 5)
+        if ((SchemaVersion, CorpusVersion) is not ((1, Version1) or (2, Version2) or (3, Version3)) || TopK != 5)
         {
             throw new InvalidOperationException("Unsupported memory retrieval corpus contract.");
         }
@@ -200,6 +210,47 @@ public sealed record MemoryRetrievalBenchmarkCorpus(
         }
 
         ValidateCategories();
+        ValidateSignals();
+    }
+
+    /// <summary>
+    /// A signal is part of the contract from corpus schema 3 on: every query must carry one whose
+    /// service name matches the query's own and whose error type and message are not blank. Earlier
+    /// schemas predate the field, so a query there must not carry one.
+    /// </summary>
+    private void ValidateSignals()
+    {
+        foreach (var query in Queries)
+        {
+            if (SchemaVersion < 3)
+            {
+                if (query.Signal is not null)
+                {
+                    throw new InvalidOperationException(
+                        "Query '" + query.Id + "' carries a signal, which corpus schema " + SchemaVersion + " does not define.");
+                }
+
+                continue;
+            }
+
+            var signal = query.Signal;
+            if (signal is null ||
+                string.IsNullOrWhiteSpace(signal.ServiceName) ||
+                string.IsNullOrWhiteSpace(signal.ErrorType) ||
+                string.IsNullOrWhiteSpace(signal.ErrorMessage) ||
+                (signal.HttpRoute is not null && string.IsNullOrWhiteSpace(signal.HttpRoute)) ||
+                (signal.OperationName is not null && string.IsNullOrWhiteSpace(signal.OperationName)))
+            {
+                throw new InvalidOperationException(
+                    "Query '" + query.Id + "' must carry a signal with a service name, error type and message from corpus schema 3 on.");
+            }
+
+            if (!string.Equals(signal.ServiceName, query.ServiceName, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    "Query '" + query.Id + "' names another service than its signal does.");
+            }
+        }
     }
 
     /// <summary>
@@ -304,6 +355,8 @@ public sealed record MemoryRetrievalBenchmarkChunk(Guid Id, int Position, string
 /// One benchmark query. <paramref name="Category" /> is null for a version 1 corpus, which predates the
 /// field, and is required from version 2 on. Read it through
 /// <see cref="MemoryRetrievalQueryCategory.Of" /> when a derived value is acceptable.
+/// <paramref name="Signal" /> is null for version 1 and version 2 corpora, which predate the field,
+/// and is required from version 3 on.
 /// </summary>
 public sealed record MemoryRetrievalBenchmarkQuery(
     string Id,
@@ -311,4 +364,5 @@ public sealed record MemoryRetrievalBenchmarkQuery(
     string ServiceName,
     IReadOnlyList<Guid> RelevantItemIds,
     IReadOnlyList<Guid> RelevantChunkIds,
-    string? Category = null);
+    string? Category = null,
+    MemoryRetrievalBenchmarkSignal? Signal = null);
