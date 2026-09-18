@@ -12,6 +12,13 @@ namespace IncidentCompass.Infrastructure.Relevance.LocalOnnx;
 /// recorded, so the two files are not hashed again for every scored candidate set. The pinned judge
 /// is well over half a gigabyte, so that difference is the whole point of recording it.
 /// </para>
+/// <para>
+/// Every code this reader returns is one of the judge's own, never one of the shared model store's:
+/// a store code is spelled for the embedding model and would name the wrong model on a judge
+/// surface. The recorded install state already holds judge codes, because the install pass
+/// translates them before recording; the codes this reader derives from the store itself are
+/// translated here.
+/// </para>
 /// </summary>
 internal sealed class LocalOnnxInstalledRelevanceJudgeReader(
     IOptions<LocalOnnxRelevanceJudgeOptions> options,
@@ -29,14 +36,14 @@ internal sealed class LocalOnnxInstalledRelevanceJudgeReader(
         if (snapshot.Status == LocalOnnxModelInstallStatus.Failed)
         {
             return LocalOnnxInstalledModelLookup.NotAvailable(
-                snapshot.ErrorCode ?? LocalOnnxModelErrorCodes.NotInstalled,
+                snapshot.ErrorCode ?? LocalOnnxRelevanceJudgeProvider.ModelNotInstalledErrorCode,
                 snapshot.Detail ?? "The local relevance judge install failed.");
         }
 
         if (snapshot.Status == LocalOnnxModelInstallStatus.Installing)
         {
             return LocalOnnxInstalledModelLookup.NotAvailable(
-                LocalOnnxModelErrorCodes.NotInstalled,
+                LocalOnnxRelevanceJudgeProvider.ModelNotInstalledErrorCode,
                 "The local relevance judge install has not finished.");
         }
 
@@ -48,9 +55,11 @@ internal sealed class LocalOnnxInstalledRelevanceJudgeReader(
         var configured = options.Value;
         if (string.IsNullOrWhiteSpace(configured.ModelDirectory))
         {
+            // Not an unavailable store: nothing is wrong with the store, this host simply runs no
+            // judge. Calling it a store failure sends an operator to look at a volume.
             return LocalOnnxInstalledModelLookup.NotAvailable(
-                LocalOnnxModelErrorCodes.StoreUnavailable,
-                $"{LocalOnnxRelevanceJudgeOptions.SectionName}:ModelDirectory is not set.");
+                LocalOnnxRelevanceJudgeProvider.NotConfiguredErrorCode,
+                $"{LocalOnnxRelevanceJudgeOptions.SectionName}:ModelDirectory is not set, so this host runs no relevance judge.");
         }
 
         try
@@ -59,7 +68,7 @@ internal sealed class LocalOnnxInstalledRelevanceJudgeReader(
             if (installed is null)
             {
                 return LocalOnnxInstalledModelLookup.NotAvailable(
-                    LocalOnnxModelErrorCodes.NotInstalled,
+                    LocalOnnxRelevanceJudgeProvider.ModelNotInstalledErrorCode,
                     "No local relevance judge is installed in its model directory.");
             }
 
@@ -68,7 +77,9 @@ internal sealed class LocalOnnxInstalledRelevanceJudgeReader(
         }
         catch (LocalOnnxModelStoreException exception)
         {
-            return LocalOnnxInstalledModelLookup.NotAvailable(exception.ErrorCode, exception.Message);
+            return LocalOnnxInstalledModelLookup.NotAvailable(
+                LocalOnnxRelevanceJudgeStoreErrorCodeMap.Map(exception.ErrorCode),
+                exception.Message);
         }
     }
 }

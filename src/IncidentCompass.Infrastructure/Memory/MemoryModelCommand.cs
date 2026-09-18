@@ -10,10 +10,16 @@ using Microsoft.Extensions.Options;
 namespace IncidentCompass.Infrastructure.Memory;
 
 /// <summary>
-/// The operator entry point for the local embedding model. <c>memory model status</c> reports the
-/// installed model, the model the memory route is configured to use and the model the active corpus
-/// was built with, and exits 1 when any of them disagree. <c>memory model install</c> installs the
-/// configured model beside the installed one, switches to it and says how to roll back.
+/// The operator entry point for the local models this Worker runs. <c>memory model status</c> reports
+/// the installed embedding model, the model the memory route is configured to use and the model the
+/// active corpus was built with, then the installed relevance judge, and exits 1 when any of them
+/// disagree. <c>memory model install</c> installs each configured model beside the installed one,
+/// switches to it and says how to roll back.
+/// <para>
+/// The judge's half is <see cref="RelevanceJudgeModelSection" />. It is a collaborator rather than a
+/// third verb: the two models live in two directories because the store keeps one manifest per
+/// directory, which is not something an operator should have to run two commands about.
+/// </para>
 /// </summary>
 /// <remarks>
 /// Like <see cref="MemoryCorpusCommand" />, it runs on the Worker before the host starts, so it reads
@@ -50,10 +56,31 @@ public static class MemoryModelCommand
 
         output ??= Console.Out;
         error ??= Console.Error;
+        await using var scope = services.CreateAsyncScope();
+        var scopedServices = scope.ServiceProvider;
+
+        // Both models are reported, and both are installed, even when the first of them fails: an
+        // operator asking about this Worker's models wants the whole answer in one run. The exit code
+        // is the worse of the two, so a healthy embedding model never hides a broken judge.
+        var embeddingExitCode = await RunEmbeddingModelAsync(scopedServices, install, output, error, cancellationToken);
+        var judgeExitCode = await RelevanceJudgeModelSection.RunAsync(
+            scopedServices,
+            install,
+            output,
+            error,
+            cancellationToken);
+        return Math.Max(embeddingExitCode, judgeExitCode);
+    }
+
+    private static async Task<int> RunEmbeddingModelAsync(
+        IServiceProvider scopedServices,
+        bool install,
+        TextWriter output,
+        TextWriter error,
+        CancellationToken cancellationToken)
+    {
         try
         {
-            await using var scope = services.CreateAsyncScope();
-            var scopedServices = scope.ServiceProvider;
             var pin = RequireLocalModelOptions(scopedServices).CreatePin();
             var store = scopedServices.GetRequiredService<LocalOnnxModelStore>();
             return install
@@ -63,6 +90,16 @@ public static class MemoryModelCommand
         catch (LocalOnnxModelStoreException exception)
         {
             error.WriteLine("Local embedding model command failed with " + exception.ErrorCode + ": " + exception.Message);
+            return 1;
+        }
+        catch (OptionsValidationException exception)
+        {
+            // Reading IOptions.Value is where the host's own validator runs, and the type it throws is
+            // not an InvalidOperationException, so without this arm it escapes the command. Nothing
+            // else would have reported it: this command runs before the host starts, so start-up
+            // validation has not happened yet. The message is the one RequireLocalModelOptions would
+            // have produced from the same failures.
+            error.WriteLine("Local embedding model command failed: " + string.Join(" ", exception.Failures));
             return 1;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

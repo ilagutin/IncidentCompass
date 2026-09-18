@@ -78,6 +78,10 @@ services:
       IncidentCompass__Memory__Seed__Enabled: ${INCIDENTCOMPASS_MEMORY_SEED_ENABLED:-true}
       IncidentCompass__Memory__Seed__SourceDirectory: /app/samples
       IncidentCompass__Embeddings__LocalOnnx__ModelDirectory: /app/models
+      # The relevance judge is a second model with a second manifest, so it needs a directory of its
+      # own; it sits under the same volume, so one volume holds both and one 'memory model install'
+      # fills both.
+      IncidentCompass__RelevanceJudge__LocalOnnx__ModelDirectory: /app/models/relevance-judge
       IncidentCompass__SourceContext__Roots__0__ServiceName: ${INCIDENTCOMPASS_SOURCE_SERVICE:?set INCIDENTCOMPASS_SOURCE_SERVICE}
       IncidentCompass__SourceContext__Roots__0__Release: ${INCIDENTCOMPASS_SOURCE_RELEASE:?set INCIDENTCOMPASS_SOURCE_RELEASE}
       IncidentCompass__SourceContext__Roots__0__RootPath: /monitored-source
@@ -97,8 +101,9 @@ services:
         source: ${INCIDENTCOMPASS_SOURCE_ROOT:?set INCIDENTCOMPASS_SOURCE_ROOT}
         target: /monitored-source
         read_only: true
-      # The local embedding model's manifest and artifacts. Reproducible from the pinned source, so
-      # scripts/postgres-backup.ps1 does not back it up.
+      # The local models' manifests and artifacts: the embedding model at the mount point, the
+      # relevance judge in its own subdirectory. Both are reproducible from their pinned sources, so
+      # scripts/postgres-backup.ps1 does not back them up.
       - type: volume
         source: embedding-models
         target: /app/models
