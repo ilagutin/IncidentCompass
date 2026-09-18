@@ -101,12 +101,15 @@ and its embedding counterpart are the default provider profile's credential, and
 configuration keeps using them. See `docs/model-gateway.md`, "Providers", for exactly when that
 default applies and when a configuration must supply per-provider credentials instead.
 
-## Local Embedding Model Artifacts
+## Local Model Artifacts
 
-The in-process embedding model is a pair of third-party files the Worker loads into its own process,
-so their origin is pinned rather than trusted. The shipped defaults name one Hugging Face revision of
-`intfloat/multilingual-e5-small` and the SHA-256 of each of its two files, and the Worker's model store
-enforces them:
+The Worker loads two third-party models into its own process: the embedding model, and the relevance
+judge on a host that configures a judge model directory. Each is a pair of files, so each origin is
+pinned rather than trusted. The shipped defaults name one Hugging Face revision of
+`intfloat/multilingual-e5-small` and the SHA-256 of each of its two files, and, for the judge, one
+revision of `BAAI/bge-reranker-v2-m3` for its tokenizer with a separate third-party ONNX export
+repository and revision for its model file, again with the SHA-256 of each. One model store enforces
+all of it, in each model's own directory, with one set of rules:
 
 - A file is accepted only when its SHA-256 is the pinned one. A download is hashed while it streams
   into a temporary file beside its destination and renamed into place only on a match; a mismatch
@@ -116,23 +119,41 @@ enforces them:
 - An installed manifest's files are hashed again on every Worker start and by `memory model status`. A
   manifest whose file path would leave the model directory is refused with
   `embedding_model_manifest_invalid`.
-- Every download is bounded by `IncidentCompass:Embeddings:LocalOnnx:MaxDownloadBytes`, 1 GiB by
-  default and at most 16 GiB. A response that declares a larger length is refused before anything is
-  written, and a body that runs past the bound is cut off and discarded, with
-  `embedding_model_download_too_large`. The model volume shares the host's disk with PostgreSQL, and
-  the bound keeps a misbehaving origin from filling it before the digest check is reached.
+- Every download is bounded by that model's `MaxDownloadBytes`,
+  `IncidentCompass:Embeddings:LocalOnnx:MaxDownloadBytes` or
+  `IncidentCompass:RelevanceJudge:LocalOnnx:MaxDownloadBytes`, 1 GiB by default and at most 16 GiB. A
+  response that declares a larger length is refused before anything is written, and a body that runs
+  past the bound is cut off and discarded, with `embedding_model_download_too_large`. The model volume
+  shares the host's disk with PostgreSQL, and the bound keeps a misbehaving origin from filling it
+  before the digest check is reached.
 - Redirects are followed by hand, at most five, and only to `https` locations; a plaintext hop is
   refused. Integrity comes from the digest, not from the host that served the file, and refusing
   plaintext hops keeps the download private and unmodified in transit. The download client has its
   request logging removed, and a fetch failure names the host only, because a content delivery
   location carries a signed query string.
 
-One window remains. The files are verified when the Worker starts, and the ONNX session and the
-tokenizer are loaded from the same paths later, on the first embedding call, without hashing them
-again. A file swapped between those two moments is loaded unverified. Exploiting that needs write
-access to the model volume on the host itself: nothing reachable through the API, a triage
-configuration or the network writes to that volume, and the Worker writes to it only files the store
-has verified.
+The codes above are the store's own, and the store was written for the embedding model, so every one
+of them begins `embedding_model_`. On the judge's side of the store each is translated to the judge's
+own name, such as `relevance_judge_model_digest_mismatch`, at the two points a store code enters the
+judge's world, and a store code with no judge-side name becomes `relevance_judge_model_unusable`
+rather than the nearest-looking one. The codes were translated rather than renamed in the store,
+because renaming would change codes an embedding refusal has always carried.
+
+One window remains, and it is the same one for both models. A model's files are verified when the
+Worker starts, and its ONNX session and tokenizer are loaded from the same paths later, on the first
+call that needs them, without hashing them again. A file swapped between those two moments is loaded
+unverified. Exploiting that needs write access to the model volume on the host itself: nothing
+reachable through the API, a triage configuration or the network writes to that volume, and the Worker
+writes to it only files the store has verified.
+
+The judge widens that volume's contents rather than its exposure. It reads a query the model wrote and
+a chunk from the corpus, returns one number per pair, executes nothing, writes nothing and reaches no
+network; a corrupt or hostile judge can only misrank candidates a governed search already retrieved
+and already filtered by tenant. The one thing it must not do quietly is disappear: a host whose judge
+fails to verify refuses every judge call with its named code instead of falling back to the lexical
+gate, so a tampered model volume shows up as refused searches rather than as unjudged results that
+still look confirmed. The two states that do answer without a judge are the two that mean this host
+was never asked to run one.
 
 ## Incident Data Tenant Scope
 

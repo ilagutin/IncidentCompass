@@ -706,7 +706,14 @@ for that reason alone, and an unrelated chunk comes back reported as a confirmed
 
 Its own costs are real. It is another pinned model, about 544 MiB, installed on the Worker and nowhere
 else, and it runs the encoder once per candidate instead of once per query, so a `memory_search` call
-now costs one embedding request, one repository search and up to `TopK` times four scored pairs. Its
+now costs one embedding request, one repository search and up to `TopK` times four scored pairs. That
+is paid in wall-clock time on the Worker: 20 pairs, which is what the shipped `TopK` of 5 produces,
+took a median of 2247 ms on one desktop x64 processor at the shipped single intra-op thread, which
+makes the judge, not the embedding call or the query, the cost of a `memory_search`. Eight threads
+took it to 550 ms with
+bit-identical scores, so an operator who has cores to spare can buy the time back; the default stays
+at one for the same reason the embedding adapter's does, and the tool's 120-second execution limit is
+nowhere near either figure. Its
 two thresholds are numbers on one model's scale: they were measured for the pinned cross-encoder, they
 are configuration rather than constants, and another judge model would need its own. A host that runs
 no judge at all keeps the pre-judge behaviour instead of failing, which is honest but means two
@@ -731,10 +738,35 @@ retrieval shortfall.
 The release takes the first and gives up the second. An off-topic query returning nothing is the
 stated product requirement; the chunk lost at the shipped floor of -0.25 is the redundant second chunk
 of a query whose first chunk is still returned, so the answer survives and only a duplicate of it does
-not. The measured cost is English chunk recall@5 of 0.958 rather than 1.000, with no positive query
-coming back empty, no off-topic false positive in any of the three languages and no confirmed hard
-negative. A corpus whose answers are not duplicated across chunks would pay that cost as a lost answer
-instead, and would need its own measurement rather than this default.
+not. No English positive query comes back empty. A corpus whose answers are not duplicated across
+chunks would pay that cost as a lost answer instead, and would need its own measurement rather than
+this default.
+
+What that buys is in the measurement of the whole tool, run through the real `memory_search` over the
+grown corpus, 24 queries per language in three categories, with the judge off and then on. Recall@5
+counts the positive category; the off-topic and hard-negative categories are the two columns beside
+it, and the off column is the shipped lexical behaviour with its default `foreign_script` fallback,
+not a stripped pipeline:
+
+| Language | recall@5 off | recall@5 on | off-topic false positives, off then on | hard negatives confirmed, off then on |
+| --- | --- | --- | --- | --- |
+| English | 1.000 | 0.958 | 0 of 6, 0 of 6 | 0, 0 |
+| Polish | 0.000 | 0.500 | 0 of 6, 0 of 6 | 0, 0 |
+| Russian | 1.000 | 0.500 | 6 of 6, 0 of 6 | 4, 0 |
+
+Russian is the row the judge was built for. Vector-only fallback was already carrying its positive
+queries, and it was carrying every off-topic and hard-negative query with them: all six off-topic
+Russian queries returned matches and four hard negatives came back confirmed, because a fallback is
+not relevance and the lexical gate cannot read Cyrillic against English chunks. With the judge on,
+none of the twelve does, in any language. Polish is the case the lexical rules could not reach at all,
+and it moves off zero for the first time.
+
+The two 0.500 figures are not the judge failing on those languages. They are entirely the eight
+keyword-shaped queries carried over from the older fixture, which are lists of terms rather than
+questions and which a cross-encoder scores as poorly as any reader would. On queries written in the
+shape a model actually produces from an incident, recall@5 is 1.000 in all three languages. The
+keyword queries are kept in the set rather than dropped because they are the honest lower bound: a
+role that degenerates into keyword search gets keyword-search results, and the number says so.
 
 These numbers were measured through the product and not offline, and the difference is not academic:
 an offline sweep of the same graph under another ONNX runtime build put those two bounding pairs 0.167

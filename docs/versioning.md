@@ -134,6 +134,43 @@ release that changes the model id the shipped route names, while the installed m
 id, leaves the Worker reporting `memory_embedding_model_mismatch` until the operator installs the new
 model or sets the route's model back.
 
+## Relevance Judge Model
+
+The local relevance judge is versioned by its own manifest in its own model directory, exactly as the
+embedding model is, and the same rules apply: the pinned judge a release ships is a host default under
+`IncidentCompass:RelevanceJudge:LocalOnnx`, a release that changes that default never replaces an
+installed manifest, and moving a host to a new default is `memory model install` followed by a Worker
+restart.
+
+What differs is the blast radius, and it is worth stating because the two models look alike and are
+not. Nothing the judge produces is stored: it reranks candidates a search has already retrieved, and
+no corpus, generation or chunk records which judge ran. Changing the judge therefore invalidates
+nothing. There is no re-embedding, no `memory rebuild`, no route model to keep in step, and no
+equivalent of `memory_embedding_route_changed`; a corpus built before any judge existed is served by a
+judge installed afterwards without being touched. Changing the embedding model is the opposite: the
+corpus records the model's encoded identity, and a new model means re-embedding before retrieval works
+again.
+
+What changing the judge does change is which documents a query gets back, and with what
+`retrievalConfidence` band. The two thresholds `Tools.memory_search.RelevanceFloorScore` and
+`RelevanceConfirmScore` are numbers on one model's score scale, measured for the pinned cross-encoder
+through the real tool, so another judge model needs its own measurement rather than these values. A
+judge swapped underneath unchanged thresholds is a silent retrieval change, which is why the manifest
+is what runs and a release default never replaces it.
+
+Removing the judge from a host is emptying
+`IncidentCompass:RelevanceJudge:LocalOnnx:ModelDirectory`. That is supported and reversible: the host
+starts, `memory_search` returns to the behaviour it had before a judge existed and reports that in its
+`limitation` string, and nothing durable has to be rebuilt in either direction.
+
+The judge's three triage-configuration keys, `Tools.memory_search.RelevanceJudge`,
+`RelevanceConfirmScore` and `RelevanceFloorScore`, are all optional and none is set by any shipped or
+sample configuration. The configuration hash is computed over the configuration file and its
+instruction files as they are written, so a key that is absent is absent from the hash: adding this
+release's keys to a host without setting them leaves the hash where it was, and every stored snapshot
+rehydrates unchanged and keeps its defaults. Setting one of them moves the hash exactly as any other
+edit to the file does, which starts a new snapshot and leaves queued jobs rehydrating the old one.
+
 ## Deprecated Configuration Keys
 
 A renamed setting keeps loading under its old name until a release that states its removal. The old

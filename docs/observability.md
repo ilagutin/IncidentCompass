@@ -67,6 +67,14 @@ leased work was abandoned for an unrequested reason and is reported rather than 
 | 2201 | Error | Fault was not terminalized while publishing a triage report. |
 | 2301 | Warning | Memory seed runtime synchronization failed with a bounded failure type. |
 | 2302 | Warning | Memory seed failure status persistence was skipped. |
+| 2303 | Warning | Memory seed synchronization published nothing because the corpus is stale relative to its embedding route; carries the corpus state, the route id and the count of items that stay active and retrievable under the route that built them. |
+| 2304 | Warning | Memory seed synchronization published nothing because the local embedding model cannot serve the route; carries the route id, the corpus state, the model error code and the count of items that stay active. |
+| 2305 | Warning | Memory seed runtime synchronization published nothing because a seed file has a heading path, or a line with its heading path, longer than the chunk token limit; carries the seed source only, never the line. The previous corpus stays current. |
+| 2310 | Information | The local embedding model is installed and verified at Worker start; carries the model id, the revision and the first 16 characters of the model file's SHA-256. |
+| 2311 | Warning | The local embedding model is not available; carries the install error code and its detail. Embedding calls are refused until an install succeeds. |
+| 2320 | Information | The local relevance judge is installed and verified at Worker start; carries the model id, the revision and the first 16 characters of the model file's SHA-256. |
+| 2321 | Warning | The local relevance judge is not available; carries the install error code and its detail. Relevance calls are refused until an install succeeds. |
+| 2322 | Information | This host configures no relevance judge model directory, so none is installed and every relevance call is refused with `relevance_judge_not_configured`; carries the setting name. Written once at Worker start, and only on a host that runs no judge, because nothing else would make that state visible in the log. |
 | 2401 | Warning | Telegram notification provider returned a bounded failure code. |
 | 2501 | Warning | GitHub issue provider returned a bounded failure code. |
 | 2601 | Warning | PostgreSQL was not accepting connections yet; the failed attempt number, the wait before the next one and the exception type only, never the endpoint or the credential. |
@@ -132,6 +140,14 @@ leased work was abandoned for an unrequested reason and is reported rather than 
 | 3805 | Warning | A recorded remediation diff produced no approvable proposal, with job, report and the closed outcome code. Never a path, a file line or a byte of the diff. |
 | 3806 | Error | A remediation proposal was created already approved, which no shipped policy allows for a `code_write` action. Carries job and report only. |
 | 3807 | Warning | An approved remediation action was refused before anything was changed, with the action id and the closed outcome code. A moved checkout arrives here. |
+| 3808 | Information | A branch push was frozen into a proposal waiting for human approval, with job, report, the branch name, the proved and excluded path counts, whether the proposal already existed and the fixed statement that no test was executed. |
+| 3809 | Warning | A branch push produced no approvable proposal, with job, report and the closed outcome code. |
+| 3810 | Error | A branch-push proposal was created already approved, which no shipped policy allows. Carries job and report only. |
+| 3811 | Warning | An approved branch push was refused, with the action id and the closed outcome code. |
+| 3812 | Information | A pull request was frozen into a proposal waiting for human approval, with job, report, the head branch, the cited issue number, the report confidence, whether the proposal already existed and the fixed statement that no test was executed. |
+| 3813 | Warning | A pull request produced no approvable proposal, with job, report and the closed outcome code. |
+| 3814 | Error | A pull-request proposal was created already approved, which no shipped policy allows. Carries job and report only. |
+| 3815 | Warning | An approved pull request was refused, with the action id and the closed outcome code. |
 
 ### API host (4000-4999)
 
@@ -158,7 +174,17 @@ Log events carry bounded, non-sensitive facts only: job, fault and correlation i
 names, tool names, decision outcomes, reason tokens, token counts, durations, attempt numbers,
 bounded error codes and exception type names. They never carry message content, rendered prompts or
 responses, artifact payloads, tool arguments or results, memory document text, embedding vectors,
-credentials or raw provider error strings.
+relevance-judge scores, credentials or raw provider error strings.
+
+The two local models are logged only where they are installed. Events 2310, 2311, 2320, 2321 and 2322
+carry model ids, revisions, a 16-character digest prefix, a bounded install error code with its
+authored detail and one host setting name, which is the same class of value the model store already
+writes. No query, no candidate chunk and no score reaches that pass at all. The relevance judge has no
+log event of its own outside it: a score is a number about one query and one document together, so a
+log of scores would say which documents a query was close to, which is memory document text by another
+route. A judged `memory_search` result reports its per-item `judgeScore` to the calling role and stores
+it in that call's durable artifacts under the same redaction as the rest of the payload; it is never
+written to the application log at any level.
 
 The worker-output reprompt event is a narrow exception to the general absence of validation detail:
 it carries at most 20 validator diagnostics. Each uses fixed validator wording and an

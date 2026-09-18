@@ -15,8 +15,12 @@ an HA topology or a disaster-recovery site, and this project does not offer supp
   database dumps during rotation. As an initial planning assumption, reserve 4 CPU cores, 8 GiB RAM
   and 20 GiB plus database and backup growth. Compose does not claim or enforce sizing for a workload.
 - Outbound HTTPS from the Worker to `huggingface.co` on its first start with an empty model volume,
-  unless the model is installed offline; see "Local embedding model". The in-process embedding model
-  adds roughly its file size plus 100 to 200 MB to the Worker's memory and about 123 MB of disk.
+  unless the models are installed offline; see "Local embedding model". The shipped worker runs two
+  in-process models, the embedding model and the relevance judge. Each adds roughly its file size plus
+  100 to 200 MB to the Worker's memory once it is loaded, so plan for roughly 1 GiB of Worker memory
+  for the pair, and for about 123 MB of disk for the embedding model and about 549 MiB for the judge,
+  per installed version of each. A first start on an empty volume downloads about 667 MiB. The
+  reservation above already covers that; it is listed so the growth is not a surprise.
 - Protected host storage for `.env.production`. This deployment uses a host-owned environment file,
   not a managed secret store. Restrict its filesystem permissions and exclude it from backups that do
   not have equivalent protection.
@@ -212,24 +216,33 @@ values for both.
 
 ## Local embedding model
 
-The Worker embeds memory with the in-process model unless the environment file selects
-`OpenAICompatible`. `docs/model-gateway.md`, "Local Embedding Model", describes the model, its store and
-its identity; this section is what an operator does with them.
+The Worker runs two in-process models: the embedding model, unless the environment file selects
+`OpenAICompatible`, and the relevance judge that `memory_search` admits candidates with.
+`docs/model-gateway.md`, "Local Embedding Model" and "Local Relevance Judge", describe each model, its
+store and its identity, and "Local Model Host Requirements" gives their CPU, memory, disk and network
+cost; this section is what an operator does with them.
 
-**Where it lives.** The `embedding-models` named volume, mounted at `/app/models` in the worker
-container only. It holds `manifest.json`, `manifest.previous.json` once an install has replaced a model,
-and each file at `artifacts/<sha256>/<file name>`. The Worker image creates `/app/models` owned by its
-non-root user, so a fresh volume is writable by the Worker. `scripts/postgres-backup.ps1` does not back
-the volume up, because its contents are reproducible from the pinned source; `down --volumes` deletes it
-and the next start downloads the model again.
+**Where they live.** The `embedding-models` named volume, mounted at `/app/models` in the worker
+container only. The embedding model's directory is the mount point itself and the judge's is
+`/app/models/relevance-judge` below it. Each of the two directories holds `manifest.json`,
+`manifest.previous.json` once an install has replaced a model, and each of that model's files at
+`artifacts/<sha256>/<file name>`. They are two directories because a model directory holds one active
+manifest, not because the two models are kept apart: one volume holds both, one `memory model install`
+fills both, and neither can overwrite the other's files, because every artifact is addressed by its own
+digest inside its own directory. The Worker image creates `/app/models` owned by its non-root user, so
+a fresh volume is writable by the Worker and it creates the judge's subdirectory itself.
+`scripts/postgres-backup.ps1` does not back the volume up, because its contents are reproducible from
+the pinned sources; `down --volumes` deletes it and the next start downloads both models again.
 
-**The relevance judge's directory.** The Worker also installs a second in-process model, the relevance
-judge, and `IncidentCompass__RelevanceJudge__LocalOnnx__ModelDirectory` points it at
-`/app/models/relevance-judge` on the same volume. It is a subdirectory rather than the same path
-because a model directory holds one manifest and the judge has a manifest of its own; one volume still
-holds both models, and one `memory model install` fills both. A Worker that names no judge directory
-starts without a judge and refuses every judge call with a named code, which `memory model status`
-reports.
+**The judge's directory is what turns the judge on.**
+`IncidentCompass__RelevanceJudge__LocalOnnx__ModelDirectory` is the only setting that decides whether
+this Worker runs a judge, because the judge has no provider setting to decide it with.
+`docker-compose.yml` and `compose.production.yml` set it to `/app/models/relevance-judge`;
+`compose.mock.yml` and `compose.evaluation.yml` reset it to the empty string, because those stacks
+exist to run without downloading a model. A Worker that names no directory starts normally and runs no
+judge: every judge call is refused with `relevance_judge_not_configured`, `memory_search` keeps the
+behaviour it had before the judge existed and says so in a top-level `limitation` string, and both
+`memory model status` and `memory model install` report the missing judge and exit 1.
 
 **First start.** A Worker starting on an empty volume downloads the two files, about 123 MB, over HTTPS
 from `huggingface.co` and the HTTPS location it redirects to, verifies both digests and writes the
@@ -238,11 +251,12 @@ manifest, all before its memory seed pass. Its start waits for that for up to
 hash the installed files again and download nothing.
 
 The judge's install pass runs on the same start, after the memory seed pass, so the corpus the Worker
-serves is never held up behind it. On an empty judge directory it downloads about 571 MB from the same
+serves is never held up behind it. On an empty judge directory it downloads about 544 MiB from the same
 host, verifies both digests and writes the judge manifest, bounded by
 `IncidentCompass__RelevanceJudge__LocalOnnx__InstallTimeoutSeconds`, 1800 seconds by default. A failed
 judge install is recorded with its code and the Worker keeps starting; judge calls are refused until an
-install succeeds.
+install succeeds, and while one is still running they are refused with
+`relevance_judge_install_in_progress` and the job retries rather than being answered without a judge.
 
 **Offline install.** On a host without that outbound access, place the two files in the volume before
 the first start, each at `artifacts/<sha256>/<file name>` under `/app/models`, where `<sha256>` is the
@@ -272,6 +286,15 @@ The files must be readable by the Worker's user and `/app/models` must stay writ
 digest is wrong is refused and left in place, never replaced, so remove it by hand. Where outbound access
 exists only for a maintenance window, `memory model install` can run in that window instead.
 
+The judge is placed the same way, under its own directory, from the two pinned URLs
+`THIRD-PARTY-NOTICES.md` records:
+
+- `relevance-judge/artifacts/912fc1215c2dbff6499700534bd8d31253af01573861abbfc43afd1fab6cce5d/model_int8.onnx`
+- `relevance-judge/artifacts/cfc8146abe2a0488e9e2a0c56de7952f7c11ab059eca145a0a727afce0db2865/sentencepiece.bpe.model`
+
+The second digest is the same one the embedding model pins above, because the two models share one
+SentencePiece file byte for byte. Copy the same file into both directories; each holds its own copy.
+
 **Commands.** Both run in a one-off worker container before any host starts, and both require the host
 embedding provider to be `LocalOnnx`:
 
@@ -280,12 +303,22 @@ docker @compose run --rm worker memory model status
 docker @compose run --rm worker memory model install
 ```
 
-`memory model status` prints the installed model's id, revision, license, encoded identity and both
-digests, the configured memory route, and the model the active corpus was built with. It exits 1 when no
-model is installed, when the installed id is not the model the route names, or when the active corpus
-was not built under the installed model's encoded identity. Because of that last check it also exits 1
-on a host whose corpus has not been seeded yet, and after an install until `memory rebuild` has
-re-embedded the corpus.
+Each command covers both models in one run, because which model lives in which directory is the store's
+business and not something an operator should run two commands about. The embedding model is reported
+first and the judge after it, each failure is reported rather than thrown, and the command's exit code is
+the worse of the two: a broken judge never hides the embedding model's report, and a problem with either
+model is a non-zero exit.
+
+`memory model status` prints the installed embedding model's id, revision, license, encoded identity and
+both digests, the configured memory route, and the model the active corpus was built with. It exits 1
+when no model is installed, when the installed id is not the model the route names, or when the active
+corpus was not built under the installed model's encoded identity. Because of that last check it also
+exits 1 on a host whose corpus has not been seeded yet, and after an install until `memory rebuild` has
+re-embedded the corpus. It then prints the installed judge's id, revision, license and both digests, and
+exits 1 when this host configures no judge directory, when nothing is installed in the configured one,
+when the directory holds a model of another kind, or when the installed judge is not the configured one.
+The judge half reads only the directory, never the corpus: a judge reranks what a search already
+retrieved and stores nothing, so no corpus state can make it disagree.
 
 `memory model install` installs the model the host settings describe beside the installed one: it
 verifies or downloads both files, then replaces `manifest.json` and keeps the manifest it replaced as
@@ -294,7 +327,15 @@ no artifact directory is ever deleted. When the configured model is already acti
 files and changes nothing. It is bounded by `InstallTimeoutSeconds` like the start-time pass; a run that
 times out prints `embedding_model_install_timed_out` and leaves the active manifest in place. Before it
 places files, an install removes temporary `.partial` downloads older than `InstallTimeoutSeconds`, which
-only a killed install leaves behind.
+only a killed install leaves behind. It does the same for the judge in the judge's directory, under the
+judge's own `InstallTimeoutSeconds`, and prints where the previous judge manifest is kept and how to roll
+back to it. On a host that configures no judge directory it reports that and exits 1 without touching the
+embedding model's result, so the same command on a judge-less host now ends non-zero where it used to end
+0; that is the intended signal, and a deployment that means to run no judge is the one case to ignore it.
+
+After installing a judge, restart the Worker so it verifies the installed judge. A running Worker keeps
+the judge it verified at start. The corpus is not affected either way, so a judge install is never
+followed by `memory rebuild`.
 
 **Changing the installed model.** `memory model install` installs the model the Worker's
 `IncidentCompass:Embeddings:LocalOnnx` settings describe. Neither compose file passes those settings to
@@ -327,6 +368,16 @@ must equal the new `ModelId`. A model that differs in more than its file also ne
 HTTPS URLs ending in a file name, both digests must be lowercase SHA-256 values and must differ, and the
 Worker refuses to start on a value that breaks one of those rules. Preflight does not read the override
 file.
+
+The judge's settings under `IncidentCompass__RelevanceJudge__LocalOnnx__` take the same names and the
+same rules, minus the embedding-only ones: there is no `Dimensions`, no prefix and no route model to
+keep in step, because nothing the judge produces is stored, and no corpus records which judge ran. Its
+two URLs must still be absolute HTTPS URLs ending in a file name and its two digests must still be
+lowercase SHA-256 values that differ from each other, so a judge whose tokenizer really is its model
+file cannot be configured. A different judge model also brings its own score scale, so
+`Tools.memory_search.RelevanceFloorScore` and `RelevanceConfirmScore` have to be measured again for it
+through the real tool; the shipped defaults are numbers measured for the pinned cross-encoder and mean
+nothing on another one.
 
 A running Worker keeps the install state it read when it started, so every procedure that changes the
 volume ends by restarting the Worker:
@@ -811,9 +862,29 @@ This single-host runbook does not claim an automatic second site.
    migration catalog under the PostgreSQL migration lock.
 7. Perform authenticated report, ledger and approval reads before returning the service to users.
 
-An upgrade does not change the installed embedding model, even when the release ships a new default:
-the Worker keeps the manifest in the `embedding-models` volume. "Local embedding model" describes how to
-move to a new model, and what a release whose route names a different model id reports until you do.
+An upgrade does not change an installed local model, even when the release ships a new default: the
+Worker keeps whatever manifest is in the `embedding-models` volume, for the embedding model and for the
+judge alike. "Local embedding model" describes how to move to a new model, and what a release whose
+route names a different model id reports until you do.
+
+**Upgrading to a release that ships the relevance judge.** The judge is not installed by upgrading. A
+Worker started from the new images with no `IncidentCompass__RelevanceJudge__LocalOnnx__ModelDirectory`
+runs none, which is what an environment file and compose overlay carried over from an older release
+produce. That host is not broken and is not degraded relative to the release it came from: memory search
+keeps exactly the behaviour it had, states in each result that no judge is installed, and retrieves
+neither better nor worse than before, including the off-topic matches on non-English queries that the
+judge is what removes. What does change is that `memory model status` and `memory model install` now
+report the missing judge and exit 1 where they used to exit 0, so any check that reads their exit code
+needs the judge configured or the new exit accepted.
+
+To run the judge, take the release's compose files, which set the directory to
+`/app/models/relevance-judge`, or add that variable to the worker in your own overlay. The first Worker
+start after that downloads about 544 MiB from `huggingface.co` into the existing volume, after the
+memory seed pass, and `memory_search` calls are refused with `relevance_judge_install_in_progress` while
+it runs rather than answered without a judge. An offline host places the two files itself, as "Local
+embedding model" describes. Nothing about the corpus changes: a judge reranks what a search already
+retrieved, so there is no re-embedding and no `memory rebuild`, and rolling the judge back out is
+emptying the directory setting again.
 
 Never edit released SQL or migration ledger rows to force an upgrade.
 

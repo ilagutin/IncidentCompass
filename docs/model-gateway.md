@@ -263,24 +263,110 @@ the Worker's next synchronization pass.
 A local embedding call writes no `ModelCall` ledger row, like every embedding call, and has no
 provider to bill; see `docs/cost-tracking.md`, "Embedding Calls Are Absent, Not Unpriced".
 
-### Host Requirements
+## Local Relevance Judge
 
-- CPU: the int8 file targets processors with AVX-512 VNNI and runs more slowly on processors without
-  it. One embedding call runs on `IntraOpThreads` threads, 1 by default and at most 16, with one
-  inter-op thread and sequential execution, and calls are serialized within the process, so the
-  default keeps embedding to one core at a time however many the host has. With one thread, one
-  desktop x64 processor measured about 4 ms for a 14-token query and about 180 ms for a full
-  512-token passage.
-- Memory: the model is loaded on the first embedding call and kept for the life of the Worker
-  process. Plan for the Worker to grow by roughly the model file's size plus 100 to 200 MB; that is a
-  planning figure, not a measurement recorded in this repository.
-- Disk: about 123 MB in the model directory per installed model version. Artifact directories are
-  never deleted, so a directory that has held two versions holds both.
-- Network: a Worker starting on an empty model directory downloads both files over HTTPS from
-  `huggingface.co`, following redirects only to HTTPS locations. A directory prepared offline needs no
-  network.
-- Start: the install or verification pass runs before the memory seed pass, and the Worker's start
-  waits for it for up to `InstallTimeoutSeconds`.
+The relevance judge is the second in-process model this solution runs, and it is not an embedding
+model. It is a cross-encoder: it reads one query together with one candidate chunk inside a single
+token window and returns one score for that pair on its own model's scale, instead of producing a
+vector that is later compared with another vector. `memory_search` uses those scores to decide which
+retrieved candidates are admitted and which of them are reported as confirmed;
+`docs/architecture.md`, "Memory Worker", describes that decision and `docs/trade-offs.md` carries the
+measured scores behind the shipped thresholds.
+
+It has no provider setting and no route. No triage-configuration provider entry names it, nothing in
+the model gateway dispatches to it, and it writes no `ModelCall` ledger row: it is one Application
+port, `IMemoryRelevanceJudge`, with one in-process adapter. The host setting
+`IncidentCompass:RelevanceJudge:LocalOnnx:ModelDirectory` is what says whether this host runs a judge
+at all. An absolute path turns it on and has every other judge setting validated before the host
+starts; a blank or absent value leaves the host without one, which is not a start failure over a model
+the host was never asked to run. Every judge call on such a host is refused with
+`relevance_judge_not_configured`, one of the two states `memory_search` may answer without a judge.
+
+### Judge Model, Store And Identity
+
+The shipped judge is `BAAI/bge-reranker-v2-m3`, Apache-2.0, pinned as two files in the defaults under
+`IncidentCompass:RelevanceJudge:LocalOnnx`: its int8 ONNX export `onnx/model_int8.onnx` (570,727,094
+bytes, about 544 MiB) and its SentencePiece tokenizer `sentencepiece.bpe.model` (5,069,051 bytes),
+each by SHA-256. The two come from two Hugging Face repositories at two revisions, and the installed
+manifest records each artifact's own URL: the tokenizer from the weights repository at
+`953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e`, and the ONNX file from the third-party export
+`onnx-community/bge-reranker-v2-m3-ONNX` at `6f5ff65298512715a1e669753bc754d2bc8f367b`, which declares
+no license of its own and is taken under the base model's. `THIRD-PARTY-NOTICES.md` records that
+reading.
+
+The tokenizer file is byte-identical to the embedding model's, so the pinned digest is literally the
+same value in both sections. Both are XLM-RoBERTa models and share one SentencePiece file; the
+repeated digest is not a copy-and-paste mistake. Each model directory still installs its own copy,
+because a directory holds one model's artifacts.
+
+The pair runs in one 512-token window, all four sequence markers included, and the pair encoder gives
+the query at most half of it and the passage the rest so that neither can starve the other. A pair
+beyond the window is truncated, because the graph fails outright on a longer sequence rather than
+ignoring the excess. That window is also where `memory_search`'s 1016-character query bound comes
+from. The judge carries no embedding profile at all: a cross-encoder has no vector width, no pooling
+and no query or passage prefix, and nothing it produces is stored, so no corpus records a judge
+identity and no judge change invalidates one.
+
+It shares the model store with the embedding model, because a pinned artifact set is a pinned artifact
+set whatever it is for. Its directory holds the same three things: `manifest.json`, naming the active
+model's kind, id, revision, license, run settings and both files' paths and digests;
+`manifest.previous.json`, the manifest the last install replaced; and each file at
+`artifacts/<its SHA-256>/<its file name>`. The recorded kind is what makes a directory holding an
+embedding model a reported wrong-kind problem rather than a model loaded as a judge. The two models
+need two directories because a directory holds one active manifest, not because they are deliberately
+kept apart: both compose files that run a judge put its directory inside the embedding model's volume,
+at `/app/models/relevance-judge`, so one volume holds both and one `memory model install` fills both.
+
+Installation and verification follow the embedding model's rules exactly. An installed manifest wins
+and is never replaced by changed host defaults, both of its files are hashed again on every start, an
+empty directory is filled from the pinned URLs over HTTPS following redirects only to HTTPS locations,
+and a file already at its artifact path is verified instead of downloaded. One pass is bounded by
+`InstallTimeoutSeconds`, 1800 by default rather than the embedding model's 900 because the pinned file
+is about five times the size, and one download may deliver at most `MaxDownloadBytes`, 1 GiB by
+default.
+
+The pass runs while the Worker starts, and deliberately last: after the embedding model's install and
+after the memory seed pass, so the corpus the Worker serves is never held up behind the larger
+download, and still before the claim loop, so a Worker that has started has either verified its judge
+or recorded why it could not. A failed pass does not stop the Worker. It records its code in the
+host's judge install state and logs it, and every judge call is refused with that code until a later
+start or a `memory model install` succeeds. `docs/architecture.md`, "Memory Worker", says which of
+those codes `memory_search` may answer without a judge and which propagate.
+
+The judge is composed only where the embedding host is composed, which is the Worker. The Api never
+loads it, has no model volume and reports nothing about it, and no health endpoint carries its state.
+`memory model status` and `memory model install`, both run in a one-off worker container, are the
+operator's view of it; see `docs/single-host-production.md`, "Local embedding model".
+
+## Local Model Host Requirements
+
+These cover both in-process models. The second one applies only to a Worker that configures a judge
+model directory; a Worker that does not pays none of the judge's cost.
+
+- CPU: both int8 files target processors with AVX-512 VNNI and run more slowly on processors without
+  it. One embedding call and one scored pair each run on that model's `IntraOpThreads` threads, 1 by
+  default and at most 16, with one inter-op thread and sequential execution, and calls are serialized
+  within the process, so the defaults keep both models to one core at a time however many the host
+  has. With one thread, one desktop x64 processor measured about 4 ms for a 14-token embedding query
+  and about 180 ms for a full 512-token passage. The judge is the heavier of the two by a wide
+  margin: on the same machine, 20 pairs, which is `TopK * 4` at the shipped `TopK` of 5, took a
+  median of 2247 ms at the shipped one thread and 550 ms at eight, with bit-identical scores at both.
+  The tool's default execution limit of 120 seconds is unchanged and was nowhere near approached.
+- Memory: each model is loaded on its first call and kept for the life of the Worker process. Plan
+  for the Worker to grow by roughly each model file's size plus 100 to 200 MB, so by roughly 1 GiB
+  once both are loaded; that is a planning figure derived from the two file sizes, not a measurement
+  recorded in this repository.
+- Disk: about 123 MB in the embedding model's directory and about 549 MiB in the judge's, per
+  installed version of each. Artifact directories are never deleted, so a directory that has held two
+  versions holds both.
+- Network: a Worker starting on an empty model directory downloads that model's two files over HTTPS
+  from `huggingface.co`, following redirects only to HTTPS locations. On a fresh host that runs both,
+  the first start therefore fetches about 667 MiB in total, of which about 544 MiB is the judge's ONNX
+  file; adding a judge to a host that already has its embedding model installed adds that 544 MiB and
+  nothing else. A directory prepared offline needs no network.
+- Start: the embedding model's install or verification pass runs before the memory seed pass and the
+  judge's after it, and the Worker's start waits for each for up to that model's
+  `InstallTimeoutSeconds`.
 
 ## Requirements
 
