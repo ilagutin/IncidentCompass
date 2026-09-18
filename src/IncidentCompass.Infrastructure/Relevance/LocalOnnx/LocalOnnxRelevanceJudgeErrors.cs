@@ -38,8 +38,9 @@ internal static class LocalOnnxRelevanceJudgeErrors
 
     /// <summary>
     /// No usable installed judge, which is the same configuration state as a mismatch, reported as
-    /// <c>memory_relevance_judge_unavailable</c>. The store code that says why, for example
-    /// <c>embedding_model_digest_mismatch</c>, is kept as the provider error code.
+    /// <c>memory_relevance_judge_unavailable</c>. The judge code that says why, for example
+    /// <c>relevance_judge_model_digest_mismatch</c>, is kept as the provider error code; the reader
+    /// has already translated the model store's own vocabulary into the judge's.
     /// </summary>
     public static MemoryRelevanceJudgeException NotAvailable(LocalOnnxInstalledModelLookup lookup) =>
         CreateConfigurationRequired(

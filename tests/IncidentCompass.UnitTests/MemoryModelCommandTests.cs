@@ -4,18 +4,38 @@ using IncidentCompass.Application.Memory;
 using IncidentCompass.Infrastructure.EmbeddingModels;
 using IncidentCompass.Infrastructure.Embeddings.LocalOnnx;
 using IncidentCompass.Infrastructure.Memory;
+using IncidentCompass.Infrastructure.Relevance.LocalOnnx;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 
 namespace IncidentCompass.UnitTests;
 
 /// <summary>
-/// <c>memory model status</c> and <c>memory model install</c> against the committed fixture model on
-/// disk: exit codes and what they print about the installed model, the configured route and the
-/// active corpus.
+/// <c>memory model status</c> and <c>memory model install</c> against the committed fixture models on
+/// disk: exit codes and what they print about the installed embedding model, the configured route,
+/// the active corpus and the installed relevance judge.
 /// </summary>
-public sealed class MemoryModelCommandTests
+/// <remarks>
+/// One command reports and installs both models, so every test needs a judge as well as an embedding
+/// model. The committed judge fixture is installed once per test into a temporary directory of its
+/// own and handed to <see cref="Services" /> by default, which keeps the judge out of the way of the
+/// embedding assertions; the tests that are about the judge pass their own options instead.
+/// </remarks>
+public sealed class MemoryModelCommandTests : IAsyncLifetime
 {
+    private LocalOnnxRelevanceJudgeFixtureModel? judgeFixture;
+
+    private LocalOnnxRelevanceJudgeFixtureModel JudgeFixture => judgeFixture!;
+
+    public async ValueTask InitializeAsync() =>
+        judgeFixture = await LocalOnnxRelevanceJudgeFixtureModel.InstallAsync(TestContext.Current.CancellationToken);
+
+    public ValueTask DisposeAsync()
+    {
+        judgeFixture?.Dispose();
+        return ValueTask.CompletedTask;
+    }
+
     [Theory]
     [InlineData("memory", "status")]
     [InlineData("memory", "model", "frobnicate")]
@@ -228,6 +248,145 @@ public sealed class MemoryModelCommandTests
         Assert.False(File.Exists(LocalOnnxModelLayout.GetManifestPath(directory.FullPath)));
     }
 
+    [Fact]
+    public async Task Status_ReportsTheEmbeddingModelAndTheRelevanceJudge()
+    {
+        using var fixture = await LocalOnnxFixtureModel.InstallAsync(TestContext.Current.CancellationToken);
+        var manifest = fixture.FixtureManifest;
+        await using var services = Services(
+            fixture.Options,
+            LocalModelTestSupport.Configuration(manifest.Id),
+            LocalModelTestSupport.Corpus(LocalOnnxModelIdentity.Describe(manifest), Guid.NewGuid()));
+
+        var result = await RunAsync(services, "memory", "model", "status");
+
+        var judge = JudgeFixture.FixtureManifest;
+        Assert.Equal(0, result.ExitCode);
+        Assert.Contains("Local embedding model: " + manifest.Id, result.Output, StringComparison.Ordinal);
+        Assert.Contains("Local relevance judge: " + judge.Id, result.Output, StringComparison.Ordinal);
+        Assert.Contains(
+            "judge revision=" + judge.Revision + " license=" + judge.License,
+            result.Output,
+            StringComparison.Ordinal);
+        Assert.Contains("judge model file sha256=" + judge.ModelFile.Sha256, result.Output, StringComparison.Ordinal);
+        Assert.Contains(
+            "judge tokenizer file sha256=" + judge.TokenizerFile.Sha256,
+            result.Output,
+            StringComparison.Ordinal);
+        Assert.Equal(string.Empty, result.Error);
+    }
+
+    [Fact]
+    public async Task Status_WhenOnlyTheJudgeIsMissing_ExitsOneAndStillReportsTheEmbeddingModel()
+    {
+        using var fixture = await LocalOnnxFixtureModel.InstallAsync(TestContext.Current.CancellationToken);
+        using var emptyJudgeDirectory = new LocalOnnxTestDirectory();
+        var manifest = fixture.FixtureManifest;
+        await using var services = Services(
+            fixture.Options,
+            LocalModelTestSupport.Configuration(manifest.Id),
+            LocalModelTestSupport.Corpus(LocalOnnxModelIdentity.Describe(manifest), Guid.NewGuid()),
+            judgeOptions: LocalOnnxRelevanceJudgeFixtureModel.OptionsFor(
+                JudgeFixture.FixtureManifest,
+                emptyJudgeDirectory.FullPath));
+
+        var result = await RunAsync(services, "memory", "model", "status");
+
+        Assert.Equal(1, result.ExitCode);
+        Assert.Contains("Local embedding model: " + manifest.Id, result.Output, StringComparison.Ordinal);
+        Assert.Contains("Local relevance judge: not installed", result.Output, StringComparison.Ordinal);
+        Assert.Contains("No local relevance judge is installed.", result.Error, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Status_WhenTheJudgeHasNoModelDirectory_SaysItIsNotConfigured()
+    {
+        using var fixture = await LocalOnnxFixtureModel.InstallAsync(TestContext.Current.CancellationToken);
+        var manifest = fixture.FixtureManifest;
+        await using var services = Services(
+            fixture.Options,
+            LocalModelTestSupport.Configuration(manifest.Id),
+            LocalModelTestSupport.Corpus(LocalOnnxModelIdentity.Describe(manifest), Guid.NewGuid()),
+            judgeOptions: new LocalOnnxRelevanceJudgeOptions());
+
+        var result = await RunAsync(services, "memory", "model", "status");
+
+        Assert.Equal(1, result.ExitCode);
+        Assert.Contains("Local relevance judge: not configured", result.Output, StringComparison.Ordinal);
+        Assert.Contains("RelevanceJudge:LocalOnnx:ModelDirectory", result.Error, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Install_InstallsBothTheEmbeddingModelAndTheRelevanceJudge()
+    {
+        using var modelDirectory = new LocalOnnxTestDirectory();
+        using var judgeDirectory = new LocalOnnxTestDirectory();
+        var manifest = await LocalOnnxFixtureModel.ReadFixtureManifestAsync(TestContext.Current.CancellationToken);
+        var judge = JudgeFixture.FixtureManifest;
+        LocalOnnxFixtureModel.PlaceFixtureFiles(manifest, modelDirectory.FullPath);
+        LocalOnnxRelevanceJudgeFixtureModel.PlaceFixtureFiles(judge, judgeDirectory.FullPath);
+        await using var services = Services(
+            LocalOnnxFixtureModel.OptionsFor(manifest, modelDirectory.FullPath),
+            LocalModelTestSupport.Configuration(manifest.Id),
+            EmptyCorpus(),
+            judgeOptions: LocalOnnxRelevanceJudgeFixtureModel.OptionsFor(judge, judgeDirectory.FullPath));
+
+        var result = await RunAsync(services, "memory", "model", "install");
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Contains("Installed local embedding model: " + manifest.Id, result.Output, StringComparison.Ordinal);
+        Assert.Contains("Installed local relevance judge: " + judge.Id, result.Output, StringComparison.Ordinal);
+        Assert.True(File.Exists(LocalOnnxModelLayout.GetManifestPath(modelDirectory.FullPath)));
+        Assert.True(File.Exists(LocalOnnxModelLayout.GetManifestPath(judgeDirectory.FullPath)));
+        Assert.Equal(string.Empty, result.Error);
+    }
+
+    /// <summary>
+    /// On a real host the options accessor is where validation runs, and it throws
+    /// <see cref="OptionsValidationException" />, which is not an
+    /// <see cref="InvalidOperationException" />. This command runs before the host starts, so nothing
+    /// has reported those failures yet; if it does not catch them itself they escape it entirely.
+    /// Both halves have that shape, so both are covered.
+    /// </summary>
+    [Fact]
+    public async Task Status_WhenTheJudgeSectionFailsValidation_SaysItIsNotConfiguredInsteadOfThrowing()
+    {
+        using var fixture = await LocalOnnxFixtureModel.InstallAsync(TestContext.Current.CancellationToken);
+        var manifest = fixture.FixtureManifest;
+        await using var services = Services(
+            fixture.Options,
+            LocalModelTestSupport.Configuration(manifest.Id),
+            LocalModelTestSupport.Corpus(LocalOnnxModelIdentity.Describe(manifest), Guid.NewGuid()),
+            judgeAccessor: new ValidationFailingOptions<LocalOnnxRelevanceJudgeOptions>(
+                "IncidentCompass:RelevanceJudge:LocalOnnx:MaxTokens must be between 5 and 8192."));
+
+        var result = await RunAsync(services, "memory", "model", "status");
+
+        Assert.Equal(1, result.ExitCode);
+        Assert.Contains("Local embedding model: " + manifest.Id, result.Output, StringComparison.Ordinal);
+        Assert.Contains("Local relevance judge: not configured", result.Output, StringComparison.Ordinal);
+        Assert.Contains("MaxTokens must be between 5 and 8192.", result.Error, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Status_WhenTheEmbeddingSectionFailsValidation_ReportsTheFailuresInsteadOfThrowing()
+    {
+        await using var services = Services(
+            new LocalOnnxEmbeddingOptions(),
+            LocalModelTestSupport.Configuration(),
+            EmptyCorpus(),
+            embeddingAccessor: new ValidationFailingOptions<LocalOnnxEmbeddingOptions>(
+                "IncidentCompass:Embeddings:LocalOnnx:ModelDirectory must be an absolute directory path."));
+
+        var result = await RunAsync(services, "memory", "model", "status");
+
+        Assert.Equal(1, result.ExitCode);
+        Assert.Contains(
+            "Local embedding model command failed: IncidentCompass:Embeddings:LocalOnnx:ModelDirectory",
+            result.Error,
+            StringComparison.Ordinal);
+    }
+
     private static async Task<CommandResult> RunAsync(IServiceProvider services, params string[] args)
     {
         await using var output = new StringWriter();
@@ -241,16 +400,20 @@ public sealed class MemoryModelCommandTests
         return new CommandResult(exitCode, output.ToString(), error.ToString());
     }
 
-    private static ServiceProvider Services(
+    private ServiceProvider Services(
         LocalOnnxEmbeddingOptions options,
         TriageConfiguration configuration,
         MemoryCorpusInventory inventory,
         string provider = "LocalOnnx",
-        HttpMessageHandler? handler = null)
+        HttpMessageHandler? handler = null,
+        LocalOnnxRelevanceJudgeOptions? judgeOptions = null,
+        IOptions<LocalOnnxEmbeddingOptions>? embeddingAccessor = null,
+        IOptions<LocalOnnxRelevanceJudgeOptions>? judgeAccessor = null)
     {
         var services = new ServiceCollection();
         services.AddSingleton(Options.Create(new EmbeddingOptions { Provider = provider }));
-        services.AddSingleton(Options.Create(options));
+        services.AddSingleton(embeddingAccessor ?? Options.Create(options));
+        services.AddSingleton(judgeAccessor ?? Options.Create(judgeOptions ?? JudgeFixture.Options));
         services.AddSingleton(Options.Create(new MemorySeedOptions { TenantId = "local", Owner = "owner" }));
         services.AddSingleton<ITriageConfigurationRepository>(new StaticConfigurationRepository(configuration));
         services.AddSingleton<IMemoryRepository>(new InventoryMemoryRepository(inventory));
@@ -261,6 +424,17 @@ public sealed class MemoryModelCommandTests
     private static MemoryCorpusInventory EmptyCorpus() => new(null, [], 0, 0);
 
     private sealed record CommandResult(int? ExitCode, string Output, string Error);
+
+    /// <summary>
+    /// An options accessor that behaves as a validating one does on a real host: the failures surface
+    /// when <c>Value</c> is read, not when the accessor is built.
+    /// </summary>
+    private sealed class ValidationFailingOptions<TOptions>(params string[] failures) : IOptions<TOptions>
+        where TOptions : class
+    {
+        public TOptions Value =>
+            throw new OptionsValidationException(Options.DefaultName, typeof(TOptions), failures);
+    }
 
     private sealed class StaticConfigurationRepository(TriageConfiguration configuration) : ITriageConfigurationRepository
     {

@@ -82,6 +82,10 @@ services:
       IncidentCompass__Memory__Seed__Owner: ${INCIDENTCOMPASS_MEMORY_SEED_OWNER:-default}
       IncidentCompass__Memory__Seed__SourceDirectory: /app/samples
       IncidentCompass__Embeddings__LocalOnnx__ModelDirectory: /app/models
+      # The relevance judge is a second model with a second manifest, so it needs a directory of its
+      # own; it sits under the same volume, so one volume holds both and one 'memory model install'
+      # fills both.
+      IncidentCompass__RelevanceJudge__LocalOnnx__ModelDirectory: /app/models/relevance-judge
       IncidentCompass__Worker__PollIntervalSeconds: "1"
       IncidentCompass__Worker__RetryDelaySeconds: "2"
     volumes:

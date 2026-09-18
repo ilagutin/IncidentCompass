@@ -1,7 +1,16 @@
-using IncidentCompass.Infrastructure.EmbeddingModels;
-
 namespace IncidentCompass.Infrastructure.Relevance.LocalOnnx;
 
+/// <summary>
+/// The local judge adapter's name and its stable error codes.
+/// </summary>
+/// <remarks>
+/// Every code here is the judge's own. The model store the judge installs through has an error
+/// vocabulary of its own, and every constant in it is spelled <c>embedding_model_...</c> because the
+/// store was written for the embedding model; those strings must never reach a judge surface, where
+/// they would name the wrong model. <see cref="LocalOnnxRelevanceJudgeStoreErrorCodeMap" /> is where
+/// a store code becomes one of these, and it is applied at the two places a store code enters the
+/// judge's world: the install pass and the installed-judge reader.
+/// </remarks>
 internal static class LocalOnnxRelevanceJudgeProvider
 {
     /// <summary>
@@ -12,10 +21,43 @@ internal static class LocalOnnxRelevanceJudgeProvider
     public const string Name = "local-onnx";
 
     /// <summary>
-    /// The stable error code of a call that reached the adapter on a host where no local judge is
-    /// installed. It is the model store's own code, because the store is what answers that question.
+    /// This host runs no judge at all: no model directory is configured for one. It is a different
+    /// answer from every code below, all of which describe a judge this host meant to run, and it is
+    /// deliberately not reported as an unavailable store: nothing is wrong with the store.
     /// </summary>
-    public const string ModelNotInstalledErrorCode = LocalOnnxModelErrorCodes.NotInstalled;
+    public const string NotConfiguredErrorCode = "relevance_judge_not_configured";
+
+    /// <summary>The stable error code of a call on a host where no install pass has put a judge in place.</summary>
+    public const string ModelNotInstalledErrorCode = "relevance_judge_model_not_installed";
+
+    /// <summary>A judge file's SHA-256 is not the pinned one. The file is never repaired or replaced.</summary>
+    public const string ModelDigestMismatchErrorCode = "relevance_judge_model_digest_mismatch";
+
+    /// <summary>The installed judge manifest names a file that is not on disk.</summary>
+    public const string ModelFileMissingErrorCode = "relevance_judge_model_file_missing";
+
+    /// <summary>A missing judge file could not be downloaded; nothing was renamed into place.</summary>
+    public const string ModelFetchFailedErrorCode = "relevance_judge_model_fetch_failed";
+
+    /// <summary>A judge download declared or delivered more bytes than the configured limit.</summary>
+    public const string ModelDownloadTooLargeErrorCode = "relevance_judge_model_download_too_large";
+
+    /// <summary>The judge install pass ran past its configured bound.</summary>
+    public const string InstallTimedOutErrorCode = "relevance_judge_install_timed_out";
+
+    /// <summary>The installed judge manifest is unreadable, incomplete or names a path outside the directory.</summary>
+    public const string ManifestInvalidErrorCode = "relevance_judge_manifest_invalid";
+
+    /// <summary>The judge's model directory could not be read or written.</summary>
+    public const string StoreUnavailableErrorCode = "relevance_judge_store_unavailable";
+
+    /// <summary>
+    /// The judge is not usable and the store's reason has no judge-side name yet. It exists so that a
+    /// code added to the store cannot leak through the map untranslated; a test asserts that every
+    /// store code the solution declares maps to one of the codes above instead, so reaching this one
+    /// means the store grew a code and nobody said what it means for a judge.
+    /// </summary>
+    public const string ModelUnusableErrorCode = "relevance_judge_model_unusable";
 
     /// <summary>
     /// The installed judge is not the configured one, or is not a judge at all. Carried as the

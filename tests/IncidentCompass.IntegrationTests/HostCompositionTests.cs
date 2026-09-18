@@ -5,6 +5,7 @@ using IncidentCompass.Application.Governance.PostReportActions;
 using IncidentCompass.Application.Governance.Tools;
 using IncidentCompass.Application.Intake.Retention;
 using IncidentCompass.Application.Investigation.Retention;
+using IncidentCompass.Application.Memory;
 using IncidentCompass.Application.Tickets;
 using IncidentCompass.Domain.Incidents.Actions;
 using IncidentCompass.Infrastructure;
@@ -51,11 +52,12 @@ public sealed class HostCompositionTests
             ValidateScopes = true
         });
 
-        // Investigation/action/retention workers + the Infrastructure config warmup + the local
-        // embedding model install pass and the optional memory seeding that the Worker's embedding
-        // host brings.
+        // Investigation/action/retention workers + the Infrastructure config warmup + the three the
+        // Worker's local model host brings: the embedding model's install pass, the optional memory
+        // seeding, and the relevance judge's own install pass, which verifies the cross-encoder that
+        // reranks memory search on the one host composed with it.
         var hostedServices = provider.GetServices<IHostedService>().ToArray();
-        Assert.Equal(10, hostedServices.Length);
+        Assert.Equal(11, hostedServices.Length);
         Assert.Contains(hostedServices, service =>
             service.GetType().FullName == "IncidentCompass.Worker.TelegramConfigurationStartupValidator");
         Assert.Contains(hostedServices, service =>
@@ -75,12 +77,25 @@ public sealed class HostCompositionTests
             service.GetType().FullName == "IncidentCompass.Infrastructure.Memory.MemorySeedHostedService");
         Assert.Contains(hostedServices, service =>
             service.GetType().FullName == ModelInstallHostedServiceTypeName);
-        // The generic host starts hosted services in resolution order, so the first seed pass finds
-        // the local model installed or finds its named failure.
+        Assert.Contains(hostedServices, service =>
+            service.GetType().FullName == RelevanceJudgeInstallHostedServiceTypeName);
+
+        // The generic host starts hosted services in resolution order, and the order of these three
+        // is a decision, not an accident. The embedding model's install runs first, so the first seed
+        // pass finds the model installed or finds its named failure. The judge's install runs last of
+        // the three: nothing on the seed path scores relevance, and the judge is by far the larger
+        // download, so starting it earlier would hold the corpus the Worker actually serves behind a
+        // model no pass has asked for yet. The assertion is relative to these three only, not a
+        // position in the whole list, so adding an unrelated worker does not break it.
+        var modelInstallIndex = IndexOfHostedService(hostedServices, ModelInstallHostedServiceTypeName);
+        var memorySeedIndex = IndexOfHostedService(hostedServices, MemorySeedHostedServiceTypeName);
+        var judgeInstallIndex = IndexOfHostedService(hostedServices, RelevanceJudgeInstallHostedServiceTypeName);
         Assert.True(
-            Array.FindIndex(hostedServices, service => service.GetType().FullName == ModelInstallHostedServiceTypeName) <
-            Array.FindIndex(hostedServices, service => service.GetType().FullName == MemorySeedHostedServiceTypeName),
+            modelInstallIndex < memorySeedIndex,
             "The memory seed pass would start before the local embedding model install.");
+        Assert.True(
+            memorySeedIndex < judgeInstallIndex,
+            "The relevance judge install would start before the first memory seed pass.");
         using var scope = provider.CreateScope();
         var backgroundContext = scope.ServiceProvider.GetRequiredService<IBackgroundUserContext>();
         var userContext = scope.ServiceProvider.GetRequiredService<IUserContext>();
@@ -194,21 +209,31 @@ public sealed class HostCompositionTests
     }
 
     /// <summary>
-    /// The real Api host, built through its own <c>Program</c>, resolves no embedding client, starts no
-    /// memory seed pass and offers no <c>memory_search</c> tool, and still resolves the corpus status
-    /// reader its health route serves.
+    /// The real Api host, built through its own <c>Program</c>, resolves neither of the in-process
+    /// models, starts no memory seed pass and no model install pass of either kind, offers no
+    /// <c>memory_search</c> tool, and still resolves the corpus status reader its health route serves.
     /// </summary>
     [Fact]
-    public void ApiHost_ResolvesNoEmbeddingClientOrMemorySeedPass()
+    public void ApiHost_ResolvesNoLocalModelOrMemorySeedPass()
     {
         using var factory = new MockProvidersWebApplicationFactory();
         using var scope = factory.Services.CreateScope();
 
         Assert.Null(scope.ServiceProvider.GetService<IEmbeddingClient>());
+        Assert.Null(scope.ServiceProvider.GetService<IMemoryRelevanceJudge>());
         Assert.DoesNotContain(scope.ServiceProvider.GetServices<IImmediateAgentTool>(), tool =>
             tool.GetType().FullName == MemorySearchToolTypeName);
-        Assert.DoesNotContain(factory.Services.GetServices<IHostedService>(), service =>
-            service.GetType().FullName == MemorySeedHostedServiceTypeName);
+        foreach (var typeName in new[]
+                 {
+                     MemorySeedHostedServiceTypeName,
+                     ModelInstallHostedServiceTypeName,
+                     RelevanceJudgeInstallHostedServiceTypeName
+                 })
+        {
+            Assert.DoesNotContain(factory.Services.GetServices<IHostedService>(), service =>
+                service.GetType().FullName == typeName);
+        }
+
         Assert.NotNull(scope.ServiceProvider.GetService<IMemoryCorpusStatusReader>());
     }
 
@@ -265,7 +290,13 @@ public sealed class HostCompositionTests
     private const string ModelInstallHostedServiceTypeName =
         "IncidentCompass.Infrastructure.EmbeddingModels.LocalOnnxModelInstallHostedService";
 
+    private const string RelevanceJudgeInstallHostedServiceTypeName =
+        "IncidentCompass.Infrastructure.Relevance.LocalOnnx.LocalOnnxRelevanceJudgeInstallHostedService";
+
     private const string MemorySearchToolTypeName = "IncidentCompass.Application.Memory.MemorySearchTool";
+
+    private static int IndexOfHostedService(IHostedService[] hostedServices, string typeName) =>
+        Array.FindIndex(hostedServices, service => service.GetType().FullName == typeName);
 
     private static bool IsMemorySeedHostedService(ServiceDescriptor descriptor) =>
         descriptor.ServiceType == typeof(IHostedService) &&

@@ -20,6 +20,7 @@ public sealed partial class ShippedEmbeddingDefaultTests
     private const string ProviderDefault = "IncidentCompass__Embeddings__Provider: ${INCIDENTCOMPASS_EMBEDDINGS_PROVIDER:-LocalOnnx}";
     private const string ProviderIdDefault = "INCIDENTCOMPASS_EMBEDDINGS_PROVIDER_ID: ${INCIDENTCOMPASS_EMBEDDINGS_PROVIDER_ID:-local-embed}";
     private const string ModelDirectory = "IncidentCompass__Embeddings__LocalOnnx__ModelDirectory: /app/models";
+    private const string JudgeModelDirectory = "IncidentCompass__RelevanceJudge__LocalOnnx__ModelDirectory";
 
     [Fact]
     public void ShippedConfiguration_RoutesMemoryEmbeddingsToTheLocalModelAndKeepsChatOnTheOpenAiProvider()
@@ -77,6 +78,29 @@ public sealed partial class ShippedEmbeddingDefaultTests
 
         Assert.Contains("${" + variable + ":-}", overlay, StringComparison.Ordinal);
         Assert.DoesNotContain("${" + variable + ":?", overlay, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Compose merges <c>environment</c> maps, so every overlay applied on top of the demo file
+    /// inherits the judge's model directory from it. The two overlays whose whole point is to run
+    /// without an in-process model must reset it: the embedding install is gated on the embedding
+    /// provider, which is what keeps them at zero bytes downloaded today, but the judge's install is
+    /// gated on its directory, so an inherited directory would have each of them fetch the pinned
+    /// cross-encoder, which is over half a gigabyte, on a fresh volume.
+    /// </summary>
+    [Theory]
+    [InlineData("compose.mock.yml")]
+    [InlineData("compose.evaluation.yml")]
+    public void ModellessOverlay_ResetsTheRelevanceJudgeModelDirectoryItWouldInheritFromTheDemoFile(string fileName)
+    {
+        Assert.Contains(
+            JudgeModelDirectory + ": /app/models/relevance-judge",
+            ReadServiceBlock("docker-compose.yml", "worker"),
+            StringComparison.Ordinal);
+        Assert.Contains(
+            JudgeModelDirectory + ": \"\"",
+            ReadServiceBlock(fileName, "worker"),
+            StringComparison.Ordinal);
     }
 
     [Fact]

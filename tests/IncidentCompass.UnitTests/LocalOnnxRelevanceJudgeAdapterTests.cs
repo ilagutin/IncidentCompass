@@ -232,8 +232,12 @@ public sealed class LocalOnnxRelevanceJudgeAdapterTests : IAsyncLifetime
     [Fact]
     public async Task Score_AfterAFailedInstall_IsRefusedAsUnavailableWithTheInstallCode()
     {
+        // The install pass records the judge's own code, not the shared store's: a recorded
+        // embedding_model_... string would name the wrong model everywhere this state is read.
         var state = new LocalOnnxModelInstallState();
-        state.RecordFailed(LocalOnnxModelErrorCodes.DigestMismatch, "The onnx file has the wrong digest.");
+        state.RecordFailed(
+            LocalOnnxRelevanceJudgeProvider.ModelDigestMismatchErrorCode,
+            "The onnx file has the wrong digest.");
 
         var exception = await Assert.ThrowsAsync<MemoryRelevanceJudgeException>(() =>
             CreateClient(state).ScoreAsync(
@@ -242,7 +246,7 @@ public sealed class LocalOnnxRelevanceJudgeAdapterTests : IAsyncLifetime
                 TestContext.Current.CancellationToken));
 
         Assert.Equal(MemoryRelevanceJudgeErrorCodes.Unavailable, exception.ErrorCode);
-        Assert.Equal(LocalOnnxModelErrorCodes.DigestMismatch, exception.ProviderErrorCode);
+        Assert.Equal(LocalOnnxRelevanceJudgeProvider.ModelDigestMismatchErrorCode, exception.ProviderErrorCode);
         Assert.Equal(ProviderFailureKind.ConfigurationRequired, exception.FailureKind);
     }
 

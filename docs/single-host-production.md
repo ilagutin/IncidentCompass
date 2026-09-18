@@ -223,11 +223,26 @@ non-root user, so a fresh volume is writable by the Worker. `scripts/postgres-ba
 the volume up, because its contents are reproducible from the pinned source; `down --volumes` deletes it
 and the next start downloads the model again.
 
+**The relevance judge's directory.** The Worker also installs a second in-process model, the relevance
+judge, and `IncidentCompass__RelevanceJudge__LocalOnnx__ModelDirectory` points it at
+`/app/models/relevance-judge` on the same volume. It is a subdirectory rather than the same path
+because a model directory holds one manifest and the judge has a manifest of its own; one volume still
+holds both models, and one `memory model install` fills both. A Worker that names no judge directory
+starts without a judge and refuses every judge call with a named code, which `memory model status`
+reports.
+
 **First start.** A Worker starting on an empty volume downloads the two files, about 123 MB, over HTTPS
 from `huggingface.co` and the HTTPS location it redirects to, verifies both digests and writes the
 manifest, all before its memory seed pass. Its start waits for that for up to
 `IncidentCompass__Embeddings__LocalOnnx__InstallTimeoutSeconds`, 900 seconds by default. Later starts
 hash the installed files again and download nothing.
+
+The judge's install pass runs on the same start, after the memory seed pass, so the corpus the Worker
+serves is never held up behind it. On an empty judge directory it downloads about 571 MB from the same
+host, verifies both digests and writes the judge manifest, bounded by
+`IncidentCompass__RelevanceJudge__LocalOnnx__InstallTimeoutSeconds`, 1800 seconds by default. A failed
+judge install is recorded with its code and the Worker keeps starting; judge calls are refused until an
+install succeeds.
 
 **Offline install.** On a host without that outbound access, place the two files in the volume before
 the first start, each at `artifacts/<sha256>/<file name>` under `/app/models`, where `<sha256>` is the

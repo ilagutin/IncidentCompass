@@ -33,6 +33,7 @@ using IncidentCompass.Infrastructure.Observability;
 using IncidentCompass.Infrastructure.OpenAiCompatible;
 using IncidentCompass.Infrastructure.Postgres;
 using IncidentCompass.Infrastructure.Postgres.Testing;
+using IncidentCompass.Infrastructure.Relevance.LocalOnnx;
 using IncidentCompass.Infrastructure.Remediation;
 using IncidentCompass.Infrastructure.Security;
 using IncidentCompass.Infrastructure.SourceContext;
@@ -83,9 +84,10 @@ public static class Setup
     }
 
     /// <summary>
-    /// The embedding model host: the provider-selected <see cref="IEmbeddingClient" /> and its options,
+    /// The local model host: the provider-selected <see cref="IEmbeddingClient" /> and its options,
     /// the local model store and its install pass, the memory seed and resync pass, the synchronizer
-    /// the <c>memory rebuild</c> command runs, and the <c>memory_search</c> tool. It is not part of
+    /// the <c>memory rebuild</c> command runs, the <c>memory_search</c> tool and the local relevance
+    /// judge that reranks what that tool retrieves. It is not part of
     /// <see cref="AddInfrastructure" /> because one process owns the embedding model, and that is the
     /// Worker, whose <c>AddWorker</c> calls it. The Api keeps the corpus status and health readers,
     /// none of which embeds anything. The client, the synchronizer, the hosted services and the tool
@@ -116,6 +118,10 @@ public static class Setup
         services.TryAddScoped<MemorySeedSynchronizer>();
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, MemorySeedHostedService>());
         services.AddMemorySearchTool();
+
+        // Last, and after the memory seed pass, so the judge's own install pass starts behind the
+        // embedding model's install and behind the first seed pass. See AddLocalOnnxRelevanceJudge.
+        services.AddLocalOnnxRelevanceJudge(configuration);
 
         return services;
     }

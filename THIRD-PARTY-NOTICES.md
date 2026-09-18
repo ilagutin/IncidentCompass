@@ -1,8 +1,9 @@
 # Third-party notices
 
 IncidentCompass is licensed under the Apache License 2.0 (see `LICENSE`). This file lists the
-third-party components the in-process embedding model brings, with their licenses. Every other
-dependency is a NuGet package restored at build time under the license its package declares.
+third-party components the in-process models bring, with their licenses: the embedding model and the
+relevance judge that reranks what memory search retrieves. Every other dependency is a NuGet package
+restored at build time under the license its package declares.
 
 ## Embedding model
 
@@ -23,15 +24,47 @@ The repository's test fixture model under `tests/Shared/fixtures/embedding-model
 `tools/fixture-embedding-model/` from random weights and a short training text written for this
 project. It is part of this repository and is covered by its license.
 
+## Relevance judge model
+
+**BAAI/bge-reranker-v2-m3**, Apache-2.0 License.
+
+- Weights and tokenizer source: <https://huggingface.co/BAAI/bge-reranker-v2-m3>
+- Pinned weights revision: `953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e`
+- ONNX export source: <https://huggingface.co/onnx-community/bge-reranker-v2-m3-ONNX>
+- Pinned export revision: `6f5ff65298512715a1e669753bc754d2bc8f367b`
+- The file the Worker actually downloads is not published by the model's own authors. It is a
+  third-party mechanical export of those weights to ONNX, and the export repository
+  `onnx-community/bge-reranker-v2-m3-ONNX` declares no license of its own: it names only its base
+  model. The export is therefore taken here under the base model's Apache-2.0 license, which is the
+  only license either repository states.
+- Files, each pinned by SHA-256:
+  - `onnx/model_int8.onnx`, from the export repository
+    (`912fc1215c2dbff6499700534bd8d31253af01573861abbfc43afd1fab6cce5d`)
+    <https://huggingface.co/onnx-community/bge-reranker-v2-m3-ONNX/resolve/6f5ff65298512715a1e669753bc754d2bc8f367b/onnx/model_int8.onnx>
+  - `sentencepiece.bpe.model`, from the weights repository
+    (`cfc8146abe2a0488e9e2a0c56de7952f7c11ab059eca145a0a727afce0db2865`)
+    <https://huggingface.co/BAAI/bge-reranker-v2-m3/resolve/953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e/sentencepiece.bpe.model>
+- That tokenizer digest is the same one the embedding model above pins, and it is not a copy-and-paste
+  mistake: both are XLM-RoBERTa models and their SentencePiece file is the same file, byte for byte.
+  The judge takes its copy from the weights repository, under that repository's Apache-2.0 license,
+  and installs it into its own model directory, because a model directory holds one model's artifacts.
+- Neither file is distributed in this repository or in any container image built from it. The Worker
+  fetches both from Hugging Face at deployment, verifies both digests and keeps them on the host's
+  model volume; an offline host places the same files there itself.
+
+The repository's test fixture judge under `tests/Shared/fixtures/relevance-judge-model/` is generated
+by `tools/fixture-relevance-judge-model/` from random weights and a short training text written for
+this project. It is part of this repository and is covered by its license.
+
 ## NuGet packages
 
 | Package | Version | License | Why it is here |
 | --- | --- | --- | --- |
-| Microsoft.ML.OnnxRuntime | 1.30.0 | MIT | Runs the embedding model in the Worker. It ships the native ONNX Runtime library; that library's own third-party notices are in the package's `ThirdPartyNotices.txt`. |
-| Microsoft.ML.Tokenizers | 2.0.0 | MIT | Loads the model's SentencePiece tokenizer. |
+| Microsoft.ML.OnnxRuntime | 1.30.0 | MIT | Runs the embedding model and the relevance judge in the Worker. It ships the native ONNX Runtime library; that library's own third-party notices are in the package's `ThirdPartyNotices.txt`. |
+| Microsoft.ML.Tokenizers | 2.0.0 | MIT | Loads the SentencePiece tokenizer of the embedding model and of the relevance judge. |
 | Microsoft.ML.OnnxRuntime.Managed | 1.30.0 | MIT | Transitive: the managed API of ONNX Runtime, restored with it. |
 | System.Numerics.Tensors | 9.0.0 | MIT | Transitive: a dependency of the ONNX Runtime managed API. |
 
-The two transitive packages are named because they reach the Worker only through the embedding
-model. `Google.Protobuf`, which `Microsoft.ML.Tokenizers` also depends on, is not listed: the
+The two transitive packages are named because they reach the Worker only through the in-process
+models. `Google.Protobuf`, which `Microsoft.ML.Tokenizers` also depends on, is not listed: the
 solution already referenced it directly before the embedding model was added.
