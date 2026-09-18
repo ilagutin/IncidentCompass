@@ -11,8 +11,9 @@ namespace IncidentCompass.Application.Memory;
 /// <para>
 /// The judge is asked about every query, not only about a query the lexical gate left nothing for.
 /// The gate's measured failure is not that it returns nothing: on a query whose eligible words are
-/// all Latin identifiers it returns a full set and reports it as confirmed, which a judge that only
-/// ran on an empty gate result would never see.
+/// all Latin identifiers it admits a full set of unrelated chunks, which before confirmation moved to
+/// the judge were also reported as confirmed, and which a judge that only ran on an empty gate result
+/// would never see. The gate itself confirms nothing: every match it admits is banded <c>low</c>.
 /// </para>
 /// <para>
 /// Exactly two states are a deployment shape rather than a failure, and they are named by

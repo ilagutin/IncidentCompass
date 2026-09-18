@@ -311,7 +311,9 @@ keep: on the benchmark corpus it costs one redundant secondary chunk of one quer
 is still returned, because no floor delivers both. `docs/trade-offs.md` has the measured scores. The judge is
 asked about every query rather than only about one the lexical gate emptied, because the gate's
 cross-language failure is not that it returns nothing: a query whose only eligible words are Latin
-identifiers passes the gate fully and is reported as confirmed.
+identifiers passes the gate fully and admits unrelated chunks, which before confirmation moved to the
+judge were also reported as confirmed. The gate itself confirms nothing; every match it admits is
+banded `low`.
 
 `on` does not mean "require". Exactly two states are a host that is not running a judge at all: no
 judge model directory is configured, and nothing is installed in the configured one yet. Those keep
@@ -327,9 +329,13 @@ the configured judge and a failure at load or inference are all failures, and se
 normalized code with the two deployment states, so the distinction is drawn on the adapter's own error
 code. An install still running is deliberately in that list rather than in the two: the pinned judge is
 over half a gigabyte and its install timeout is measured in hundreds of seconds, so a host part way
-through fetching one would otherwise confirm `KnownIncident` on lexical bands for the whole window,
-which is what installing a judge was meant to stop. Those calls refuse with
-`relevance_judge_install_in_progress` and the job retries.
+through fetching one would otherwise answer as a judge-less host for the whole window, admitting on
+the lexical gate and confirming nothing, while the operator believes a judge is running. Those calls
+refuse with `memory_relevance_judge_unavailable`, the adapter's code
+`relevance_judge_install_in_progress` kept as the provider code, and the failure is a configuration
+failure: the job's attempt is spent, and a job that keeps meeting it dead-letters under that code. A
+judge that is installed but fails to load is a provider outage instead, retried as one without
+spending attempts.
 
 The floor must sit strictly below the confirm score, and configuration load refuses the pair otherwise.
 An equal pair is the quiet mistake: every candidate the judge admits is then confirmed, the `low` band

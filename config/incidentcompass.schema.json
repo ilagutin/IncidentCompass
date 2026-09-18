@@ -196,13 +196,13 @@
           "type": ["number", "null"],
           "minimum": -50,
           "maximum": 50,
-          "description": "memory_search only. The judge score, against the fault query built from the trigger signal, at or above which a returned match is reported as confirmed. Absent: 0.85, measured for the pinned cross-encoder against fault queries on the retrieval benchmark corpus. It must not be below RelevanceFloorScore."
+          "description": "memory_search only. The judge score, against the fault query built from the trigger signal, at or above which a returned match is reported as confirmed. Absent: 0.85, measured for the pinned cross-encoder against fault queries on the retrieval benchmark corpus. It must be above RelevanceFloorScore; an equal pair is refused."
         },
         "RelevanceFloorScore": {
           "type": ["number", "null"],
           "minimum": -50,
           "maximum": 50,
-          "description": "memory_search only. The judge score below which a match is dropped rather than returned unconfirmed. Absent: -0.25, measured for the pinned cross-encoder so that an off-topic query returns nothing; on the benchmark corpus that costs one redundant secondary chunk, because no floor achieves both. It must not be above RelevanceConfirmScore."
+          "description": "memory_search only. The judge score below which a match is dropped rather than returned unconfirmed. Absent: -0.25, measured for the pinned cross-encoder so that an off-topic query returns nothing; on the benchmark corpus that costs one redundant secondary chunk, because no floor achieves both. It must be below RelevanceConfirmScore; an equal pair is refused."
         },
         "Category": { "enum": ["notification", "ticket_create", "ticket_update", "code_write", "branch_push", "pr_create", null] },
         "LogicalTargetId": { "type": ["string", "null"], "minLength": 1, "maxLength": 128 },
