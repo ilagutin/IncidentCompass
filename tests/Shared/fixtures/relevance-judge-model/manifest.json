@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 2,
+  "id": "incidentcompass/fixture-relevance-judge-model",
+  "revision": "fixture-1",
+  "modelFile": {
+    "path": "model.onnx",
+    "url": "https://fixture.invalid/incidentcompass/relevance-judge/model.onnx",
+    "sha256": "828ec6d717ec296f52338a682774bd356cd76b833bf3baf38fdc978a7255d910",
+    "kind": "onnx"
+  },
+  "tokenizerFile": {
+    "path": "sentencepiece.bpe.model",
+    "url": "https://fixture.invalid/incidentcompass/relevance-judge/sentencepiece.bpe.model",
+    "sha256": "cc61c97524beab5dbfb8ecf9f9eed90435fbddfcc7c40e0f80959d846912888a",
+    "kind": "sentencepiece"
+  },
+  "maxTokens": 48,
+  "license": "Apache-2.0",
+  "kind": "relevance_judge"
+}

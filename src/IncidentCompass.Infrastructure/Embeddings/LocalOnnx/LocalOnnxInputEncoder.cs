@@ -8,13 +8,12 @@ namespace IncidentCompass.Infrastructure.Embeddings.LocalOnnx;
 /// Turns one request input into the model's input ids: trim, prepend the manifest's prefix for the
 /// input kind, tokenize with the SentencePiece model, cap, and map to the model's vocabulary.
 /// <para>
-/// The tokenizer returns raw SentencePiece ids, where <c>&lt;unk&gt;</c>=0, <c>&lt;s&gt;</c>=1 and
-/// <c>&lt;/s&gt;</c>=2. XLM-R style models use the fairseq vocabulary, which puts
-/// <c>&lt;s&gt;</c>=0, <c>&lt;pad&gt;</c>=1, <c>&lt;/s&gt;</c>=2, <c>&lt;unk&gt;</c>=3 first and
-/// shifts every other piece up by one. The sequence is then wrapped in <c>&lt;s&gt;</c> ...
-/// <c>&lt;/s&gt;</c>. This matches the reference Hugging Face tokenizer id for id on English, Polish
-/// and Russian input, with one known difference: that tokenizer keeps a lone trailing whitespace
-/// piece which SentencePiece drops, and trimming the input first removes the case.
+/// The tokenizer returns raw SentencePiece ids, which
+/// <see cref="LocalOnnxSentencePieceVocabulary.MapSentencePieceId" /> maps onto the model's fairseq
+/// vocabulary. The sequence is then wrapped in <c>&lt;s&gt;</c> ... <c>&lt;/s&gt;</c>. This matches
+/// the reference Hugging Face tokenizer id for id on English, Polish and Russian input, with one
+/// known difference: that tokenizer keeps a lone trailing whitespace piece which SentencePiece
+/// drops, and trimming the input first removes the case.
 /// </para>
 /// <para>
 /// Content is capped at <see cref="LocalOnnxModelManifest.MaxTokens" /> minus the two markers,
@@ -23,9 +22,6 @@ namespace IncidentCompass.Infrastructure.Embeddings.LocalOnnx;
 /// </summary>
 internal sealed class LocalOnnxInputEncoder
 {
-    public const long BeginningOfSequenceId = 0;
-    public const long EndOfSequenceId = 2;
-
     private readonly SentencePieceTokenizer tokenizer;
     private readonly string queryPrefix;
     private readonly string passagePrefix;
@@ -72,21 +68,13 @@ internal sealed class LocalOnnxInputEncoder
             out _);
 
         var ids = new long[contentIds.Count + 2];
-        ids[0] = BeginningOfSequenceId;
+        ids[0] = LocalOnnxSentencePieceVocabulary.BeginningOfSequenceId;
         for (var index = 0; index < contentIds.Count; index++)
         {
-            ids[index + 1] = MapSentencePieceId(contentIds[index]);
+            ids[index + 1] = LocalOnnxSentencePieceVocabulary.MapSentencePieceId(contentIds[index]);
         }
 
-        ids[^1] = EndOfSequenceId;
+        ids[^1] = LocalOnnxSentencePieceVocabulary.EndOfSequenceId;
         return ids;
     }
-
-    public static long MapSentencePieceId(int sentencePieceId) => sentencePieceId switch
-    {
-        0 => 3,
-        1 => 0,
-        2 => 2,
-        _ => sentencePieceId + 1L
-    };
 }

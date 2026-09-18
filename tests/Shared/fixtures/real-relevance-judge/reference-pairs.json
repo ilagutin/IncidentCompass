@@ -1,0 +1,32 @@
+{
+  "model": "BAAI/bge-reranker-v2-m3",
+  "tokenizer": "XLMRobertaTokenizerFast",
+  "note": "Pair ids the reference Hugging Face tokenizer produces for this model. The layout is <s> query </s> </s> passage </s>; the model emits no token type ids and its attention mask is all ones. Only the opt-in real-model test reads this file: the committed tiny fixture covers the same code deterministically without a download.",
+  "pairs": [
+    {
+      "query": "checkout timeout inventory",
+      "passage": "Checkout timeout alerts usually indicate upstream payment latency.",
+      "ids": [0,12765,6056,1733,6056,26868,30675,2,2,38679,6056,1733,6056,110342,7,56104,117414,1257,86429,81997,19161,2408,5,2]
+    },
+    {
+      "query": "checkout-api TimeoutException Checkout timeout while calling the payment service",
+      "passage": "Checkout timeout alerts usually indicate upstream payment latency.",
+      "ids": [0,12765,6056,9,40897,19055,6056,19279,63928,38679,6056,1733,6056,12960,159029,70,81997,4516,2,2,38679,6056,1733,6056,110342,7,56104,117414,1257,86429,81997,19161,2408,5,2]
+    },
+    {
+      "query": "notifications-api QueueSaturatedException zaleglosci kolejki wysylki przekroczyly prog alertu",
+      "passage": "Notification dispatch backlog grows when the delivery worker pool is undersized.",
+      "ids": [0,185325,7,9,40897,5813,13388,294,26690,3674,19279,63928,80,2828,2400,318,37342,301,25449,53,36750,241762,538,67973,110342,34,2,2,11205,41274,58580,257,206,4420,4867,55993,7,3229,70,117989,4488,56,19361,83,1379,7,29367,5,2]
+    },
+    {
+      "query": "search-indexer IndexLagException rezultaty poiska ustareli",
+      "passage": "Search index lag is measured against the ingest watermark.",
+      "ids": [0,33938,9,4711,56,31471,2729,177,19279,63928,15739,53,5737,161,17018,107,150,2,2,33086,63262,8475,83,72350,71,26548,70,3305,525,7401,10015,5,2]
+    },
+    {
+      "query": "  gateway latency  ",
+      "passage": "A passage with trailing space ",
+      "ids": [0,70836,7514,19161,2408,2,2,62,46692,678,141037,214,32628,2]
+    }
+  ]
+}
