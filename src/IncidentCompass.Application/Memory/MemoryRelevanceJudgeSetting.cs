@@ -29,11 +29,12 @@ internal static class MemoryRelevanceJudgeSetting
     /// The default confirm threshold. A returned document whose judge score against the fault query
     /// reaches it is confirmed.
     /// <para>
-    /// It was re-measured against the fault query, because that is what now decides confirmation. The
-    /// earlier 1.15 was measured against the role's own query and does not transfer to fault text.
-    /// Swept through the real <c>memory_search</c> on the retrieval benchmark corpus in English, Polish
-    /// and Russian, the value that keeps every hard negative and every attack query unconfirmed while
-    /// confirming every English and Russian incident-shaped positive lies in the window (0.60, 0.90].
+    /// It was measured against the fault query, service name, error type, error message and route,
+    /// because that is what decides confirmation. The earlier 1.15 was measured against the role's own
+    /// query and does not transfer to fault text. Swept through the real <c>memory_search</c> on the
+    /// retrieval benchmark corpus in English, Polish and Russian, the value that keeps every hard
+    /// negative and every attack query unconfirmed while confirming every incident-shaped positive in all
+    /// three languages lies in the window (0.55, 1.10].
     /// </para>
     /// <para>
     /// <b>The lower bound.</b> At 0.55 and below an English hard negative is confirmed; from 0.60 up no
@@ -41,20 +42,14 @@ internal static class MemoryRelevanceJudgeSetting
     /// document's own text, confirms nothing in any language.
     /// </para>
     /// <para>
-    /// <b>The upper bound.</b> Russian incident-shaped positives are confirmed 6 of 6 up to 0.90 and 5
-    /// of 6 from 0.95. English incident-shaped positives are 6 of 6 across the window.
+    /// <b>The upper bound.</b> Every incident-shaped positive in all three languages is confirmed up to
+    /// 1.10; from 1.15 Polish drops to 5 of 6.
     /// </para>
     /// <para>
-    /// The default sits in the middle of that window, about 0.15 from each side.
-    /// </para>
-    /// <para>
-    /// <b>Polish stays at 4 of 6.</b> Polish incident-shaped positives are 5 of 6 at 0.50 and below and
-    /// 4 of 6 from 0.55 up to 1.20. The fifth Polish positive scores below the English hard negative, so
-    /// no value confirms it without also confirming that hard negative. The release keeps the hard
-    /// negative out; the two unconfirmed Polish answers are still returned, banded as related context.
+    /// The default sits in the middle of that window, about 0.25 to 0.3 from each side.
     /// </para>
     /// </summary>
-    public const double DefaultConfirmScore = 0.75;
+    public const double DefaultConfirmScore = 0.85;
 
     /// <summary>
     /// The default floor. A candidate the judge scores below it is dropped, not banded.

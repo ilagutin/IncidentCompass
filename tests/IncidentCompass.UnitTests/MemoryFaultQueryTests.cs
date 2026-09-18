@@ -6,8 +6,8 @@ namespace IncidentCompass.UnitTests;
 /// <summary>
 /// The fault query is built by the backend from the trigger signal, and the band of every returned
 /// memory document is decided against it. Its shape is pinned here: the service name, the error type
-/// and the error message, in that order, blank parts skipped, the summary only in place of a blank
-/// message, and the same bound the role's own query is held to.
+/// the error message and the HTTP route, in that order, blank parts skipped, the summary only in
+/// place of a blank message, and the same bound the role's own query is held to.
 /// </summary>
 public sealed class MemoryFaultQueryTests
 {
@@ -89,6 +89,56 @@ public sealed class MemoryFaultQueryTests
         var signal = MemorySearchToolTestSupport.TriggerSignal("Checkout stalls on stock reservation", "TimeoutException");
 
         Assert.Equal("checkout-api TimeoutException Checkout stalls on stock reservation", MemoryFaultQuery.For(signal));
+    }
+
+    /// <summary>
+    /// The signal's HTTP route follows the message. The Polish signal written without diacritics is the
+    /// case that prompted it: without the route it scored below the confirm score against both checkout
+    /// documents.
+    /// </summary>
+    [Fact]
+    public void For_AppendsTheRouteAfterTheMessage()
+    {
+        var signal = MemorySearchToolTestSupport.TriggerSignal(
+            "checkout-api: /checkout failed",
+            "TimeoutException",
+            "Przekroczono limit czasu finalizacji zamowienia podczas wywolania uslugi platnosci") with
+        {
+            HttpRoute = "/checkout"
+        };
+
+        Assert.Equal(
+            "checkout-api TimeoutException Przekroczono limit czasu finalizacji zamowienia podczas" +
+            " wywolania uslugi platnosci /checkout",
+            MemoryFaultQuery.For(signal));
+    }
+
+    /// <summary>
+    /// The route is the sender's field and stays, while the synthesized summary that also names it is
+    /// still left out: the route alone is not the templated failure frame.
+    /// </summary>
+    [Fact]
+    public void For_KeepsTheRouteButNotTheSynthesizedSummaryThatRepeatsIt()
+    {
+        var synthesized = SummarySynthesizer.ForStructuredSignal("checkout-api", null, "/checkout", "TimeoutException", null);
+        var signal = MemorySearchToolTestSupport.TriggerSignal(synthesized, "TimeoutException") with
+        {
+            HttpRoute = "/checkout"
+        };
+
+        Assert.Equal("checkout-api: /checkout failed - TimeoutException", synthesized);
+        Assert.Equal("checkout-api TimeoutException /checkout", MemoryFaultQuery.For(signal));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void Compose_SkipsABlankRoute(string? httpRoute)
+    {
+        Assert.Equal(
+            "service type message",
+            MemoryFaultQuery.Compose("service", "type", "message", null, httpRoute));
     }
 
     [Theory]

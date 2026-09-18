@@ -61,14 +61,6 @@ public sealed class MemorySearchRelevanceJudgeBenchmarkTests(PostgresRepositoryF
     private const double MinimumPolishChunkRecall = 0.5;
 
     /// <summary>
-    /// The Polish incident-shaped positives the bar requires confirmed, out of six. It is not six because
-    /// the fifth one scores below an English hard negative against its fault query, so no confirm score
-    /// confirms it without also confirming that hard negative; the sweep measured 4 of 6 across the
-    /// whole window the default sits in. The two it does not confirm are still returned as context.
-    /// </summary>
-    private const int MinimumPolishIncidentShapedConfirmed = 4;
-
-    /// <summary>
     /// Why a candidate floor value is not measured. A floor at or above the confirm score it is swept
     /// against is refused by load validation, above and equal alike: an equal pair leaves the
     /// unconfirmed band empty by construction, which is why it is now refused rather than merely
@@ -283,16 +275,9 @@ public sealed class MemorySearchRelevanceJudgeBenchmarkTests(PostgresRepositoryF
     /// The band is decided against the fault, and the bar states deliberately what the product can
     /// guarantee at the shipped confirm score, no more: the attack confirms nothing in any language when
     /// the band answers the fault, and confirms something when it answers the model's query, so the leg
-    /// is shown to attack at all; no hard negative is confirmed in any language; every English and every
-    /// Russian incident-shaped positive has its answer confirmed; and at least
-    /// <see cref="MinimumPolishIncidentShapedConfirmed" /> of the Polish ones do.
-    /// </para>
-    /// <para>
-    /// Polish is not asked for all six because the confirm sweep against fault scores shows no value
-    /// can deliver it: the fifth Polish incident-shaped positive scores below an English hard negative,
-    /// so confirming it would confirm that hard negative too, and the release keeps the hard negative
-    /// out. The Polish answers that are not confirmed are still returned, banded <c>low</c> as related
-    /// context, so they are not lost, only not claimed.
+    /// is shown to attack at all; no hard negative is confirmed in any language; and every incident-shaped
+    /// positive in all three languages has its answer confirmed, Polish included, which the route in the
+    /// fault query is what made reachable.
     /// </para>
     /// </summary>
     private static void AssertAcceptanceBar(MemorySearchRelevanceJudgeBenchmarkRecord record)
@@ -342,15 +327,11 @@ public sealed class MemorySearchRelevanceJudgeBenchmarkTests(PostgresRepositoryF
                 language.IncidentShapedPositiveQueryCount > 0,
                 $"The {language.Language} corpus contributed no incident-shaped positive query, so the" +
                 " confirmed count measures nothing.");
-            var required = language.Language == MemoryRetrievalMultilingualQueries.Polish
-                ? Math.Min(MinimumPolishIncidentShapedConfirmed, language.IncidentShapedPositiveQueryCount)
-                : language.IncidentShapedPositiveQueryCount;
             Assert.True(
-                language.IncidentShapedPositiveConfirmedCount >= required,
+                language.IncidentShapedPositiveConfirmedCount == language.IncidentShapedPositiveQueryCount,
                 $"{language.Language} confirmed a labelled answer for {language.IncidentShapedPositiveConfirmedCount}" +
                 $" of {language.IncidentShapedPositiveQueryCount} incident-shaped positive queries at the" +
-                $" shipped confirm score {MemoryRelevanceJudgeSetting.DefaultConfirmScore:F3}, below the {required}" +
-                $" the bar asks for. The confirm boundary is" +
+                $" shipped confirm score {MemoryRelevanceJudgeSetting.DefaultConfirmScore:F3}. The confirm boundary is" +
                 $" {Describe(record.Scoring.ConfirmByLanguage.Single(boundary => boundary.Language == language.Language))}.");
         });
 

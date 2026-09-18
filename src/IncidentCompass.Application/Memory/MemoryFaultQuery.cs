@@ -18,10 +18,11 @@ namespace IncidentCompass.Application.Memory;
 /// so a role cannot raise the band of a document it has already been shown by choosing its words.
 /// </para>
 /// <para>
-/// <b>What it is built from.</b> The signal's service name, error type and error message, in that order,
-/// joined with one space, blank parts skipped. That is exactly what the memory role instructions tell
-/// the role to search with, and the mock memory role composes its query through <see cref="Compose" />
-/// for that reason, so on the demo path the two agree. When the error message is blank, which is every
+/// <b>What it is built from.</b> The signal's service name, error type, error message and HTTP route, in
+/// that order, joined with one space, blank parts skipped. That is what the memory role instructions tell
+/// the role to search with, so the role's search and the confirming query describe the fault the same
+/// way. The mock memory role composes its admission query through <see cref="Compose" /> from the
+/// fields its prompt carries, which do not include the route. When the error message is blank, which is every
 /// user and manual report, the summary takes its place, because it is then the only description the
 /// signal has, but only when the sender supplied that summary. On a user or manual report the summary
 /// is the reporter's own text, so a confirmation resting on it is only as trustworthy as the reporter.
@@ -41,6 +42,16 @@ namespace IncidentCompass.Application.Memory;
 /// every incident document about the service. Measured through the product on the retrieval benchmark,
 /// the off-topic checkout price-rounding query scored 2.97 against the known checkout-timeout incident
 /// with the summary in its fault query, above the confirm score, and -1.15 against the role's own query.
+/// </para>
+/// <para>
+/// <b>Why the route is in it.</b> The signal's HTTP route, when it has one, follows the description. It
+/// is signal data the sender supplied, not the templated failure frame the summary carried, and it
+/// gives a signal written in another language, or without its diacritics, an anchor the judge can match
+/// against English documents. The case that prompted it was live: a Polish checkout timeout written
+/// without diacritics scored 0.47 and 0.04 against the two checkout documents without the route, below
+/// the confirm score, so its report came out as insufficient evidence. Measured through the product on
+/// the retrieval benchmark, adding the route took Polish incident-shaped positives from 4 of 6 confirmed
+/// to 6 of 6, with no hard negative and no attack query confirmed in any language.
 /// </para>
 /// <para>
 /// <b>The bound.</b> The result is cut on a rune boundary to
@@ -63,7 +74,8 @@ internal static class MemoryFaultQuery
                 signal.ServiceName,
                 signal.ErrorType,
                 signal.ErrorMessage,
-                IsSynthesizedSummary(signal) ? null : signal.Summary);
+                IsSynthesizedSummary(signal) ? null : signal.Summary,
+                signal.HttpRoute);
 
     /// <summary>
     /// Whether the signal's summary is the one intake would synthesize from its own fields, which is
@@ -81,15 +93,22 @@ internal static class MemoryFaultQuery
             StringComparison.Ordinal);
 
     /// <summary>
-    /// The service name, the error type and the error message, in this order, joined with one space,
-    /// blank parts skipped, bounded. <paramref name="summary" /> stands in for a blank message.
+    /// The service name, the error type, the error message and the HTTP route, in this order, joined
+    /// with one space, blank parts skipped, bounded. <paramref name="summary" /> stands in for a blank
+    /// message. <paramref name="httpRoute" /> is optional so a caller that has no route, such as the mock
+    /// memory role reading its prompt, composes the same query without it.
     /// </summary>
-    public static string Compose(string? serviceName, string? errorType, string? errorMessage, string? summary)
+    public static string Compose(
+        string? serviceName,
+        string? errorType,
+        string? errorMessage,
+        string? summary,
+        string? httpRoute = null)
     {
         var description = string.IsNullOrWhiteSpace(errorMessage) ? summary : errorMessage;
         var joined = string.Join(
             ' ',
-            new[] { serviceName, errorType, description }
+            new[] { serviceName, errorType, description, httpRoute }
                 .Where(static part => !string.IsNullOrWhiteSpace(part)));
         return TextTruncator.Truncate(joined, MemorySearchQueryBound.MaxQueryCharacters);
     }

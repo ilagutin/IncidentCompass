@@ -1529,8 +1529,8 @@ per-item artifacts, and it carries no band, so a `KnownIncident` cannot rest on 
 
 The limit of what the band proves is worth stating. It says the relevance judge scored the document
 at or above the confirm score against the fault query, which the backend builds from the trigger
-signal's service name, error type and error message, or from its summary when there is no message and
-the sender supplied one. The model's own query decides only which documents come back, so a model
+signal's service name, error type, error message and route, with its summary in place of the message
+when there is no message and the sender supplied one. The model's own query decides only which documents come back, so a model
 cannot raise the band of a document it has already been shown by re-querying with that document's
 wording. The fault query is built from fields the sender of the signal supplied, though, so an error
 message crafted to paraphrase a runbook can still earn a confirmation from untrusted telemetry, and on
