@@ -295,7 +295,7 @@ jobs:
       - name: Mint a GitHub App installation token
         id: app-token
         if: env.HAS_LOCKFILE_APP == 'true'
-        uses: actions/create-github-app-token@df432ceedc7162793a195dd1713ff69aefc7379e # v2.0.6
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           app-id: ${{ secrets.DEPENDABOT_LOCKFILE_APP_ID }}
           private-key: ${{ secrets.DEPENDABOT_LOCKFILE_APP_PRIVATE_KEY }}
