@@ -60,9 +60,9 @@ this project. It is part of this repository and is covered by its license.
 
 | Package | Version | License | Why it is here |
 | --- | --- | --- | --- |
-| Microsoft.ML.OnnxRuntime | 1.30.0 | MIT | Runs the embedding model and the relevance judge in the Worker. It ships the native ONNX Runtime library; that library's own third-party notices are in the package's `ThirdPartyNotices.txt`. |
+| Microsoft.ML.OnnxRuntime | 1.31.0 | MIT | Runs the embedding model and the relevance judge in the Worker. It ships the native ONNX Runtime library; that library's own third-party notices are in the package's `ThirdPartyNotices.txt`. |
 | Microsoft.ML.Tokenizers | 2.0.0 | MIT | Loads the SentencePiece tokenizer of the embedding model and of the relevance judge. |
-| Microsoft.ML.OnnxRuntime.Managed | 1.30.0 | MIT | Transitive: the managed API of ONNX Runtime, restored with it. |
+| Microsoft.ML.OnnxRuntime.Managed | 1.31.0 | MIT | Transitive: the managed API of ONNX Runtime, restored with it. |
 | System.Numerics.Tensors | 9.0.0 | MIT | Transitive: a dependency of the ONNX Runtime managed API. |
 
 The two transitive packages are named because they reach the Worker only through the in-process
